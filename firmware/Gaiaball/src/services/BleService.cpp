@@ -1,5 +1,6 @@
 #include "BleService.h"
 
+#include <Arduino.h>
 #include <NimBLEDevice.h>
 #include <string.h>
 
@@ -250,11 +251,11 @@ void BleService::onCommandWrite(uint16_t connHandle, const uint8_t *data, size_t
   const uint8_t opcode = data[0];
 
   if (opcode == kCmdUnlock) {
-    bool ok = gate_->unlock(slot, data + 1, len - 1);
+    bool ok = gate_->unlock(slot, data + 1, len - 1, millis());
     if (ok)
       GB_LOGI(kTag, "slot %u unlocked", slot);
     else
-      GB_LOGW(kTag, "slot %u unlock rejected (bad PIN)", slot);
+      GB_LOGW(kTag, "slot %u unlock rejected (bad PIN or locked out)", slot);
     return;
   }
 
@@ -267,6 +268,7 @@ void BleService::onCommandWrite(uint16_t connHandle, const uint8_t *data, size_t
   cmd.opcode = opcode;
   cmd.connSlot = slot;
   cmd.argLen = (uint8_t)(len - 1);
+  cmd.unlockedAtEnqueue = gate_->isUnlocked(slot) ? 1 : 0;
   memcpy(cmd.arg, data + 1, cmd.argLen);
   if (xQueueSend(cmdQueue_, &cmd, 0) != pdTRUE) GB_LOGW(kTag, "cmd 0x%02x dropped: queue full", opcode);
 }

@@ -24,11 +24,16 @@ constexpr uint8_t kCmdUnlock = 0x20;  // executed inline: CommandGate::unlock(sl
 
 // One command-characteristic write, as handed to the App task.
 // connSlot is the CommandGate connId (0/1) of the writer. arg excludes the opcode.
+// unlockedAtEnqueue (0/1) is CommandGate::isUnlocked(connSlot) sampled when the write
+// arrived: the App task MUST authorize gated opcodes with this field, not by
+// re-querying the gate (the slot may have been re-locked or reused by another
+// central by the time the command is executed).
 struct BleCommand {
   uint8_t opcode;
   uint8_t connSlot;
   uint8_t argLen;
   uint8_t arg[8];
+  uint8_t unlockedAtEnqueue;
 };
 
 // NimBLE GATT server: one service, five characteristics (short ids 1..5):
@@ -53,10 +58,12 @@ struct BleCommand {
 //    quick and non-blocking (set flags / queue work for the App task; no NVS save,
 //    no I2C/UART, no delays). PIN changes must be forwarded to CommandGate::setPin
 //    by that handler.
-//  - notifyImu/Co2/Diag are meant for the App task. NimBLE's setValue() copies under
-//    its own lock and notify() hands an mbuf to the host stack, so calling them from
-//    a task other than the host task is the library's supported pattern. No heap
-//    allocation of our own in these paths.
+//  - notifyImu/Co2/Diag are meant for the App task. Calling setValue()/notify() from
+//    a non-BLE task is the de facto pattern used by NimBLE-Arduino 1.x apps (setValue
+//    copies inside a critical section; notify() hands an mbuf to the host stack).
+//    The library's m_subscribedVec, however, is unsynchronized: a narrow race with a
+//    concurrent (un)subscribe/disconnect is accepted, mitigated by the subMask_
+//    early-out. No heap allocation of our own in these paths.
 //  - Subscription state is tracked per characteristic and per slot in atomics
 //    written by the host task, so anySubscriber() is safe from any task.
 //
@@ -64,7 +71,8 @@ struct BleCommand {
 // takes effect after reboot (no runtime re-init).
 //
 // The App task executes queued commands and enforces the PIN for sensitive opcodes
-// at execution time via CommandGate::isUnlocked(cmd.connSlot); 0x00/0x01 are ungated.
+// using BleCommand::unlockedAtEnqueue; 0x00/0x01 are ungated. The 0x20 unlock itself
+// is rate-limited by CommandGate (5 consecutive failures -> 30 s lockout per slot).
 class BleService {
  public:
   static constexpr uint8_t kMaxConns = 2;

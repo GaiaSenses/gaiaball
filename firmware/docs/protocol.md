@@ -90,6 +90,10 @@ Flags: bit0 `imuOk`, bit1 `audioOk`, bit2 `co2Ok`.
 | `0x14` | mounting calibration |
 | `0x20` + ASCII PIN | unlock (PIN bytes follow the opcode) |
 
+Unlock is per connection and rate-limited: after 5 consecutive failed attempts the
+connection's unlock requests are refused (even with the correct PIN) until 30 s
+after the last failure. A successful unlock or a disconnect clears the streak.
+
 ## Config TLV (characteristic `...0004`)
 
 A sequence of records `id u8 | len u8 | value (len bytes, little-endian)`.

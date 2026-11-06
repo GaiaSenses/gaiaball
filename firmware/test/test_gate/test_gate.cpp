@@ -20,23 +20,23 @@ static CommandGate makeGate() {
 void test_wrong_pin_stays_locked() {
   CommandGate g = makeGate();
   const uint8_t bad[4] = {'1', '2', '3', '5'};
-  TEST_ASSERT_FALSE(g.unlock(0, bad, 4));
-  TEST_ASSERT_FALSE(g.unlock(0, GOOD, 3));
-  TEST_ASSERT_FALSE(g.unlock(0, GOOD, 5));
-  TEST_ASSERT_FALSE(g.unlock(0, GOOD, 0));
+  TEST_ASSERT_FALSE(g.unlock(0, bad, 4, 0));
+  TEST_ASSERT_FALSE(g.unlock(0, GOOD, 3, 0));
+  TEST_ASSERT_FALSE(g.unlock(0, GOOD, 5, 0));
+  TEST_ASSERT_FALSE(g.unlock(0, GOOD, 0, 0));
   TEST_ASSERT_FALSE(g.isUnlocked(0));
 }
 
 void test_unlock_per_connection() {
   CommandGate g = makeGate();
-  TEST_ASSERT_TRUE(g.unlock(0, GOOD, 4));
+  TEST_ASSERT_TRUE(g.unlock(0, GOOD, 4, 0));
   TEST_ASSERT_TRUE(g.isUnlocked(0));
   TEST_ASSERT_FALSE(g.isUnlocked(1));
 }
 
 void test_out_of_range_conn_always_locked() {
   CommandGate g = makeGate();
-  TEST_ASSERT_FALSE(g.unlock(2, GOOD, 4));
+  TEST_ASSERT_FALSE(g.unlock(2, GOOD, 4, 0));
   TEST_ASSERT_FALSE(g.isUnlocked(2));
   TEST_ASSERT_FALSE(g.isUnlocked(255));
   g.onDisconnect(7);  // must not corrupt anything
@@ -44,11 +44,86 @@ void test_out_of_range_conn_always_locked() {
 
 void test_relock_on_disconnect() {
   CommandGate g = makeGate();
-  g.unlock(0, GOOD, 4);
-  g.unlock(1, GOOD, 4);
+  g.unlock(0, GOOD, 4, 0);
+  g.unlock(1, GOOD, 4, 0);
   g.onDisconnect(0);
   TEST_ASSERT_FALSE(g.isUnlocked(0));
   TEST_ASSERT_TRUE(g.isUnlocked(1));
+}
+
+static const uint8_t BAD[4] = {'9', '9', '9', '9'};
+
+static void failN(CommandGate &g, uint8_t slot, int n, uint32_t nowMs) {
+  for (int i = 0; i < n; i++) TEST_ASSERT_FALSE(g.unlock(slot, BAD, 4, nowMs));
+}
+
+void test_lockout_after_five_failures() {
+  CommandGate g = makeGate();
+  failN(g, 0, 5, 1000);
+  // 6th attempt with the CORRECT pin inside the 30 s window is refused.
+  TEST_ASSERT_FALSE(g.unlock(0, GOOD, 4, 1000));
+  TEST_ASSERT_FALSE(g.unlock(0, GOOD, 4, 1000 + CommandGate::kLockoutMs - 1));
+  TEST_ASSERT_FALSE(g.isUnlocked(0));
+}
+
+void test_four_failures_no_lockout() {
+  CommandGate g = makeGate();
+  failN(g, 0, 4, 1000);
+  TEST_ASSERT_TRUE(g.unlock(0, GOOD, 4, 1001));
+}
+
+void test_unlock_allowed_after_lockout_expires() {
+  CommandGate g = makeGate();
+  failN(g, 0, 5, 1000);
+  TEST_ASSERT_TRUE(g.unlock(0, GOOD, 4, 1000 + CommandGate::kLockoutMs));
+  TEST_ASSERT_TRUE(g.isUnlocked(0));
+}
+
+void test_failure_after_lockout_rearms_it() {
+  CommandGate g = makeGate();
+  failN(g, 0, 5, 1000);
+  const uint32_t t = 1000 + CommandGate::kLockoutMs;
+  TEST_ASSERT_FALSE(g.unlock(0, BAD, 4, t));       // one compared attempt, fails
+  TEST_ASSERT_FALSE(g.unlock(0, GOOD, 4, t + 1));  // locked out again
+  TEST_ASSERT_TRUE(g.unlock(0, GOOD, 4, t + CommandGate::kLockoutMs));
+}
+
+void test_lockout_wraparound() {
+  CommandGate g = makeGate();
+  const uint32_t t0 = 0xFFFFFFFFu - 1000u;
+  failN(g, 0, 5, t0);
+  TEST_ASSERT_FALSE(g.unlock(0, GOOD, 4, t0 + 5000u));  // wrapped, 5 s later
+  TEST_ASSERT_TRUE(g.unlock(0, GOOD, 4, t0 + CommandGate::kLockoutMs));
+}
+
+void test_bad_length_counts_as_failure() {
+  CommandGate g = makeGate();
+  for (int i = 0; i < 5; i++) TEST_ASSERT_FALSE(g.unlock(0, GOOD, 3, 1000));
+  TEST_ASSERT_FALSE(g.unlock(0, GOOD, 4, 1000));
+}
+
+void test_success_resets_streak() {
+  CommandGate g = makeGate();
+  failN(g, 0, 4, 1000);
+  TEST_ASSERT_TRUE(g.unlock(0, GOOD, 4, 1000));
+  failN(g, 0, 4, 1000);  // streak restarted: 4 more failures still not a lockout
+  TEST_ASSERT_TRUE(g.unlock(0, GOOD, 4, 1000));
+}
+
+void test_disconnect_resets_lockout() {
+  CommandGate g = makeGate();
+  failN(g, 0, 5, 1000);
+  g.onDisconnect(0);
+  TEST_ASSERT_TRUE(g.unlock(0, GOOD, 4, 1001));
+}
+
+void test_lockout_slot_isolation() {
+  CommandGate g = makeGate();
+  failN(g, 0, 5, 1000);
+  TEST_ASSERT_FALSE(g.unlock(0, GOOD, 4, 1001));
+  TEST_ASSERT_TRUE(g.unlock(1, GOOD, 4, 1001));
+  TEST_ASSERT_TRUE(g.isUnlocked(1));
+  TEST_ASSERT_FALSE(g.isUnlocked(0));
 }
 
 void test_led_priority() {
@@ -150,6 +225,15 @@ int main() {
   RUN_TEST(test_unlock_per_connection);
   RUN_TEST(test_out_of_range_conn_always_locked);
   RUN_TEST(test_relock_on_disconnect);
+  RUN_TEST(test_lockout_after_five_failures);
+  RUN_TEST(test_four_failures_no_lockout);
+  RUN_TEST(test_unlock_allowed_after_lockout_expires);
+  RUN_TEST(test_failure_after_lockout_rearms_it);
+  RUN_TEST(test_lockout_wraparound);
+  RUN_TEST(test_bad_length_counts_as_failure);
+  RUN_TEST(test_success_resets_streak);
+  RUN_TEST(test_disconnect_resets_lockout);
+  RUN_TEST(test_lockout_slot_isolation);
   RUN_TEST(test_led_priority);
   RUN_TEST(test_led_highest_source_wins);
   RUN_TEST(test_led_independent_state);
