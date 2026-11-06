@@ -1,0 +1,1478 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Relatório Gaiaball v2</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Defeitos encontrados no firmware legado da Gaiaball, a correção aplicada no v2 e o impacto esperado, com checklist de validação em bancada.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: relatório técnico de uma coluna (≈ 72ch) com barra de seções fixa no topo;
+   tabelas, código e diagrama rolam dentro do próprio contêiner. */
+:root {
+  --bg: #f2f5f4;
+  --surface: #ffffff;
+  --ink: #16201e;
+  --muted: #56655f;
+  --line: #d3dcd8;
+  --accent: #1c5876;
+  --accent-soft: #e0ebf0;
+  --code-bg: #edf1ef;
+  --before: #9a3412;
+  --before-bg: #fbeee8;
+  --after: #17603a;
+  --after-bg: #e6f2ea;
+  --crit: #b42318;
+  --crit-bg: #fdeceb;
+  --high: #a8480a;
+  --high-bg: #fcefe2;
+  --mid: #765b00;
+  --mid-bg: #f6efd6;
+  --f-imu: #2f6f9f;
+  --f-hdr: #6b7a75;
+  --f-time: #7d5ba6;
+  --f-data: #2e7d5b;
+  --f-flag: #b0662a;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", "Roboto Condensed", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --radius: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1514; --surface: #151e1d; --ink: #e2e9e7; --muted: #98a8a3; --line: #2a3735;
+    --accent: #72b6d8; --accent-soft: #15303c; --code-bg: #111918;
+    --before: #f3a07c; --before-bg: #2b1913; --after: #82d3a3; --after-bg: #12271b;
+    --crit: #f4877b; --crit-bg: #3a1714; --high: #f2a75e; --high-bg: #35230f; --mid: #e0c35c; --mid-bg: #2e2810;
+    --f-imu: #6fb0e0; --f-hdr: #8b9a95; --f-time: #b796e0; --f-data: #6fcc9f; --f-flag: #e9a46a;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1514; --surface: #151e1d; --ink: #e2e9e7; --muted: #98a8a3; --line: #2a3735;
+  --accent: #72b6d8; --accent-soft: #15303c; --code-bg: #111918;
+  --before: #f3a07c; --before-bg: #2b1913; --after: #82d3a3; --after-bg: #12271b;
+  --crit: #f4877b; --crit-bg: #3a1714; --high: #f2a75e; --high-bg: #35230f; --mid: #e0c35c; --mid-bg: #2e2810;
+  --f-imu: #6fb0e0; --f-hdr: #8b9a95; --f-time: #b796e0; --f-data: #6fcc9f; --f-flag: #e9a46a;
+  color-scheme: dark;
+}
+:root[data-theme="light"] { color-scheme: light; }
+
+* { box-sizing: border-box; }
+html { scroll-padding-top: 64px; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 400 16px/1.6 var(--font-body);
+  -webkit-text-size-adjust: 100%;
+}
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px);
+  z-index: 10; background: var(--surface);
+}
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, label:focus-within {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: clamp(1.9rem, 5vw, 2.6rem); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 1.6rem; font-weight: 600; }
+h3 { font-size: 1.15rem; font-weight: 600; }
+p { margin: 0; }
+code, pre, kbd { font-family: var(--font-mono); font-size: 0.86em; }
+:not(pre) > code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 3px; overflow-wrap: anywhere; }
+
+.wrap {
+  max-width: 960px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+
+/* ---- top bar ---- */
+.topbar {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--surface); border-bottom: 1px solid var(--line);
+}
+.topbar .wrap { display: flex; align-items: center; gap: 12px; padding-block: 8px; }
+.brand { font-family: var(--font-display); font-weight: 600; white-space: nowrap; color: var(--ink); text-decoration: none; }
+.toc { display: flex; gap: 4px; overflow-x: auto; flex: 1; min-width: 0; scrollbar-width: none; }
+.toc::-webkit-scrollbar { display: none; }
+.toc a {
+  white-space: nowrap; text-decoration: none; color: var(--muted); font-size: 0.85rem;
+  padding: 4px 8px; border-radius: 4px;
+}
+.toc a:hover { color: var(--ink); background: var(--accent-soft); }
+.theme-btn {
+  font: 500 0.8rem var(--font-body); color: var(--ink); background: transparent;
+  border: 1px solid var(--line); border-radius: 4px; padding: 5px 9px; cursor: pointer; white-space: nowrap;
+}
+.theme-btn:hover { border-color: var(--accent); }
+
+/* ---- header ---- */
+header.hero { padding-block: 40px 28px; }
+.hero .wrap { display: grid; gap: 14px; }
+.eyebrow { font: 500 0.75rem var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 1.08rem; max-width: 66ch; color: var(--ink); }
+.meta-row { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.85rem; color: var(--muted); }
+.meta-row b { color: var(--ink); font-weight: 600; }
+.status-note {
+  border: 1px solid var(--line); background: var(--surface); border-radius: var(--radius);
+  padding: 12px 14px; font-size: 0.92rem; max-width: 72ch;
+}
+.status-note strong { color: var(--high); }
+
+section.block { padding-block: 34px; border-top: 1px solid var(--line); }
+section.block > .wrap { display: grid; gap: 18px; }
+.section-head { display: grid; gap: 6px; }
+.section-head p { color: var(--muted); max-width: 70ch; }
+.prose { display: grid; gap: 12px; max-width: 72ch; }
+
+/* ---- severity + symptom chips ---- */
+.sev {
+  display: inline-block; font: 600 0.72rem var(--font-body); letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: 3px; white-space: nowrap;
+}
+.sev-critico { color: var(--crit); background: var(--crit-bg); }
+.sev-alto { color: var(--high); background: var(--high-bg); }
+.sev-medio { color: var(--mid); background: var(--mid-bg); }
+.sym {
+  display: inline-block; font-size: 0.75rem; color: var(--muted); border: 1px solid var(--line);
+  border-radius: 999px; padding: 1px 8px; white-space: nowrap;
+}
+
+/* ---- summary table ---- */
+.scroll { overflow-x: auto; max-width: 100%; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; background: var(--surface); }
+th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+th { font: 600 0.75rem var(--font-body); letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); background: var(--surface); }
+td { font-variant-numeric: tabular-nums; }
+.symptom-table td:first-child { font-weight: 600; min-width: 11rem; }
+.symptom-table .links { display: flex; flex-wrap: wrap; gap: 4px; }
+.symptom-table .links a { font: 500 0.8rem var(--font-mono); text-decoration: none; padding: 1px 6px; border-radius: 3px; background: var(--accent-soft); }
+.state { font-size: 0.82rem; color: var(--after); white-space: nowrap; }
+.state::before { content: "● "; }
+.counts { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: 0.9rem; }
+
+/* ---- filter bar ---- */
+.filters {
+  display: grid; gap: 10px; background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 12px;
+}
+.filter-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.filter-row > span.lbl { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); min-width: 5.5rem; }
+.chip-btn {
+  font: 500 0.8rem var(--font-body); color: var(--ink); background: transparent; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px;
+}
+.chip-btn[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.search {
+  width: 100%; font: 400 0.95rem var(--font-body); color: var(--ink); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 4px; padding: 8px 10px;
+}
+.result-line { font-size: 0.85rem; color: var(--muted); }
+.result-line button { font: inherit; color: var(--accent); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; }
+
+/* ---- finding cards ---- */
+.findings { display: grid; gap: 10px; }
+details.finding { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+details.finding[open] { border-color: var(--accent); }
+details.finding > summary {
+  list-style: none; cursor: pointer; padding: 12px 14px; display: grid;
+  grid-template-columns: auto 1fr auto; gap: 4px 12px; align-items: baseline;
+}
+details.finding > summary::-webkit-details-marker { display: none; }
+.fid { font: 500 0.82rem var(--font-mono); color: var(--muted); }
+.ftitle { min-width: 0; }
+.ftitle h3 { font-size: 1.06rem; }
+.fchips { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.caret { font: 500 0.8rem var(--font-mono); color: var(--muted); transition: transform .15s; }
+details[open] .caret { transform: rotate(90deg); }
+.fbody { padding: 0 14px 16px; display: grid; gap: 14px; border-top: 1px solid var(--line); padding-top: 14px; }
+.fbody p { max-width: 72ch; }
+.ba { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ba > figure { margin: 0; min-width: 0; border-radius: 4px; overflow: hidden; border: 1px solid var(--line); }
+.ba figcaption { font: 500 0.75rem var(--font-mono); padding: 6px 10px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.ba .before figcaption { color: var(--before); background: var(--before-bg); }
+.ba .after figcaption { color: var(--after); background: var(--after-bg); }
+.ba pre { margin: 0; padding: 10px; overflow-x: auto; background: var(--code-bg); line-height: 1.45; font-size: 0.8rem; }
+.facts { display: grid; grid-template-columns: 11rem 1fr; gap: 8px 14px; margin: 0; }
+.facts dt { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); padding-top: 3px; }
+.facts dd { margin: 0; max-width: 66ch; }
+.credit { font-size: 0.85rem; color: var(--muted); font-style: italic; }
+.discovery { font-size: 0.75rem; font-weight: 600; color: var(--accent); }
+.empty { padding: 18px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: var(--radius); }
+
+/* ---- diagram ---- */
+.diagram { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; overflow-x: auto; }
+.diagram svg { display: block; width: 100%; min-width: 760px; height: auto; }
+.d-frame { fill: none; stroke: var(--line); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.d-frame-lbl { fill: var(--muted); font: 600 12px var(--font-body); letter-spacing: 0.05em; }
+.d-hw { fill: var(--bg); stroke: var(--muted); stroke-width: 1; }
+.d-task { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.3; }
+.d-app { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2; }
+.d-store { fill: var(--surface); stroke: var(--muted); stroke-width: 1; }
+.d-ext { fill: var(--after-bg); stroke: var(--after); stroke-width: 1.2; }
+.d-t { fill: var(--ink); font: 600 13px var(--font-body); }
+.d-t2 { fill: var(--ink); font: 600 11.5px var(--font-body); }
+.d-s { fill: var(--muted); font: 400 11px var(--font-body); }
+.d-m { fill: var(--muted); font: 400 10.5px var(--font-mono); }
+.d-edge { fill: none; stroke: var(--muted); stroke-width: 1.4; }
+.d-arrow { fill: var(--muted); }
+.task-table td:nth-child(2), .task-table td:nth-child(3) { white-space: nowrap; }
+
+/* ---- byte strips ---- */
+.packet { display: grid; gap: 8px; }
+.packet h3 { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.packet h3 small { font: 400 0.8rem var(--font-mono); color: var(--muted); }
+.strip-wrap { overflow-x: auto; }
+.strip { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(28px, 1fr); min-width: 640px; gap: 2px; }
+.strip .fld {
+  border-radius: 3px; padding: 4px 4px 5px; font: 500 0.7rem var(--font-mono); color: var(--ink);
+  background: var(--code-bg); border-top: 3px solid var(--f-hdr); text-align: center; overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis;
+}
+.strip .fld small { display: block; color: var(--muted); font-weight: 400; }
+.fld.k-hdr { border-top-color: var(--f-hdr); }
+.fld.k-time { border-top-color: var(--f-time); }
+.fld.k-imu { border-top-color: var(--f-imu); }
+.fld.k-data { border-top-color: var(--f-data); }
+.fld.k-flag { border-top-color: var(--f-flag); }
+.size-stat { display: flex; flex-wrap: wrap; gap: 6px 22px; font-size: 0.9rem; color: var(--muted); }
+.size-stat b { font: 600 1.35rem var(--font-display); color: var(--ink); margin-right: 4px; font-variant-numeric: tabular-nums; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.two-col > div { min-width: 0; display: grid; gap: 10px; align-content: start; }
+.callout { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: grid; gap: 8px; }
+
+/* ---- params ---- */
+.param-filters { display: flex; flex-wrap: wrap; gap: 8px; }
+.param-filters select, .param-filters input {
+  font: 400 0.9rem var(--font-body); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 4px; padding: 7px 9px;
+}
+.param-filters input { flex: 1; min-width: 0; }
+.param-table td:nth-child(2), .param-table td:nth-child(4), .param-table td:nth-child(5) { font-family: var(--font-mono); font-size: 0.8rem; white-space: nowrap; }
+.param-table td:nth-child(3) code { white-space: nowrap; }
+.reboot { font-size: 0.72rem; color: var(--high); white-space: nowrap; }
+
+/* ---- tools ---- */
+.tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.tool { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.tool ul { margin: 0; padding-left: 1.1rem; display: grid; gap: 4px; font-size: 0.92rem; }
+
+/* ---- checklist ---- */
+.check-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.progress { font: 500 0.9rem var(--font-mono); }
+.progress-bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.progress-bar > i { display: block; height: 100%; width: 0; background: var(--after); transition: width .2s; }
+ol.checklist { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; counter-reset: step; }
+ol.checklist li { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); }
+ol.checklist label { display: grid; grid-template-columns: auto auto 1fr; gap: 10px; padding: 11px 13px; cursor: pointer; align-items: start; }
+ol.checklist li::before { content: none; }
+ol.checklist .n { font: 500 0.8rem var(--font-mono); color: var(--muted); padding-top: 2px; counter-increment: step; }
+ol.checklist .n::before { content: counter(step, decimal-leading-zero); }
+ol.checklist input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--after); }
+ol.checklist .txt { display: grid; gap: 3px; min-width: 0; }
+ol.checklist .txt b { font-weight: 600; }
+ol.checklist .txt span { font-size: 0.88rem; color: var(--muted); }
+ol.checklist li.done { border-color: var(--after); }
+ol.checklist li.done .txt b { text-decoration: line-through; text-decoration-color: var(--after); }
+.ghost-btn { font: 500 0.8rem var(--font-body); color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 5px 10px; cursor: pointer; }
+
+footer { padding-block: 28px 40px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.85rem; }
+footer .wrap { display: grid; gap: 6px; }
+
+@media (max-width: 720px) {
+  .ba, .two-col, .tools { grid-template-columns: 1fr; }
+  .facts { grid-template-columns: 1fr; gap: 2px; }
+  .facts dd { margin-bottom: 8px; }
+  .brand span { display: none; }
+  details.finding > summary { grid-template-columns: auto 1fr auto; }
+  .filter-row > span.lbl { min-width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="wrap">
+    <a class="brand" href="#topo">Gaiaball <span>v2</span></a>
+    <nav class="toc" aria-label="Seções">
+      <a href="#sumario">Sumário</a>
+      <a href="#achados">Achados</a>
+      <a href="#arquitetura">Arquitetura</a>
+      <a href="#protocolo">Protocolo</a>
+      <a href="#parametros">Parâmetros</a>
+      <a href="#ferramentas">Ferramentas</a>
+      <a href="#bancada">Bancada</a>
+    </nav>
+    <button class="theme-btn" id="themeBtn" type="button" aria-label="Alternar tema">Tema: sistema</button>
+  </div>
+</div>
+
+<header class="hero" id="topo">
+  <div class="wrap">
+    <span class="eyebrow">GaiaSenses · firmware ESP32 + ICM-20948 · 06/11/2026</span>
+    <h1>Relatório Gaiaball v2</h1>
+    <p class="lede">O que estava errado no firmware que roda hoje no globo, o que mudou no firmware v2 e o que se espera ganhar com cada mudança. Cada achado aponta a linha exata do código legado (<code>firmware-original.ino</code>) e o trecho que o substitui.</p>
+    <div class="meta-row">
+      <span><b>Código legado:</b> firmware-original.ino (639 linhas, um único <code>loop()</code>)</span>
+      <span><b>Código novo:</b> firmware/Gaiaball (multiarquivo, FreeRTOS, NimBLE)</span>
+      <span><b>Branch:</b> feature/firmware-v2</span>
+    </div>
+    <p class="status-note"><strong>Estado:</strong> todas as correções estão implementadas e compilam nos dois toolchains (PlatformIO e Arduino IDE), com 66 testes de unidade da lógica pura passando no host. <strong>Nada foi medido em hardware ainda.</strong> Taxas, latência e estabilidade citadas aqui são metas de projeto, a confirmar com o <a href="#bancada">checklist de bancada</a>.</p>
+  </div>
+</header>
+
+<main>
+
+<!-- =============================== SUMÁRIO =============================== -->
+<section class="block" id="sumario">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">1 · Sumário executivo</span>
+      <h2>Os sintomas e as causas encontradas</h2>
+      <p>Todos os sintomas relatados têm causa identificável no código. A tabela liga cada sintoma aos achados que o explicam; os números levam ao cartão correspondente.</p>
+    </div>
+    <div class="scroll">
+      <table class="symptom-table">
+        <thead><tr><th>Sintoma relatado</th><th>O que acontecia</th><th>Achados</th><th>Estado</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>O globo “alucina”</td>
+            <td>Quaternion inválido (NaN) quando a raiz recebia número negativo; interferência magnética no modo de 9 eixos; saltos quando a FIFO da IMU estourava.</td>
+            <td><div class="links"><a href="#f01">F01</a><a href="#f11">F11</a><a href="#f02">F02</a><a href="#f05">F05</a></div></td>
+            <td><span class="state">Corrigido no v2 · validar em bancada</span></td>
+          </tr>
+          <tr>
+            <td>Travamentos</td>
+            <td>Inicialização da IMU em laço infinito; tudo num único <code>loop()</code> sem watchdog; alocação de <code>String</code> a cada notificação; escrita serial bloqueante.</td>
+            <td><div class="links"><a href="#f09">F09</a><a href="#f13">F13</a><a href="#f05">F05</a><a href="#f12">F12</a></div></td>
+            <td><span class="state">Corrigido no v2 · validar em bancada</span></td>
+          </tr>
+          <tr>
+            <td>Latência que cresce com o tempo</td>
+            <td>A FIFO do DMP era lida um pacote por volta, com pausas fixas de 12 e 10 ms; o atraso podia acumular até a FIFO estourar. Leitura de áudio e prints seriais no mesmo caminho.</td>
+            <td><div class="links"><a href="#f02">F02</a><a href="#f12">F12</a><a href="#f06">F06</a><a href="#f13">F13</a></div></td>
+            <td><span class="state">Corrigido no v2 · validar em bancada</span></td>
+          </tr>
+          <tr>
+            <td>Conexão BLE instável</td>
+            <td>Sem causa única confirmada. Hipóteses mais fortes: notificações JSON de ~200 B sem controle de MTU e enviadas mesmo sem dado novo, e fragmentação de heap. O v2 elimina as duas e passa a medir heap e taxa de envio.</td>
+            <td><div class="links"><a href="#f05">F05</a><a href="#f13">F13</a><a href="#f12">F12</a></div></td>
+            <td><span class="state">Corrigido no v2 · validar em bancada</span></td>
+          </tr>
+          <tr>
+            <td>Giro perfeito na bola ≠ giro perfeito no globo virtual</td>
+            <td>Troca de eixos fixa no código, sem calibração de montagem; ângulos de Euler com bloqueio em pitch ±90°; norte magnético “puxando” a orientação no modo de 9 eixos.</td>
+            <td><div class="links"><a href="#f10">F10</a><a href="#f11">F11</a><a href="#f01">F01</a></div></td>
+            <td><span class="state">Corrigido no v2 · validar em bancada</span></td>
+          </tr>
+          <tr>
+            <td>CO₂ (não relatado, descoberto na análise)</td>
+            <td>O site recebia <code>{}</code> e descartava amostras; o parser não ressincronizava; o checksum provavelmente nunca validou, então o CO₂ real pode nunca ter sido atualizado.</td>
+            <td><div class="links"><a href="#f03">F03</a><a href="#f07">F07</a><a href="#f08">F08</a></div></td>
+            <td><span class="state">Corrigido no v2 · protocolo do sensor a confirmar</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="counts" id="sevCounts">
+      <span>14 achados:</span>
+      <span class="sev sev-critico">2 críticos</span>
+      <span class="sev sev-alto">7 altos</span>
+      <span class="sev sev-medio">5 médios</span>
+      <span style="color:var(--muted)">· 11 deles também apontados pelo relatório inicial (relatorio.md), um em parte</span>
+    </div>
+  </div>
+</section>
+
+<!-- =============================== ACHADOS =============================== -->
+<section class="block" id="achados">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">2 · Achados</span>
+      <h2>Defeito, correção e impacto esperado</h2>
+      <p>Cada cartão abre com o código antes (legado, com linha) e depois (v2, com arquivo). Quando o relatório inicial em <code>relatorio.md</code> já tinha apontado o mesmo problema, o cartão dá o crédito.</p>
+    </div>
+
+    <div class="filters" role="search">
+      <div class="filter-row" id="sevFilter">
+        <span class="lbl">Severidade</span>
+        <button class="chip-btn" type="button" data-val="todos" aria-pressed="true">Todas</button>
+        <button class="chip-btn" type="button" data-val="critico" aria-pressed="false">Crítico</button>
+        <button class="chip-btn" type="button" data-val="alto" aria-pressed="false">Alto</button>
+        <button class="chip-btn" type="button" data-val="medio" aria-pressed="false">Médio</button>
+      </div>
+      <div class="filter-row" id="symFilter">
+        <span class="lbl">Sintoma</span>
+        <button class="chip-btn" type="button" data-val="todos" aria-pressed="true">Todos</button>
+        <button class="chip-btn" type="button" data-val="alucina" aria-pressed="false">Globo alucina</button>
+        <button class="chip-btn" type="button" data-val="trava" aria-pressed="false">Travamentos</button>
+        <button class="chip-btn" type="button" data-val="latencia" aria-pressed="false">Latência</button>
+        <button class="chip-btn" type="button" data-val="conexao" aria-pressed="false">Conexão</button>
+        <button class="chip-btn" type="button" data-val="giro" aria-pressed="false">Giro fiel</button>
+        <button class="chip-btn" type="button" data-val="co2" aria-pressed="false">CO₂</button>
+      </div>
+      <input class="search" id="findSearch" type="search" placeholder="Buscar nos achados (ex.: FIFO, checksum, GPIO2, L413)" aria-label="Buscar nos achados">
+      <div class="result-line"><span id="resultCount">14 de 14 achados</span> · <button type="button" id="expandAll">abrir todos</button> · <button type="button" id="collapseAll">fechar todos</button></div>
+    </div>
+
+    <div class="findings" id="findings">
+
+<!-- F01 -->
+<details class="finding" id="f01" data-sev="critico" data-sym="alucina giro">
+  <summary>
+    <span class="fid">F01</span>
+    <span class="ftitle"><h3>Quaternion vira NaN: raiz quadrada de número negativo</h3></span>
+    <span class="caret">▶</span>
+    <span class="fchips"><span class="sev sev-critico">Crítico</span><span class="sym">Globo alucina</span><span class="sym">Giro fiel</span></span>
+  </summary>
+  <div class="fbody">
+    <p>O DMP entrega só três componentes do quaternion (q1, q2, q3, em ponto fixo Q30). O firmware reconstrói o quarto com <code>q0 = √(1 − (q1² + q2² + q3²))</code>. Por quantização e ruído, a soma dos quadrados pode passar um pouco de 1; o argumento fica negativo e <code>sqrt</code> devolve NaN. Não havia proteção, normalização nem descarte: o NaN seguia para os ângulos de Euler e para o site, e o globo virtual saltava ou congelava.</p>
+    <div class="ba">
+      <figure class="before"><figcaption>Antes · firmware-original.ino L545–548</figcaption>
+<pre><code>double q1 = ((double)data.Quat9.Data.Q1) / 1073741824.0;
+double q2 = ((double)data.Quat9.Data.Q2) / 1073741824.0;
+double q3 = ((double)data.Quat9.Data.Q3) / 1073741824.0;
+double q0 = sqrt(1.0 - ((q1*q1) + (q2*q2) + (q3*q3)));</code></pre></figure>
+      <figure class="after"><figcaption>Depois · src/logic/QuatMath.cpp (sanitizeQuat)</figcaption>
+<pre><code>if (!std::isfinite(q1) || !std::isfinite(q2) || !std::isfinite(q3)) {
+  out = kIdentity;
+  return false;
+}
+const double v2 = q1 * q1 + q2 * q2 + q3 * q3;
+const double w = std::sqrt(v2 &lt; 1.0 ? 1.0 - v2 : 0.0);
+const double n = std::sqrt(w * w + v2);
+if (!(n &gt; kMinNorm)) {
+  out = kIdentity;
+  return false;
+}
+out = Quat{(float)(w / n), (float)(q1 / n), (float)(q2 / n), (float)(q3 / n)};
+return true;</code></pre></figure>
+    </div>
+    <dl class="facts">
+      <dt>Correção</dt><dd>Clamp do argumento em zero, normalização do quaternion inteiro e rejeição de entradas não finitas. Um pacote inválido sai com a flag <code>quatValid = 0</code> e repete a última orientação boa, em vez de inventar uma. Coberto por testes de unidade no host.</dd>
+      <dt>Impacto esperado</dt><dd>Zero NaN no fio. O quaternion enviado é sempre unitário, o que também evita distorção nos ângulos calculados pelo site.</dd>
+      <dt>Validar na bancada</dt><dd>Girar a bola rápido e com trancos por 5 minutos com o config-app aberto: a vista 3D não pode saltar nem congelar; no site, nenhum ângulo <code>null</code>.</dd>
+    </dl>
+    <p class="credit">Apontado também pelo relatório inicial (§3.4, itens 2 e 3).</p>
+  </div>
+</details>
+
+<!-- F02 -->
+<details class="finding" id="f02" data-sev="critico" data-sym="latencia alucina">
+  <summary>
+    <span class="fid">F02</span>
+    <span class="ftitle"><h3>FIFO da IMU lida um pacote por volta, com pausas fixas</h3></span>
+    <span class="caret">▶</span>
+    <span class="fchips"><span class="sev sev-critico">Crítico</span><span class="sym">Latência</span><span class="sym">Globo alucina</span></span>
+  </summary>
+  <div class="fbody">
+    <p>O DMP grava amostras numa FIFO de forma contínua. O <code>loop()</code> lia um único pacote por volta. Com o site conectado, cada volta dormia 12 ms (L619), mais 10 ms quando a biblioteca não sinalizava dados pendentes (L635–638), além de até 10 ms esperando o I²S (L106), do print serial (<a href="#f12">F12</a>) e da serialização JSON. A análise do projeto estima produção perto de 56 pacotes/s contra consumo abaixo de 40/s; isso nunca foi medido, e o firmware não tinha como medir. Quando a produção supera o consumo, o atraso cresce: o globo mostra uma orientação cada vez mais antiga. Quando a FIFO enche, o DMP descarta dados, a leitura pode desalinhar e o globo pula. O firmware não tinha como perceber nada disso. A chamada <code>setDMPODRrate(..., 1)</code> em L434–435 também traz o comentário “Set to 1Hz”, que não corresponde ao parâmetro (é um divisor, não uma frequência).</p>
+    <div class="ba">
+      <figure class="before"><figcaption>Antes · firmware-original.ino L533–534, L619, L635–638</figcaption>
+<pre><code>icm_20948_DMP_data_t data;
+myICM.readDMPdataFromFIFO(&amp;data);
+⋮
+      delay(12);
+⋮
+if (myICM.status != ICM_20948_Stat_FIFOMoreDataAvail) {
+  if (!haveQuat) delay(2);
+  delay(10);
+}</code></pre></figure>
+      <figure class="after"><figcaption>Depois · src/services/ImuService.cpp (drainFifo)</figcaption>
+<pre><code>void ImuService::drainFifo() {
+  if (checkOverflow()) return;
+  icm_20948_DMP_data_t data;
+  for (int n = 0; n &lt; kMaxPacketsPerCycle; ++n) {
+    icm_.readDMPdataFromFIFO(&amp;data);
+    const ICM_20948_Status_e st = icm_.status;
+    if (st == ICM_20948_Stat_Ok || st == ICM_20948_Stat_FIFOMoreDataAvail) {
+      processPacket(data, micros());
+      if (st == ICM_20948_Stat_Ok) return;  // FIFO empty after this packet
+      continue;
+    }
+    if (st == ICM_20948_Stat_FIFOIncompleteData) {
+      resyncFifo();
+      ⋮</code></pre></figure>
+    </div>
+    <dl class="facts">
+      <dt>Correção</dt><dd>Tarefa própria da IMU (core 1, prioridade 3) acorda a cada 5 ms e drena até 16 pacotes por ciclo. Overflow é detectado pelo registrador <code>INT_STATUS_2</code> e pelo tamanho do backlog; nos dois casos a FIFO é zerada e o evento é contado (<code>fifoOverflows</code> no pacote de diagnóstico). Pacote incompleto também força ressincronização.</dd>
+      <dt>Impacto esperado</dt><dd>A amostra enviada é sempre a mais recente. A latência deixa de crescer com o tempo de uso, e um estouro de FIFO vira um evento contado em vez de um salto silencioso.</dd>
+      <dt>Validar na bancada</dt><dd>Após 1 h ligado, a resposta do globo deve ser igual à do primeiro minuto. <code>fifoOverflows</code> no diagnóstico deve ficar em 0 (ou quase) durante uso normal.</dd>
+    </dl>
+    <p class="credit">Apontado também pelo relatório inicial (§3.2 e §3.4, itens 1 e 5).</p>
+  </div>
+</details>
+
+<!-- F03 -->
+<details class="finding" id="f03" data-sev="alto" data-sym="co2">
+  <summary>
+    <span class="fid">F03</span>
+    <span class="ftitle"><h3>Site recebia <code>{}</code> no canal de CO₂ e perdia a amostra</h3></span>
+    <span class="caret">▶</span>
+    <span class="fchips"><span class="sev sev-alto">Alto</span><span class="sym">CO₂</span><span class="discovery">descoberta desta análise</span></span>
+  </summary>
+  <div class="fbody">
+    <p>O documento de CO₂ (<code>co2Doc</code>) só era preenchido dentro do bloco que trata um pacote com quaternion (L582–584), mas era serializado e notificado a cada volta (L613–617). Em toda volta sem quaternion, o site recebia <code>{}</code>. O listener do site lia <code>parsed.co2.ppm</code> sem <code>try/catch</code>, gerava <code>TypeError</code> e a amostra se perdia sem aviso. A regra “CO₂ acima do limiar dispara composição” dependia dessas amostras.</p>
+    <div class="ba">
+      <figure class="before"><figcaption>Antes · firmware-original.ino L582–584 e L613–617</figcaption>
+<pre><code>      JsonObject co2 = co2Doc["co2"].to&lt;JsonObject&gt;();
+      co2["ppm"] = co2_para_site;
+    }
+⋮
+        String co2ppmOutput;
+        serializeJson(co2Doc, co2ppmOutput);
+        co2ppmValue = co2ppmOutput;
+        pCO2Characteristic-&gt;setValue(co2ppmValue.c_str());
+        pCO2Characteristic-&gt;notify();</code></pre></figure>
+      <figure class="after"><figcaption>Depois · src/App.cpp (maybeNotifyCo2)</figcaption>
+<pre><code>const bool changed = !co2Sent_ || ppm != lastCo2Ppm_ || flags != lastCo2Flags_;
+if (!changed &amp;&amp; !elapsed(nowMs, lastCo2NotifyMs_, kCo2KeepaliveMs)) return;
+⋮
+p.seq = co2Seq_++;
+p.timestampMs = nowMs;
+p.ppm = ppm;
+p.flags = flags;
+p.ageS = (uint8_t)ageS;
+ble_.notifyCo2(p);</code></pre></figure>
+    </div>
+    <dl class="facts">
+      <dt>Correção</dt><dd>O CO₂ tem caminho próprio: pacote binário de 12 bytes, sempre completo, enviado quando o valor ou o estado muda e a cada 1 s como keepalive. Traz flags <code>valid</code>, <code>stale</code> e <code>virtualActive</code> e a idade da leitura em segundos. No site, o decoder novo (<code>ble-decode.ts</code>) nunca lança exceção: pacote inválido vira <code>null</code> e é ignorado.</dd>
+      <dt>Impacto esperado</dt><dd>Nenhuma amostra de CO₂ perdida por erro de parsing. O site passa a saber se o valor é real, virtual (pico de som) ou velho.</dd>
+      <dt>Validar na bancada</dt><dd>Com o site conectado, provocar um pico de som e conferir que o CO₂ virtual (2100 ppm) chega após ~1 s e se mantém por ~17 s, sem erros no console do navegador.</dd>
+    </dl>
+  </div>
+</details>
+
+<!-- F04 -->
+<details class="finding" id="f04" data-sev="medio" data-sym="">
+  <summary>
+    <span class="fid">F04</span>
+    <span class="ftitle"><h3>GPIO2 usado por três funções, e é pino de boot</h3></span>
+    <span class="caret">▶</span>
+    <span class="fchips"><span class="sev sev-medio">Médio</span><span class="sym">LEDs / hardware</span></span>
+  </summary>
+  <div class="fbody">
+    <p>O mesmo GPIO2 aparece como <code>CS_PIN</code> do SPI (L18, sem uso em I²C), <code>ledPin</code> do comando BLE (L48) e <code>LED_SOM_PIN</code> (L99). O callback BLE escrevia direto no pino (L74) e podia apagar o LED enquanto um evento de som ou o CO₂ virtual deveria mantê-lo aceso. Além disso, o GPIO2 é pino de <em>strapping</em> do ESP32: o nível dele no boot influencia o modo de inicialização.</p>
+    <div class="ba">
+      <figure class="before"><figcaption>Antes · firmware-original.ino L18, L48, L74, L99</figcaption>
+<pre><code>#define CS_PIN 2
+⋮
+const int ledPin = 2;
+⋮
+      digitalWrite(ledPin, receivedValue == 1 ? HIGH : LOW);
+⋮
+#define LED_SOM_PIN 2   // Vermelho (som) - mantido no GPIO2</code></pre></figure>
+      <figure class="after"><figcaption>Depois · src/logic/LedPriority.h</figcaption>
+<pre><code>// Arbitrates the single physical LED between independent sources. Each source
+// holds its own on/off state; the level is that of the highest-priority source
+// that is currently ON (Error &gt; SoundEvent &gt; Co2Alert &gt; BleCommand).
+class LedPriority {
+ public:
+  enum class Source : uint8_t { BleCommand = 0, Co2Alert = 1, SoundEvent = 2, Error = 3 };
+
+  void set(Source s, bool on) { ⋯ }
+  bool resolved() const { return mask_ != 0; }</code></pre></figure>
+    </div>
+    <dl class="facts">
+      <dt>Correção</dt><dd>Um único <code>LedController</code> decide o nível do pino a partir de fontes independentes (comando BLE, alerta de CO₂, evento de som, erro). O GPIO2 é forçado para LOW no boot. Os pinos dos LEDs viraram configuráveis (TLV <code>0x30</code>/<code>0x31</code>, com reboot), o que permite tirar o LED do GPIO2 se a placa permitir.</dd>
+      <dt>Impacto esperado</dt><dd>O LED reflete o estado real; um comando BLE não “rouba” a sinalização de som. Menos risco no boot.</dd>
+      <dt>Validar na bancada</dt><dd>Enviar <code>0x00</code> (apagar LED) durante o pulso de CO₂ virtual: o LED deve continuar aceso até o fim do pulso.</dd>
+    </dl>
+    <p class="credit">Apontado também pelo relatório inicial (§3.7).</p>
+  </div>
+</details>
+
+<!-- F05 -->
+<details class="finding" id="f05" data-sev="alto" data-sym="conexao trava latencia alucina">
+  <summary>
+    <span class="fid">F05</span>
+    <span class="ftitle"><h3>JSON e <code>String</code> a cada notificação, mesmo sem dado novo</h3></span>
+    <span class="caret">▶</span>
+    <span class="fchips"><span class="sev sev-alto">Alto</span><span class="sym">Conexão</span><span class="sym">Travamentos</span><span class="sym">Latência</span><span class="sym">Globo alucina</span></span>
+  </summary>
+  <div class="fbody">
+    <p>A cada volta o firmware montava três documentos JSON na pilha (um deles, <code>accDoc</code>, nunca usado) e duas <code>String</code> no heap, e notificava as duas características sempre que a leitura da FIFO não falhava, mesmo quando o pacote não trazia quaternion novo. Isso gera mensagens repetidas ou incompletas (um documento só com <code>acc</code>), alocação e liberação de heap dezenas de vezes por segundo e cerca de 200 bytes de texto por amostra. O firmware não negociava MTU nem verificava se a mensagem cabia nele.</p>
+    <div class="ba">
+      <figure class="before"><figcaption>Antes · firmware-original.ino L537–539 e L606–611</figcaption>
+<pre><code>StaticJsonDocument&lt;256&gt; doc;
+StaticJsonDocument&lt;64&gt;  co2Doc;
+StaticJsonDocument&lt;256&gt;  accDoc;
+⋮
+if (deviceConnected) {
+    String output;
+    serializeJson(doc, output);
+    value = output;
+    pSensorCharacteristic-&gt;setValue(value.c_str());
+    pSensorCharacteristic-&gt;notify();</code></pre></figure>
+      <figure class="after"><figcaption>Depois · src/App.cpp (handleImuSample)</figcaption>
+<pre><code>void App::handleImuSample(const ImuSample &amp;s) {
+  if (!imuThrottle_.shouldSend(s.tUs)) return;
+  if (!ble_.anySubscriber(1)) return;
+  const float q[4] = {s.q.w, s.q.x, s.q.y, s.q.z};
+  const ImuPacket p = makeImuPacket(imuSeq_++, s.tUs, q, s.acc, s.flags);
+  ble_.notifyImu(p);
+  imuNotifiesInWindow_++;
+}</code></pre></figure>
+    </div>
+    <dl class="facts">
+      <dt>Correção</dt><dd>Pacote binário fixo de 23 bytes (ver <a href="#protocolo">Protocolo</a>), sem nenhuma alocação em regime. Só sai notificação quando há amostra nova, quando a taxa configurada permite (padrão 50 Hz) e quando alguém assinou a característica. O firmware pede MTU 247 (NimBLE).</dd>
+      <dt>Impacto esperado</dt><dd>Cerca de 9× menos bytes por amostra de orientação, heap estável por tempo indeterminado e rádio menos congestionado. É a mudança com mais chance de estabilizar a conexão.</dd>
+      <dt>Validar na bancada</dt><dd>Diagnóstico a 1 Hz: <code>freeHeapKb</code> e <code>minFreeHeapKb</code> devem ficar estáveis ao longo de horas. No config-app, a taxa medida deve ficar perto da configurada.</dd>
+    </dl>
+    <p class="credit">Apontado também pelo relatório inicial (§3.1, itens 1 a 4).</p>
+  </div>
+</details>
+
+<!-- F06 -->
+<details class="finding" id="f06" data-sev="medio" data-sym="latencia co2">
+  <summary>
+    <span class="fid">F06</span>
+    <span class="ftitle"><h3>Detecção de som lenta e imprecisa</h3></span>
+    <span class="caret">▶</span>
+    <span class="fchips"><span class="sev sev-medio">Médio</span><span class="sym">Latência</span><span class="sym">CO₂</span></span>
+  </summary>
+  <div class="fbody">
+    <p>O nível de áudio era a média do valor absoluto, não RMS, e sem remover o nível DC dos microfones. O filtro <code>MIC_IIR_ALPHA 0.99</code> (L153), atualizado a 50 Hz (L124, L520), tem constante de tempo de cerca de 2 s: um bater de palmas quase não move o nível. A linha de base de ruído era medida uma vez, em 2 s de calibração bloqueante no boot (L253–271), e nunca mais mudava. E <code>i2s_read</code> podia bloquear até 10 ms (L106, L211–217) dentro do mesmo laço que lia a IMU.</p>
+    <div class="ba">
+      <figure class="before"><figcaption>Antes · firmware-original.ino L232–239 e L520</figcaption>
+<pre><code>int32_t sLeft = samples[i] &gt;&gt; 8;
+int32_t sRight = samples[i + 1] &gt;&gt; 8;
+
+if (sLeft &lt; 0) sLeft = -sLeft;
+if (sRight &lt; 0) sRight = -sRight;
+
+somaLeft += (double)sLeft;
+somaRight += (double)sRight;
+⋮
+micDeltaFilt = (MIC_IIR_ALPHA * micDeltaFilt) + ((1.0f - MIC_IIR_ALPHA) * micDeltaRaw);</code></pre></figure>
+      <figure class="after"><figcaption>Depois · src/logic/AudioBlock.cpp e PeakDetector.cpp</figcaption>
+<pre><code>const double meanL = (double)sumL / (double)frames;
+⋮
+const double dl = (double)(interleaved[2 * i] &gt;&gt; 8) - meanL;
+accL += dl * dl;
+⋮
+return {(float)sqrt(accL / (double)frames), (float)sqrt(accR / (double)frames)};
+
+// PeakDetector::update
+fast_ += fastAlpha_ * (rms - fast_);
+slow_ = slowAlpha_ * slow_ + (1.0f - slowAlpha_) * rms;
+const float level = fast_ - slow_;</code></pre></figure>
+    </div>
+    <dl class="facts">
+      <dt>Correção</dt><dd>Tarefa de áudio própria (core 1, prioridade 2), bloqueando só nela mesma. RMS por canal com remoção de DC. Dois filtros: um rápido (α 0,25 por bloco de 16 ms, constante de tempo ≈ 56 ms) para detectar o pico e um lento (α 0,995, ≈ 3 s) como linha de base adaptativa, mais histerese (rearma abaixo de 70% do limiar) e debounce. Sem calibração bloqueante no boot. Todos os parâmetros são ajustáveis pelo config-app.</dd>
+      <dt>Impacto esperado</dt><dd>Picos de som detectados em dezenas de ms, não em segundos; a linha de base acompanha o ruído da sala ao longo da exposição. O áudio deixa de atrasar a IMU.</dd>
+      <dt>Validar na bancada</dt><dd>Palma a ~1 m: o LED de som deve piscar na hora. Repetir com ruído de fundo alto (sala cheia simulada) e ajustar o limiar pelo potenciômetro.</dd>
+    </dl>
+    <p class="credit">Apontado também pelo relatório inicial (§3.5, itens 1 a 3 e recomendações A a C).</p>
+  </div>
+</details>
+
+<!-- F07 -->
+<details class="finding" id="f07" data-sev="alto" data-sym="co2">
+  <summary>
+    <span class="fid">F07</span>
+    <span class="ftitle"><h3>Parser do CO₂ sem ressincronização nem validade</h3></span>
+    <span class="caret">▶</span>
+    <span class="fchips"><span class="sev sev-alto">Alto</span><span class="sym">CO₂</span></span>
+  </summary>
+  <div class="fbody">
+    <p>A leitura do sensor supunha que os 16 primeiros bytes disponíveis na UART eram exatamente um frame. Bastava um byte perdido ou o sensor estar no meio de um frame quando o ESP32 começa a ler para que os frames seguintes viessem desalinhados e fossem descartados, possivelmente para sempre. Também não havia indicação de valor velho: se o sensor parasse, o último valor ficava valendo indefinidamente.</p>
+    <div class="ba">
+      <figure class="before"><figcaption>Antes · firmware-original.ino L338–343</figcaption>
+<pre><code>if (co2Serial.available() &lt; 16) return;
+
+uint8_t buffer[16];
+co2Serial.readBytes(buffer, 16);
+
+if (buffer[0] == 0x42 &amp;&amp; buffer[1] == 0x4D) {</code></pre></figure>
+      <figure class="after"><figcaption>Depois · src/logic/Co2FrameParser.cpp (feed)</figcaption>
+<pre><code>Co2FrameParser::Result Co2FrameParser::feed(uint8_t byte) {
+  buf_[n_++] = byte;
+  alignToHeader();
+  if (n_ &lt; spec_.frameLen) return Result::None;
+
+  if (checksumOk()) {
+    ppm_ = (uint16_t)((buf_[spec_.ppmHiIndex] &lt;&lt; 8) | buf_[spec_.ppmHiIndex + 1]);
+    frames_++;
+    n_ = 0;
+    return Result::Frame;
+  }
+  errors_++;
+  // Skip only this false header; bytes after it may hold a real frame start.
+  dropFront(1);
+  alignToHeader();
+  return Result::ChecksumError;
+}</code></pre></figure>
+    </div>
+    <dl class="facts">
+      <dt>Correção</dt><dd>Parser byte a byte: procura <code>0x42 0x4D</code>, acumula o frame, valida o checksum e, em caso de erro, descarta só o cabeçalho falso e volta a procurar. Contadores de frames bons e de erros (<code>uartFrameErrors</code> no diagnóstico). Sem frame válido por 5 s (configurável), a leitura vira <code>stale</code> e o LED de alerta de CO₂ não fica preso aceso.</dd>
+      <dt>Impacto esperado</dt><dd>Recuperação automática de qualquer desalinhamento; o site sabe quando o valor é velho.</dd>
+      <dt>Validar na bancada</dt><dd>Desconectar e reconectar o fio TX do sensor com o sistema ligado: a leitura deve voltar sozinha e, enquanto desligado, aparecer como <code>stale</code>.</dd>
+    </dl>
+    <p class="credit">Apontado também pelo relatório inicial (§3.6).</p>
+  </div>
+</details>
+
+<!-- F08 -->
+<details class="finding" id="f08" data-sev="alto" data-sym="co2">
+  <summary>
+    <span class="fid">F08</span>
+    <span class="ftitle"><h3>Checksum do CO₂ provavelmente nunca validou</h3></span>
+    <span class="caret">▶</span>
+    <span class="fchips"><span class="sev sev-alto">Alto</span><span class="sym">CO₂</span><span class="discovery">descoberta desta análise · a confirmar</span></span>
+  </summary>
+  <div class="fbody">
+    <p>O código legado soma os bytes 0 a 14 e compara com o byte 15. A referência pública para frames <code>0x42 0x4D</code> de 16 bytes (engenharia reversa publicada em spezifisch.codeberg.page, 23/08/2022) define o checksum como a soma dos bytes 0 a 13. Se o byte 14 do frame não for zero, a conta legada nunca bate, nenhum frame é aceito e <code>co2_real</code> nunca é atualizado: o site receberia sempre o valor inicial de 600 ppm ou o pico virtual de 2100 ppm. O modelo informado (“SC8”) não tem datasheet público confirmado, por isso o v2 trata o layout do frame como configurável em vez de cravar uma versão.</p>
+    <div class="ba">
+      <figure class="before"><figcaption>Antes · firmware-original.ino L344–348</figcaption>
+<pre><code>uint8_t soma = 0;
+for (int i = 0; i &lt; 15; i++) soma += buffer[i];
+
+if (soma == buffer[15]) {
+  co2_real = (buffer[6] &lt;&lt; 8) | buffer[7];</code></pre></figure>
+      <figure class="after"><figcaption>Depois · src/logic/Co2FrameParser.cpp (checksumOk)</figcaption>
+<pre><code>bool Co2FrameParser::checksumOk() const {
+  size_t last = spec_.frameLen - 1;           // checksum index
+  size_t end = spec_.checksumVariant == 0 ? last - 1 : last;  // inclusive-exclusive
+  uint8_t sum = 0;
+  for (size_t i = 0; i &lt; end; i++) sum += buf_[i];
+  return sum == buf_[last];
+}</code></pre></figure>
+    </div>
+    <dl class="facts">
+      <dt>Correção</dt><dd>Variante do checksum configurável (TLV <code>0x21</code>: 0 = bytes 0..13, padrão; 1 = bytes 0..14, legado). Novo modo de log de frames brutos (TLV <code>0x26</code>) imprime os bytes recebidos em hexadecimal no serial, para confirmar o protocolo real do sensor na bancada.</dd>
+      <dt>Impacto esperado</dt><dd>Se a hipótese se confirmar, o globo passa a reagir ao CO₂ real pela primeira vez. Se não, basta trocar a variante sem regravar o firmware.</dd>
+      <dt>Validar na bancada</dt><dd>Ligar o log bruto, capturar alguns frames, somar os bytes à mão e ver qual variante bate. Conferir também se o ppm está nos bytes 6–7 comparando com o valor que o próprio sensor indica, se houver display ou referência.</dd>
+    </dl>
+  </div>
+</details>
+
+<!-- F09 -->
+<details class="finding" id="f09" data-sev="alto" data-sym="trava">
+  <summary>
+    <span class="fid">F09</span>
+    <span class="ftitle"><h3>IMU ausente trava o sistema inteiro no boot</h3></span>
+    <span class="caret">▶</span>
+    <span class="fchips"><span class="sev sev-alto">Alto</span><span class="sym">Travamentos</span></span>
+  </summary>
+  <div class="fbody">
+    <p>A inicialização da IMU tentava para sempre. Com o sensor desconectado, um mau contato ou o barramento I²C travado, o ESP32 ficava preso nesse laço: sem BLE, sem LEDs, sem nenhum sinal de que o problema era a IMU além de “Tentando novamente...” no serial.</p>
+    <div class="ba">
+      <figure class="before"><figcaption>Antes · firmware-original.ino L413–428</figcaption>
+<pre><code>bool initialized = false;
+while (!initialized) {
+#ifdef USE_SPI
+  myICM.begin(CS_PIN, SPI_PORT);
+#else
+  myICM.begin(WIRE_PORT, AD0_VAL);
+#endif
+
+  if (myICM.status == ICM_20948_Stat_Ok) {
+    initialized = true;
+    Serial.println("✅ ICM-20948 conectado!");
+  } else {
+    Serial.println("Tentando novamente...");
+    delay(500);
+  }
+}</code></pre></figure>
+      <figure class="after"><figcaption>Depois · src/services/ImuService.cpp (begin)</figcaption>
+<pre><code>for (int attempt = 1; attempt &lt;= kBeginAttempts; ++attempt) {
+  icm_.begin(Wire, kAd0Val);
+  if (icm_.status == ICM_20948_Stat_Ok) {
+    found = true;
+    break;
+  }
+  GB_LOGW(kTag, "begin attempt %d/%d failed: %s", attempt, kBeginAttempts, icm_.statusString());
+  if (attempt &lt; kBeginAttempts) delay(kBeginRetryMs);  // setup-time only
+}
+if (!found) {
+  GB_LOGE(kTag, "ICM-20948 not found; IMU disabled");
+  imuOk_ = false;
+  return false;
+}</code></pre></figure>
+    </div>
+    <dl class="facts">
+      <dt>Correção</dt><dd>No máximo 10 tentativas (≈ 5 s). Sem IMU, o serviço fica desativado, o LED de erro acende, a flag <code>imuOk</code> do diagnóstico vai a 0 e o resto do firmware (BLE, áudio, CO₂) continua funcionando. O BLE sobe antes da IMU no boot.</dd>
+      <dt>Impacto esperado</dt><dd>Falha de um periférico não derruba o sistema e fica visível pelo LED e pelo diagnóstico.</dd>
+      <dt>Validar na bancada</dt><dd>Ligar com o cabo da IMU desconectado: o globo deve aparecer no Bluetooth, o LED de erro deve acender e o config-app deve mostrar <code>imuOk = 0</code>.</dd>
+    </dl>
+    <p class="credit">Apontado também pelo relatório inicial (§3.4, item 4).</p>
+  </div>
+</details>
+
+<!-- F10 -->
+<details class="finding" id="f10" data-sev="medio" data-sym="giro">
+  <summary>
+    <span class="fid">F10</span>
+    <span class="ftitle"><h3>Troca de eixos fixa no código, sem calibração de montagem</h3></span>
+    <span class="caret">▶</span>
+    <span class="fchips"><span class="sev sev-medio">Médio</span><span class="sym">Giro fiel</span></span>
+  </summary>
+  <div class="fbody">
+    <p>Para os ângulos de Euler, o código troca x por y e inverte z (<code>qx=q2, qy=q1, qz=-q3</code>). Essa troca compensa a posição em que a placa foi colada dentro da bola, mas está escrita à mão e só vale para aquela montagem exata; qualquer inclinação da placa vira um erro sistemático no giro. Euler também tem bloqueio de cardã (gimbal lock) em pitch ±90°: perto dali, roll e yaw se confundem e o globo dá voltas que a bola não deu.</p>
+    <div class="ba">
+      <figure class="before"><figcaption>Antes · firmware-original.ino L558–561</figcaption>
+<pre><code>double qw = q0;
+double qx = q2;
+double qy = q1;
+double qz = -q3;</code></pre></figure>
+      <figure class="after"><figcaption>Depois · src/services/ImuService.cpp (processPacket)</figcaption>
+<pre><code>const Quat mounted = quatMultiply(quatConjugate(qMount_), raw);
+if (zeroRequested_.exchange(false)) {
+  qZero_ = mounted;
+  havePrev_ = false;  // jump straight to the new reference, no smoothing glide
+  GB_LOGI(kTag, "orientation zeroed");
+}
+Quat q = quatMultiply(quatConjugate(qZero_), mounted);</code></pre></figure>
+    </div>
+    <dl class="facts">
+      <dt>Correção</dt><dd>O firmware agora envia o quaternion, não Euler. Dois comandos protegidos por PIN: calibração de montagem (<code>0x14</code>, gravada na NVS) e “zerar orientação” (<code>0x10</code>). O cálculo de Euler mudou para o decoder do site, com a mesma troca de eixos legada, para que o patch Pure Data receba os mesmos ângulos para o mesmo movimento físico (contrato preservado).</dd>
+      <dt>Impacto esperado</dt><dd>Montagem corrigida por calibração, não por código. O config-app mostra o quaternion direto, sem gimbal lock. No caminho do Pure Data o Euler continua existindo por compatibilidade, então o bloqueio em ±90° de pitch persiste ali; ele só some se o patch passar a consumir o quaternion.</dd>
+      <dt>Validar na bancada</dt><dd>Com a bola parada na posição de referência, calibrar montagem e zerar. Girar 360° em torno de cada eixo, apoiada numa superfície plana: o modelo 3D deve completar exatamente uma volta no mesmo eixo.</dd>
+    </dl>
+    <p class="credit">Apontado em parte pelo relatório inicial (§3.4: “a transformação dos eixos… deve ser documentada e validada fisicamente”).</p>
+  </div>
+</details>
+
+<!-- F11 -->
+<details class="finding" id="f11" data-sev="alto" data-sym="alucina giro">
+  <summary>
+    <span class="fid">F11</span>
+    <span class="ftitle"><h3>Orientação com magnetômetro numa sala cheia de metal</h3></span>
+    <span class="caret">▶</span>
+    <span class="fchips"><span class="sev sev-alto">Alto</span><span class="sym">Globo alucina</span><span class="sym">Giro fiel</span></span>
+  </summary>
+  <div class="fbody">
+    <p>O legado usa o quaternion de 9 eixos (Quat9), que corrige o yaw pelo magnetômetro. Em exposição, estruturas metálicas, alto-falantes, fiação e celulares distorcem o campo magnético; o DMP “corrige” a orientação na direção errada e o globo gira sozinho ou muda de rumo com a bola parada.</p>
+    <div class="ba">
+      <figure class="before"><figcaption>Antes · firmware-original.ino L432, L434, L542</figcaption>
+<pre><code>success &amp;= (myICM.enableDMPSensor(INV_ICM20948_SENSOR_ORIENTATION) == ICM_20948_Stat_Ok);
+⋮
+success &amp;= (myICM.setDMPODRrate(DMP_ODR_Reg_Quat9, 1) == ICM_20948_Stat_Ok);
+⋮
+    if ((data.header &amp; DMP_header_bitmap_Quat9) &gt; 0) {</code></pre></figure>
+      <figure class="after"><figcaption>Depois · src/services/ImuService.cpp</figcaption>
+<pre><code>return mode == 1 ? DMP_ODR_Reg_Quat9 : DMP_ODR_Reg_Quat6;
+⋮
+ok &amp;= icm_.setDMPODRrate(quatOdrRegFor(mode), 0) == ICM_20948_Stat_Ok;  // 0 = max rate
+⋮
+const uint16_t quatBit = nine ? DMP_header_bitmap_Quat9 : DMP_header_bitmap_Quat6;</code></pre></figure>
+    </div>
+    <dl class="facts">
+      <dt>Correção</dt><dd>Modo de orientação configurável (TLV <code>0x01</code>). Padrão: Quat6, só acelerômetro e giroscópio, orientação relativa e imune a ímãs, com o comando “zerar” para fixar a referência. Quat9 continua disponível para quem precisar de norte absoluto. A troca de modo é feita a quente e descarta o zero anterior, que não vale no novo referencial.</dd>
+      <dt>Impacto esperado</dt><dd>Fim das rotações espontâneas causadas por interferência magnética. Em troca, o yaw do Quat6 pode derivar devagar em sessões longas; o “zerar” resolve.</dd>
+      <dt>Validar na bancada</dt><dd>Deixar a bola parada 5 min em Quat6 e anotar quanto o yaw derivou. Aproximar um ímã ou celular: em Quat6 nada deve mudar; em Quat9 a orientação deve se mexer (confirma a causa).</dd>
+    </dl>
+  </div>
+</details>
+
+<!-- F12 -->
+<details class="finding" id="f12" data-sev="medio" data-sym="latencia trava conexao">
+  <summary>
+    <span class="fid">F12</span>
+    <span class="ftitle"><h3>Print serial a cada pacote, sem métricas nem watchdog</h3></span>
+    <span class="caret">▶</span>
+    <span class="fchips"><span class="sev sev-medio">Médio</span><span class="sym">Latência</span><span class="sym">Travamentos</span><span class="sym">Conexão</span></span>
+  </summary>
+  <div class="fbody">
+    <p>A aceleração era impressa no serial a cada pacote. A 115200 baud, uma linha como <code>Accel: X:-123.00 Y:45.00 Z:16384.00</code> leva 3 a 4 ms para sair, e quando o buffer de transmissão enche a chamada bloqueia o laço. Não havia níveis de log, watchdog, contadores, número de sequência nem carimbo de tempo nos pacotes, então era impossível saber se um problema vinha da IMU, do BLE, do áudio ou do CO₂, ou quantas amostras o site perdia.</p>
+    <div class="ba">
+      <figure class="before"><figcaption>Antes · firmware-original.ino L593–598</figcaption>
+<pre><code>SERIAL_PORT.print(F("Accel: X:"));
+SERIAL_PORT.print(acc_x);
+SERIAL_PORT.print(F(" Y:"));
+SERIAL_PORT.print(acc_y);
+SERIAL_PORT.print(F(" Z:"));
+SERIAL_PORT.println(acc_z);</code></pre></figure>
+      <figure class="after"><figcaption>Depois · src/services/Diagnostics.cpp e Logger.cpp</figcaption>
+<pre><code>constexpr uint32_t kWdtTimeoutS = 10;
+void Diagnostics::begin() { esp_task_wdt_init(kWdtTimeoutS, true); }
+void Diagnostics::feed() { esp_task_wdt_reset(); }
+
+// Logger.cpp
+constexpr uint8_t kMaxLinesPerWindow = 20;</code></pre></figure>
+    </div>
+    <dl class="facts">
+      <dt>Correção</dt><dd>Logger com níveis (E/W/I/D) e limite de 20 linhas/s. Watchdog de 10 s na tarefa principal (trava → reinício). Pacote de diagnóstico a 1 Hz com taxa real da IMU, taxa de notificação, overflows da FIFO, erros de I²S e UART, heap livre e mínimo, e saúde de cada periférico. Todo pacote leva <code>seq</code> e carimbo de tempo.</dd>
+      <dt>Impacto esperado</dt><dd>Problemas passam a ser medidos, não adivinhados. Um travamento real reinicia o globo em 10 s em vez de exigir alguém para desligar e ligar.</dd>
+      <dt>Validar na bancada</dt><dd>Conferir no config-app que o diagnóstico chega a cada segundo e que <code>uptimeS</code> só cresce durante o teste de 24 h.</dd>
+    </dl>
+    <p class="credit">Apontado também pelo relatório inicial (§3.9 e §6).</p>
+  </div>
+</details>
+
+<!-- F13 -->
+<details class="finding" id="f13" data-sev="alto" data-sym="trava latencia conexao">
+  <summary>
+    <span class="fid">F13</span>
+    <span class="ftitle"><h3>Tudo num único <code>loop()</code>: um subsistema atrasa os outros</h3></span>
+    <span class="caret">▶</span>
+    <span class="fchips"><span class="sev sev-alto">Alto</span><span class="sym">Travamentos</span><span class="sym">Latência</span><span class="sym">Conexão</span></span>
+  </summary>
+  <div class="fbody">
+    <p>Potenciômetro, áudio, CO₂, IMU, cálculo de Euler, JSON, BLE e serial rodavam em sequência no mesmo laço. Cada bloqueio (leitura I²S, print serial, <code>delay</code>) atrasava todos os outros, e a IMU, que é a parte sensível a tempo, ficava por último. O callback BLE também mexia direto em pino de saída.</p>
+    <div class="ba">
+      <figure class="before"><figcaption>Antes · firmware-original.ino L515, L525–526, L534, L611, L617</figcaption>
+<pre><code>    micLevel = lerNivelAudio();
+⋮
+  lerCO2Real_periodico(agora);
+  atualizarPulsoCO2(agora);
+⋮
+  myICM.readDMPdataFromFIFO(&amp;data);
+⋮
+        pSensorCharacteristic-&gt;notify();
+⋮
+        pCO2Characteristic-&gt;notify();</code></pre></figure>
+      <figure class="after"><figcaption>Depois · src/services/*.cpp e App.cpp (criação das tarefas, trechos)</figcaption>
+<pre><code>xTaskCreatePinnedToCore(&amp;ImuService::taskEntry, "imu", 6144, this, 3, &amp;task_, 1)
+xTaskCreatePinnedToCore(&amp;AudioService::taskEntry, "audio", 4096, this, 2, &amp;task_, 1)
+xTaskCreatePinnedToCore(&amp;App::taskEntry, "app", kAppStack, this, kAppPrio, &amp;task_, kAppCore)
+xTaskCreatePinnedToCore(&amp;Co2Service::taskEntry, "co2", 3072, this, 1, &amp;task_, 1)</code></pre></figure>
+    </div>
+    <dl class="facts">
+      <dt>Correção</dt><dd>Uma tarefa FreeRTOS por subsistema, com prioridade de acordo com a sensibilidade a tempo; o BLE (NimBLE) roda sozinho no core 0. A comunicação entre tarefas usa filas e variáveis atômicas; callbacks BLE só enfileiram comandos. Sem <code>delay()</code> e sem alocação em regime. Detalhes em <a href="#arquitetura">Arquitetura</a>.</dd>
+      <dt>Impacto esperado</dt><dd>A IMU não espera mais por áudio, serial ou rádio. Um subsistema que falha ou trava não arrasta os demais.</dd>
+      <dt>Validar na bancada</dt><dd>Com som alto contínuo (detector disparando) e o sensor de CO₂ ativo, a taxa da IMU no config-app não pode cair.</dd>
+    </dl>
+    <p class="credit">Apontado também pelo relatório inicial (§3.3 e §4).</p>
+  </div>
+</details>
+
+<!-- F14 -->
+<details class="finding" id="f14" data-sev="medio" data-sym="">
+  <summary>
+    <span class="fid">F14</span>
+    <span class="ftitle"><h3>Falha do microfone ignorada; potenciômetro lido duas vezes, sem filtro</h3></span>
+    <span class="caret">▶</span>
+    <span class="fchips"><span class="sev sev-medio">Médio</span><span class="sym">Periféricos</span></span>
+  </summary>
+  <div class="fbody">
+    <p>Se <code>i2s_driver_install</code> ou <code>i2s_set_pin</code> falhassem, o firmware só imprimia o erro e seguia lendo um periférico que não existia, inclusive nos 2 s de calibração. O potenciômetro era lido duas vezes por ciclo (uma para <code>potRaw</code>, outra dentro de <code>lerPotenciometro()</code>) sem filtro nem histerese, então o limiar de som tremia com o ruído do ADC.</p>
+    <div class="ba">
+      <figure class="before"><figcaption>Antes · firmware-original.ino L189–193 e L504–505</figcaption>
+<pre><code>esp_err_t err = i2s_driver_install(I2S_PORT, &amp;i2s_config, 0, nullptr);
+if (err != ESP_OK) {
+  Serial.printf("❌ Erro i2s_driver_install: %d\n", err);
+  return;
+}
+⋮
+    potRaw = adc1_get_raw(ADC1_CHANNEL_6);
+    thresholdAtual = (float)lerPotenciometro();</code></pre></figure>
+      <figure class="after"><figcaption>Depois · src/services/AudioService.cpp e PotService.cpp</figcaption>
+<pre><code>err = i2s_set_pin(kPort, &amp;pins);
+if (err != ESP_OK) {
+  GB_LOGE(kTag, "i2s_set_pin failed: %d", (int)err);
+  i2s_driver_uninstall(kPort);
+  return false;
+}
+⋮
+const int raw = adc1_get_raw(ADC1_CHANNEL_6);  // 0..4095
+if (raw &lt; 0) return;
+filtered_ = ema_.update((float)raw);
+const float mapped = kThresholdMin + (filtered_ / 4095.0f) * (kThresholdMax - kThresholdMin);
+if (!haveOutput_ || fabsf(mapped - output_) &gt;= 0.02f * output_) {</code></pre></figure>
+    </div>
+    <dl class="facts">
+      <dt>Correção</dt><dd>Áudio com falha fica desativado (<code>audioOk = 0</code> no diagnóstico, LED de erro) sem afetar IMU, CO₂ e BLE. Potenciômetro com uma leitura por ciclo, filtro EMA e histerese de 2%. Opção de limiar fixo sem potenciômetro (TLV <code>0x14</code>/<code>0x15</code>).</dd>
+      <dt>Impacto esperado</dt><dd>Falha de áudio vira estado visível em vez de leituras falsas; limiar de som estável.</dd>
+      <dt>Validar na bancada</dt><dd>Girar o potenciômetro devagar e ver o limiar mudar em degraus suaves; com o potenciômetro parado, o limiar não deve oscilar.</dd>
+    </dl>
+    <p class="credit">Apontado também pelo relatório inicial (§3.5, item 4, e §3.8).</p>
+  </div>
+</details>
+
+      <p class="empty" id="emptyState" hidden>Nenhum achado com esses filtros. <button type="button" class="ghost-btn" id="clearFilters">Limpar filtros</button></p>
+    </div>
+  </div>
+</section>
+
+<!-- =============================== ARQUITETURA =============================== -->
+<section class="block" id="arquitetura">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">3 · Arquitetura v2</span>
+      <h2>Uma tarefa por subsistema, rádio isolado no outro núcleo</h2>
+      <p>O ESP32 tem dois núcleos. No v2, o núcleo 0 fica só com a pilha BLE (NimBLE); aquisição e lógica rodam no núcleo 1, cada uma na sua tarefa. A IMU tem a maior prioridade e entrega amostras por fila; a tarefa <em>app</em> decide o que enviar e quando.</p>
+    </div>
+
+    <div class="diagram" role="img" aria-label="Diagrama de tarefas do firmware v2: sensores alimentam as tarefas imu, audio e co2 no núcleo 1, que passam dados para a tarefa app; a app notifica a pilha NimBLE no núcleo 0, que fala com o site e o config-app.">
+      <svg viewBox="0 0 1060 450" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" class="d-arrow"/>
+          </marker>
+        </defs>
+        <!-- frames -->
+        <rect x="178" y="20" width="520" height="410" rx="8" class="d-frame"/>
+        <text x="192" y="40" class="d-frame-lbl">NÚCLEO 1 · AQUISIÇÃO E LÓGICA</text>
+        <rect x="722" y="100" width="156" height="200" rx="8" class="d-frame"/>
+        <text x="736" y="120" class="d-frame-lbl">NÚCLEO 0</text>
+
+        <!-- hardware -->
+        <rect x="20" y="60" width="130" height="56" rx="5" class="d-hw"/>
+        <text x="32" y="84" class="d-t">ICM-20948</text>
+        <text x="32" y="102" class="d-s">I²C 400 kHz · DMP</text>
+        <rect x="20" y="190" width="130" height="56" rx="5" class="d-hw"/>
+        <text x="32" y="214" class="d-t">2× INMP441</text>
+        <text x="32" y="232" class="d-s">I²S 16 kHz estéreo</text>
+        <rect x="20" y="320" width="130" height="56" rx="5" class="d-hw"/>
+        <text x="32" y="344" class="d-t">Sensor CO₂</text>
+        <text x="32" y="362" class="d-s">UART1 9600 · “SC8”</text>
+
+        <!-- tasks -->
+        <rect x="200" y="60" width="170" height="56" rx="5" class="d-task"/>
+        <text x="212" y="84" class="d-t">imu · prio 3</text>
+        <text x="212" y="102" class="d-s">drena FIFO a cada 5 ms</text>
+        <rect x="200" y="190" width="170" height="56" rx="5" class="d-task"/>
+        <text x="212" y="214" class="d-t">audio · prio 2</text>
+        <text x="212" y="232" class="d-s">RMS + detector de pico</text>
+        <rect x="200" y="320" width="170" height="56" rx="5" class="d-task"/>
+        <text x="212" y="344" class="d-t">co2 · prio 1</text>
+        <text x="212" y="362" class="d-s">parser byte a byte</text>
+
+        <rect x="470" y="140" width="206" height="160" rx="6" class="d-app"/>
+        <text x="484" y="164" class="d-t">app · prio 2</text>
+        <text x="484" y="186" class="d-m">IMU → limite 50 Hz → 23 B</text>
+        <text x="484" y="204" class="d-m">CO₂: na mudança ou 1 Hz</text>
+        <text x="484" y="222" class="d-m">diagnóstico 1 Hz</text>
+        <text x="484" y="240" class="d-m">LEDs 20 Hz · pot 10 Hz</text>
+        <text x="484" y="258" class="d-m">comandos · config</text>
+        <text x="484" y="276" class="d-m">watchdog 10 s</text>
+
+        <rect x="470" y="340" width="98" height="56" rx="5" class="d-store"/>
+        <text x="480" y="363" class="d-t2">ConfigStore</text>
+        <text x="480" y="381" class="d-s">NVS</text>
+        <rect x="578" y="340" width="98" height="56" rx="5" class="d-store"/>
+        <text x="586" y="363" class="d-t2">LedController</text>
+        <text x="586" y="381" class="d-s">GPIO 2 e 4</text>
+
+        <!-- core 0 -->
+        <rect x="738" y="140" width="124" height="120" rx="6" class="d-task"/>
+        <text x="750" y="164" class="d-t">NimBLE host</text>
+        <text x="750" y="184" class="d-s">GATT · MTU 247</text>
+        <text x="750" y="202" class="d-s">até 2 centrais</text>
+        <text x="750" y="220" class="d-s">desbloqueio PIN</text>
+        <text x="750" y="238" class="d-s">escrita de config</text>
+
+        <!-- centrals -->
+        <rect x="910" y="130" width="130" height="50" rx="5" class="d-ext"/>
+        <text x="922" y="152" class="d-t">Site GaiaSenses</text>
+        <text x="922" y="169" class="d-s">globo + Pure Data</text>
+        <rect x="910" y="220" width="130" height="50" rx="5" class="d-ext"/>
+        <text x="922" y="242" class="d-t">config-app</text>
+        <text x="922" y="259" class="d-s">bancada, presets</text>
+
+        <!-- edges: hardware -> tasks -->
+        <path d="M150 88 H198" class="d-edge" marker-end="url(#arr)"/>
+        <path d="M150 218 H198" class="d-edge" marker-end="url(#arr)"/>
+        <path d="M150 348 H198" class="d-edge" marker-end="url(#arr)"/>
+        <!-- tasks -> app -->
+        <path d="M370 88 H420 V170 H468" class="d-edge" marker-end="url(#arr)"/>
+        <text x="378" y="80" class="d-m">fila (8)</text>
+        <path d="M370 218 H468" class="d-edge" marker-end="url(#arr)"/>
+        <text x="378" y="210" class="d-m">pico (atômico)</text>
+        <path d="M370 348 H420 V270 H468" class="d-edge" marker-end="url(#arr)"/>
+        <text x="378" y="340" class="d-m">ppm (atômico)</text>
+        <!-- app -> stores -->
+        <path d="M519 300 V338" class="d-edge" marker-end="url(#arr)"/>
+        <path d="M627 300 V338" class="d-edge" marker-end="url(#arr)"/>
+        <!-- app <-> ble -->
+        <path d="M676 180 H736" class="d-edge" marker-end="url(#arr)"/>
+        <text x="682" y="172" class="d-m">notify</text>
+        <path d="M738 230 H678" class="d-edge" marker-end="url(#arr)"/>
+        <text x="682" y="248" class="d-m">fila cmd</text>
+        <!-- ble <-> centrals -->
+        <path d="M862 165 L908 155" class="d-edge" marker-start="url(#arr)" marker-end="url(#arr)"/>
+        <path d="M862 225 L908 245" class="d-edge" marker-start="url(#arr)" marker-end="url(#arr)"/>
+      </svg>
+    </div>
+
+    <div class="scroll">
+      <table class="task-table">
+        <thead><tr><th>Tarefa</th><th>Núcleo</th><th>Prioridade</th><th>Acorda com</th><th>Responsável por</th></tr></thead>
+        <tbody>
+          <tr><td><code>imu</code></td><td>1</td><td>3</td><td>a cada 5 ms</td><td>ICM-20948 (I²C), drenagem da FIFO, montagem e zero</td></tr>
+          <tr><td><code>audio</code></td><td>1</td><td>2</td><td><code>i2s_read</code> (256 quadros = 16 ms)</td><td>I²S, detector de pico</td></tr>
+          <tr><td><code>app</code></td><td>1</td><td>2</td><td>fila da IMU (timeout 20 ms)</td><td>envio BLE, LEDs, potenciômetro, pulso de CO₂ virtual, NVS, watchdog</td></tr>
+          <tr><td><code>co2</code></td><td>1</td><td>1</td><td>a cada 20 ms</td><td>UART1, parser de frames</td></tr>
+          <tr><td>NimBLE host</td><td>0</td><td>(biblioteca)</td><td>eventos BLE</td><td>GATT, desbloqueio por PIN, aplicação da config</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="prose">
+      <p>A fila da IMU tem 8 posições e descarta a amostra mais antiga quando enche, então um atraso momentâneo na tarefa <em>app</em> nunca gera backlog. A tarefa de áudio só marca “houve pico” numa variável atômica; quem acende LED e dispara o CO₂ virtual é a <em>app</em>. Comandos que chegam pelo BLE vão para uma fila e são executados pela <em>app</em>, nunca dentro do callback do rádio.</p>
+      <p>Só a tarefa <em>app</em> é vigiada pelo watchdog: se a IMU travar, a <em>app</em> continua rodando (a espera pela fila tem timeout de 20 ms); se a própria <em>app</em> travar, o ESP32 reinicia em 10 s. O código fica separado em <code>logic/</code> (lógica pura, testada no computador) e <code>services/</code> (hardware e FreeRTOS), e compila tanto no Arduino IDE quanto no PlatformIO, com versões fixadas (core ESP32 2.0.17, NimBLE-Arduino 1.4.3).</p>
+    </div>
+  </div>
+</section>
+
+<!-- =============================== PROTOCOLO =============================== -->
+<section class="block" id="protocolo">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">4 · Protocolo binário</span>
+      <h2>23 bytes em vez de ~200</h2>
+      <p>Pacotes little-endian de tamanho fixo, com a versão do protocolo no primeiro byte. A especificação completa, com vetores de teste em hexadecimal, está em <code>firmware/docs/protocol.md</code>.</p>
+    </div>
+
+    <div class="packet">
+      <h3>IMU <small>característica …0001 · notify · 23 bytes · 50 Hz padrão</small></h3>
+      <div class="strip-wrap"><div class="strip" style="grid-template-columns: 1fr 1fr 2fr 4fr 2fr 2fr 2fr 2fr 2fr 2fr 2fr 1fr; grid-auto-flow: row;">
+        <div class="fld k-hdr">ver<small>u8</small></div>
+        <div class="fld k-hdr">tipo<small>u8</small></div>
+        <div class="fld k-time">seq<small>u16</small></div>
+        <div class="fld k-time">t (µs)<small>u32</small></div>
+        <div class="fld k-imu">qW<small>i16</small></div>
+        <div class="fld k-imu">qX<small>i16</small></div>
+        <div class="fld k-imu">qY<small>i16</small></div>
+        <div class="fld k-imu">qZ<small>i16</small></div>
+        <div class="fld k-data">accX<small>i16</small></div>
+        <div class="fld k-data">accY<small>i16</small></div>
+        <div class="fld k-data">accZ<small>i16</small></div>
+        <div class="fld k-flag">flags<small>u8</small></div>
+      </div></div>
+      <p class="result-line">Quaternion em Q14 (valor × 16384); aceleração em contagens brutas do DMP, igual ao legado. Flags: bit0 quaternion válido, bit1 modo 9 eixos, bit2 em movimento.</p>
+    </div>
+
+    <div class="packet">
+      <h3>CO₂ <small>característica …0003 · notify · 12 bytes · na mudança ou 1 Hz</small></h3>
+      <div class="strip-wrap"><div class="strip" style="grid-template-columns: 1fr 1fr 2fr 4fr 2fr 1fr 1fr; grid-auto-flow: row; min-width: 420px; max-width: 640px;">
+        <div class="fld k-hdr">ver<small>u8</small></div>
+        <div class="fld k-hdr">tipo<small>u8</small></div>
+        <div class="fld k-time">seq<small>u16</small></div>
+        <div class="fld k-time">t (ms)<small>u32</small></div>
+        <div class="fld k-data">ppm<small>u16</small></div>
+        <div class="fld k-flag">flags<small>u8</small></div>
+        <div class="fld k-flag">idade<small>u8 s</small></div>
+      </div></div>
+      <p class="result-line">Flags: bit0 válido (leitura real recente), bit1 velho (stale), bit2 pulso virtual ativo.</p>
+    </div>
+
+    <div class="packet">
+      <h3>Diagnóstico <small>característica …0005 · notify · 23 bytes · 1 Hz</small></h3>
+      <div class="strip-wrap"><div class="strip" style="grid-template-columns: 1fr 1fr 2fr 4fr 2fr 2fr 2fr 2fr 2fr 2fr 2fr 1fr; grid-auto-flow: row;">
+        <div class="fld k-hdr">ver<small>u8</small></div>
+        <div class="fld k-hdr">tipo<small>u8</small></div>
+        <div class="fld k-time">seq<small>u16</small></div>
+        <div class="fld k-time">uptime (s)<small>u32</small></div>
+        <div class="fld k-data">IMU Hz×10<small>u16</small></div>
+        <div class="fld k-data">notify Hz×10<small>u16</small></div>
+        <div class="fld k-data">FIFO ovf<small>u16</small></div>
+        <div class="fld k-data">erros I²S<small>u16</small></div>
+        <div class="fld k-data">erros UART<small>u16</small></div>
+        <div class="fld k-data">heap kB<small>u16</small></div>
+        <div class="fld k-data">heap mín<small>u16</small></div>
+        <div class="fld k-flag">flags<small>u8</small></div>
+      </div></div>
+      <p class="result-line">Flags: bit0 IMU ok, bit1 áudio ok, bit2 CO₂ ok.</p>
+    </div>
+
+    <div class="two-col">
+      <div>
+        <h3>Tamanho por amostra de orientação</h3>
+        <p class="size-stat"><span><b>~200 B</b> JSON legado (estimado)</span><span><b>23 B</b> binário v2</span></p>
+        <p>O tamanho do JSON varia com o número de dígitos de cada valor; ~200 B é a ordem de grandeza de <code>{"quat":{…},"euler":{…},"acc":{…}}</code> com números de ponto flutuante. Uma notificação BLE carrega até MTU − 3 bytes: os 23 B do pacote IMU exigem MTU ≥ 26. O firmware pede 247; navegadores atuais costumam negociar valores dessa ordem.</p>
+      </div>
+      <div>
+        <h3>Sequência e tempo</h3>
+        <p>Cada notificação enviada leva um <code>seq</code> crescente por característica. Quem recebe conta os buracos na sequência e sabe exatamente quantas amostras perdeu: a perda deixa de ser uma impressão e vira um número. O carimbo de tempo da IMU (µs, do momento da leitura) permite medir jitter e a idade de cada amostra.</p>
+        <h3>Compatibilidade</h3>
+        <p>Os UUIDs do serviço e das características <code>…0001</code>, <code>…0002</code> e <code>…0003</code> são os mesmos do legado; as novas são <code>…0004</code> (config) e <code>…0005</code> (diagnóstico). No site, o decoder novo olha o primeiro byte: se for <code>{</code> (0x7B), trata como JSON, então o site continua funcionando com o firmware antigo. Ele devolve os mesmos objetos de antes (quat, euler, acc, co2), calculando o Euler com a troca de eixos legada, e o resto do pipeline (suavização, Pure Data, globo) não muda.</p>
+      </div>
+    </div>
+
+    <div class="callout">
+      <h3>Comandos e PIN</h3>
+      <p>O globo fica em exposição pública e qualquer celular por perto consegue se conectar por BLE. Por isso, leitura de dados e o comando legado do LED (<code>0x00</code>/<code>0x01</code>) continuam abertos, mas tudo que muda o comportamento do dispositivo exige desbloquear a conexão com um PIN de 4 dígitos: escrever <code>0x20</code> seguido do PIN em ASCII (padrão <code>1234</code>, ex.: <code>20 31 32 33 34</code>).</p>
+      <div class="scroll">
+        <table>
+          <thead><tr><th>Opcode</th><th>Ação</th><th>PIN</th></tr></thead>
+          <tbody>
+            <tr><td><code>0x00</code> / <code>0x01</code></td><td>LED de som apagado / aceso (legado)</td><td>não</td></tr>
+            <tr><td><code>0x10</code></td><td>Zerar orientação (pose atual vira referência)</td><td>sim</td></tr>
+            <tr><td><code>0x11</code></td><td>Salvar config na NVS</td><td>sim</td></tr>
+            <tr><td><code>0x12</code></td><td>Restaurar padrões de fábrica (inclui PIN e montagem) e reiniciar</td><td>sim</td></tr>
+            <tr><td><code>0x13</code></td><td>Reiniciar</td><td>sim</td></tr>
+            <tr><td><code>0x14</code></td><td>Calibração de montagem (gravada na NVS)</td><td>sim</td></tr>
+            <tr><td><code>0x20</code> + PIN</td><td>Desbloquear esta conexão</td><td>—</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Proteção contra tentativa e erro: após 5 PINs errados seguidos, a conexão tem os pedidos de desbloqueio recusados por 30 s, mesmo com o PIN certo. A comparação do PIN tem tempo constante. O desbloqueio vale só para aquela conexão e acaba ao desconectar. O PIN nunca pode ser lido de volta. <strong>Troque o PIN padrão antes de levar o globo para uma exposição.</strong></p>
+    </div>
+  </div>
+</section>
+
+<!-- =============================== PARÂMETROS =============================== -->
+<section class="block" id="parametros">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">5 · Parâmetros configuráveis</span>
+      <h2>O que pode ser ajustado sem regravar o firmware</h2>
+      <p>Registros TLV (<code>id u8 | len u8 | valor</code>) na característica <code>…0004</code>. Escrever exige conexão desbloqueada; um registro fora da faixa rejeita a escrita inteira. A mudança vale na hora, mas só persiste após o comando <code>0x11</code>.</p>
+    </div>
+    <div class="param-filters">
+      <select id="paramGroup" aria-label="Filtrar por grupo">
+        <option value="">Todos os grupos</option>
+        <option value="Orientação">Orientação</option>
+        <option value="Áudio">Áudio</option>
+        <option value="CO₂">CO₂</option>
+        <option value="LEDs">LEDs</option>
+        <option value="Identidade">Identidade</option>
+      </select>
+      <input id="paramSearch" type="search" placeholder="Buscar parâmetro (ex.: checksum, Hz, 0x21)" aria-label="Buscar parâmetro">
+    </div>
+    <div class="scroll">
+      <table class="param-table" id="paramTable">
+        <thead><tr><th>Grupo</th><th>ID</th><th>Campo</th><th>Faixa aceita</th><th>Padrão</th><th>Efeito</th></tr></thead>
+        <tbody>
+          <tr><td>Orientação</td><td>0x01</td><td><code>orientationMode</code></td><td>0 ou 1</td><td>0</td><td>0 = Quat6 relativo (sem magnetômetro); 1 = Quat9 com norte magnético. Ver <a href="#f11">F11</a>.</td></tr>
+          <tr><td>Orientação</td><td>0x02</td><td><code>imuNotifyHz</code></td><td>10–60</td><td>50</td><td>Taxa de envio de orientação para as centrais.</td></tr>
+          <tr><td>Orientação</td><td>0x03</td><td><code>slerpAmount</code></td><td>0–100</td><td>0</td><td>Suavização no firmware; 0 = desligada. O site já suaviza (mediana + EMA); ligar aqui soma latência.</td></tr>
+          <tr><td>Áudio</td><td>0x10</td><td><code>audioEnabled</code></td><td>0 / ≠0</td><td>1</td><td>Liga ou desliga a detecção de som.</td></tr>
+          <tr><td>Áudio</td><td>0x11</td><td><code>audioFastAlphaX1000</code></td><td>1–1000</td><td>250</td><td>Velocidade do filtro rápido (α × 1000). Maior = reage mais rápido a picos.</td></tr>
+          <tr><td>Áudio</td><td>0x12</td><td><code>audioSlowAlphaX1000</code></td><td>1–1000</td><td>995</td><td>Inércia da linha de base de ruído (α × 1000). Maior = adapta mais devagar.</td></tr>
+          <tr><td>Áudio</td><td>0x13</td><td><code>debounceMs</code></td><td>0–65535</td><td>300</td><td>Intervalo mínimo entre dois picos de som.</td></tr>
+          <tr><td>Áudio</td><td>0x14</td><td><code>potControlsThreshold</code></td><td>0 / ≠0</td><td>1</td><td>1 = potenciômetro define o limiar; 0 = usa o limiar fixo (0x15).</td></tr>
+          <tr><td>Áudio</td><td>0x15</td><td><code>thresholdFixed</code></td><td>u32</td><td>100000</td><td>Limiar de pico quando o potenciômetro está desligado.</td></tr>
+          <tr><td>CO₂</td><td>0x20</td><td><code>co2Enabled</code></td><td>0 / ≠0</td><td>1</td><td>Liga ou desliga a leitura do sensor.</td></tr>
+          <tr><td>CO₂</td><td>0x21</td><td><code>co2ChecksumVariant</code></td><td>0 ou 1</td><td>0</td><td>0 = soma dos bytes 0..13 (referência); 1 = 0..14 (legado). Ver <a href="#f08">F08</a>.</td></tr>
+          <tr><td>CO₂</td><td>0x22</td><td><code>co2StaleTimeoutMs</code></td><td>0–65535</td><td>5000</td><td>Tempo sem frame válido até a leitura ser marcada como velha.</td></tr>
+          <tr><td>CO₂</td><td>0x23</td><td><code>virtualPeakPpm</code></td><td>0–65535</td><td>2100</td><td>Valor de CO₂ virtual enviado após um pico de som.</td></tr>
+          <tr><td>CO₂</td><td>0x24</td><td><code>virtualDelayMs</code></td><td>0–65535</td><td>1000</td><td>Atraso entre o pico de som e o início do CO₂ virtual.</td></tr>
+          <tr><td>CO₂</td><td>0x25</td><td><code>virtualHoldMs</code></td><td>0–65535</td><td>17000</td><td>Duração do CO₂ virtual.</td></tr>
+          <tr><td>CO₂</td><td>0x26</td><td><code>co2RawLogMode</code></td><td>0 / ≠0</td><td>0</td><td>Imprime os bytes brutos da UART em hexadecimal no serial (diagnóstico do protocolo do sensor).</td></tr>
+          <tr><td>LEDs</td><td>0x30</td><td><code>soundLedPin</code></td><td>GPIO 0–33</td><td>2</td><td>Pino do LED de som. <span class="reboot">requer reinício</span></td></tr>
+          <tr><td>LEDs</td><td>0x31</td><td><code>co2LedPin</code></td><td>GPIO 0–33</td><td>4</td><td>Pino do LED de alerta de CO₂. <span class="reboot">requer reinício</span></td></tr>
+          <tr><td>LEDs</td><td>0x32</td><td><code>co2AlertPpm</code></td><td>0–65535</td><td>2000</td><td>Acima disso (leitura real, não velha) o LED de CO₂ acende.</td></tr>
+          <tr><td>Identidade</td><td>0x40</td><td><code>bleName</code></td><td>1–16 caracteres ASCII</td><td>Globo_1</td><td>Nome anunciado no Bluetooth. O site filtra por UUID, não por nome. <span class="reboot">requer reinício</span></td></tr>
+          <tr><td>Identidade</td><td>0x41</td><td><code>pin</code></td><td>4 dígitos</td><td>1234</td><td>PIN de desbloqueio. Só escrita: nunca aparece numa leitura nem nos presets.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="result-line" id="paramCount">21 de 21 parâmetros</p>
+  </div>
+</section>
+
+<!-- =============================== FERRAMENTAS =============================== -->
+<section class="block" id="ferramentas">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">6 · Ferramentas novas</span>
+      <h2>Para ver o que o globo está fazendo</h2>
+    </div>
+    <div class="tools">
+      <div class="tool">
+        <h3>config-app</h3>
+        <p>App web local (Vite + TypeScript) em <code>gaiaball/config-app/</code>, interface em português, via Web Bluetooth (Chrome ou Edge).</p>
+        <ul>
+          <li>Vista 3D da orientação, alternando entre cru e filtrado.</li>
+          <li>Métricas do fluxo: taxa (Hz), perda por <code>seq</code> e jitter.</li>
+          <li>Formulário com todos os parâmetros; “Aplicar” envia só o que mudou e relê para conferir.</li>
+          <li>Presets com nome, exportação e importação em JSON. O PIN nunca entra num preset.</li>
+        </ul>
+      </div>
+      <div class="tool">
+        <h3>Modo demo</h3>
+        <p>Abrindo <code>http://localhost:5173/?demo=1</code>, o config-app mostra a vista 3D com rotação sintética, sem dispositivo. Serve para apresentar a ferramenta e conferir o navegador antes da bancada.</p>
+        <p>O site e o config-app podem ficar conectados ao mesmo tempo (o firmware aceita 2 centrais): ajusta-se o filtro no config-app vendo o globo real reagir no site.</p>
+      </div>
+      <div class="tool">
+        <h3>Decoder do site</h3>
+        <p>Em <code>Gaiasenses-web/app/[locale]/map3/ble-decode.ts</code> (branch <code>feature/gaiaball-binary-protocol</code>, aguardando merge).</p>
+        <ul>
+          <li>Lê os pacotes binários e devolve os mesmos objetos que o JSON legado gerava.</li>
+          <li>Fallback JSON para o firmware antigo.</li>
+          <li>Nunca lança exceção: pacote inválido é descartado.</li>
+          <li>Avisa uma vez por conexão quando o CO₂ chega marcado como velho.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- =============================== BANCADA =============================== -->
+<section class="block" id="bancada">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">7 · Checklist de validação em bancada</span>
+      <h2>O que precisa ser confirmado no hardware</h2>
+      <p>Na ordem em que vale a pena executar. As marcações ficam salvas só neste navegador.</p>
+    </div>
+    <div class="check-head">
+      <span class="progress" id="checkProgress">0 de 15 concluídos</span>
+      <button type="button" class="ghost-btn" id="checkReset">Desmarcar tudo</button>
+    </div>
+    <div class="progress-bar" aria-hidden="true"><i id="checkBar"></i></div>
+    <ol class="checklist" id="checklist">
+      <li><label for="c01"><span class="n"></span><input type="checkbox" id="c01" data-key="flash"><span class="txt"><b>Gravar o firmware v2 e ler o boot no serial</b><span><code>pio run -d firmware -e esp32dev -t upload</code>, depois o monitor a 115200. Cada serviço deve reportar status, sem erro.</span></span></label></li>
+      <li><label for="c02"><span class="n"></span><input type="checkbox" id="c02" data-key="connect"><span class="txt"><b>Conectar o config-app, desbloquear e ler a config</b><span>PIN padrão 1234; “Ler do dispositivo” deve preencher o formulário com os padrões da tabela de parâmetros.</span></span></label></li>
+      <li><label for="c03"><span class="n"></span><input type="checkbox" id="c03" data-key="hz"><span class="txt"><b>Taxa de orientação ≥ 50 Hz</b><span>Painel Métricas. Meta de projeto, nunca medida no legado.</span></span></label></li>
+      <li><label for="c04"><span class="n"></span><input type="checkbox" id="c04" data-key="loss"><span class="txt"><b>Perda ≈ 0 por 10 min</b><span>Contada pelos buracos no <code>seq</code>. Anotar o jitter observado.</span></span></label></li>
+      <li><label for="c05"><span class="n"></span><input type="checkbox" id="c05" data-key="nan"><span class="txt"><b>Sem NaN nem saltos</b><span>Girar rápido e com trancos por 5 min; a vista 3D não pode pular nem congelar (<a href="#f01">F01</a>).</span></span></label></li>
+      <li><label for="c06"><span class="n"></span><input type="checkbox" id="c06" data-key="mount"><span class="txt"><b>Calibrar montagem e zerar</b><span>Bola na posição de referência, comando <code>0x14</code> e depois <code>0x10</code> (<a href="#f10">F10</a>).</span></span></label></li>
+      <li><label for="c07"><span class="n"></span><input type="checkbox" id="c07" data-key="flat"><span class="txt"><b>Giro em superfície plana × vista 3D</b><span>Uma volta física em cada eixo deve ser exatamente uma volta no modelo, no mesmo eixo. Comparar cru × filtrado.</span></span></label></li>
+      <li><label for="c08"><span class="n"></span><input type="checkbox" id="c08" data-key="drift"><span class="txt"><b>Deriva em Quat6 e teste do ímã</b><span>Bola parada 5 min: anotar a deriva do yaw. Aproximar ímã ou celular: em Quat6 nada muda (<a href="#f11">F11</a>).</span></span></label></li>
+      <li><label for="c09"><span class="n"></span><input type="checkbox" id="c09" data-key="co2raw"><span class="txt"><b>Confirmar o protocolo do sensor “SC8”</b><span>Ligar <code>co2RawLogMode</code> (0x26 = 1), capturar frames, conferir cabeçalho <code>42 4D</code>, posição do ppm e qual checksum bate (0..13 ou 0..14). Ajustar 0x21, salvar com <code>0x11</code> e desligar o log (<a href="#f08">F08</a>).</span></span></label></li>
+      <li><label for="c10"><span class="n"></span><input type="checkbox" id="c10" data-key="sound"><span class="txt"><b>Som e CO₂ virtual</b><span>Palma a ~1 m: LED pisca na hora; CO₂ virtual chega ~1 s depois e dura ~17 s. A taxa da IMU não cai durante o teste.</span></span></label></li>
+      <li><label for="c11"><span class="n"></span><input type="checkbox" id="c11" data-key="dual"><span class="txt"><b>Site e config-app conectados ao mesmo tempo</b><span>O globo do site responde enquanto o config-app mede a perda; nenhum dos dois cai.</span></span></label></li>
+      <li><label for="c12"><span class="n"></span><input type="checkbox" id="c12" data-key="pin"><span class="txt"><b>Bloqueio do PIN</b><span>5 PINs errados seguidos: o desbloqueio deve ser recusado por 30 s, mesmo com o PIN certo.</span></span></label></li>
+      <li><label for="c13"><span class="n"></span><input type="checkbox" id="c13" data-key="noimu"><span class="txt"><b>Ligar sem a IMU</b><span>BLE sobe, LED de erro acende, diagnóstico mostra <code>imuOk = 0</code> (<a href="#f09">F09</a>).</span></span></label></li>
+      <li><label for="c14"><span class="n"></span><input type="checkbox" id="c14" data-key="soak"><span class="txt"><b>24 h ligado</b><span><code>uptimeS</code> contínuo (sem reinício), <code>minFreeHeapKb</code> estável, <code>fifoOverflows</code> e erros de UART sem crescer.</span></span></label></li>
+      <li><label for="c15"><span class="n"></span><input type="checkbox" id="c15" data-key="newpin"><span class="txt"><b>Trocar o PIN padrão antes da exposição</b><span>TLV 0x41 com 4 dígitos novos e comando <code>0x11</code> para gravar.</span></span></label></li>
+    </ol>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Fontes: <code>firmware-original.ino</code> (legado, intocado), <code>docs/superpowers/specs/2026-11-06-gaiaball-v2-design.md</code>, <code>relatorio.md</code> (relatório inicial), <code>firmware/docs/protocol.md</code>, <code>firmware/docs/architecture.md</code>, código em <code>firmware/Gaiaball/src/</code>.</p>
+    <p>Números de linha referem-se a <code>firmware-original.ino</code>. Nenhuma medição de hardware foi feita; os valores de desempenho são metas.</p>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+  var root = document.documentElement;
+  function store(k, v) { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} }
+  function load(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+
+  /* ---- theme: sistema -> claro -> escuro ---- */
+  var themeBtn = document.getElementById("themeBtn");
+  var themes = ["system", "light", "dark"];
+  var labels = { system: "Tema: sistema", light: "Tema: claro", dark: "Tema: escuro" };
+  function applyTheme(t) {
+    if (t === "light" || t === "dark") root.setAttribute("data-theme", t);
+    else root.removeAttribute("data-theme");
+    themeBtn.textContent = labels[t] || labels.system;
+  }
+  var theme = load("gb-theme") || "system";
+  applyTheme(theme);
+  themeBtn.addEventListener("click", function () {
+    theme = themes[(themes.indexOf(theme) + 1) % themes.length];
+    applyTheme(theme);
+    store("gb-theme", theme === "system" ? null : theme);
+  });
+
+  /* ---- findings filters ---- */
+  var cards = Array.prototype.slice.call(document.querySelectorAll("details.finding"));
+  var state = { sev: "todos", sym: "todos", q: "" };
+  var countEl = document.getElementById("resultCount");
+  var emptyEl = document.getElementById("emptyState");
+  function norm(s) { return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, ""); }
+  var texts = cards.map(function (c) { return norm(c.textContent + " " + c.id); });
+
+  function applyFilters() {
+    var shown = 0, q = norm(state.q.trim());
+    cards.forEach(function (c, i) {
+      var okSev = state.sev === "todos" || c.dataset.sev === state.sev;
+      var syms = (c.dataset.sym || "").split(" ");
+      var okSym = state.sym === "todos" || syms.indexOf(state.sym) !== -1;
+      var okQ = !q || texts[i].indexOf(q) !== -1;
+      var ok = okSev && okSym && okQ;
+      c.hidden = !ok;
+      if (ok) shown++;
+    });
+    countEl.textContent = shown + " de " + cards.length + " achados";
+    emptyEl.hidden = shown !== 0;
+  }
+  function wireChips(id, key) {
+    var group = document.getElementById(id);
+    group.addEventListener("click", function (e) {
+      var b = e.target.closest("button[data-val]");
+      if (!b) return;
+      state[key] = b.dataset.val;
+      group.querySelectorAll("button[data-val]").forEach(function (x) { x.setAttribute("aria-pressed", String(x === b)); });
+      applyFilters();
+    });
+  }
+  wireChips("sevFilter", "sev");
+  wireChips("symFilter", "sym");
+  var search = document.getElementById("findSearch");
+  search.addEventListener("input", function () { state.q = search.value; applyFilters(); });
+  document.getElementById("clearFilters").addEventListener("click", function () {
+    state = { sev: "todos", sym: "todos", q: "" };
+    search.value = "";
+    ["sevFilter", "symFilter"].forEach(function (id) {
+      document.querySelectorAll("#" + id + " button[data-val]").forEach(function (x) { x.setAttribute("aria-pressed", String(x.dataset.val === "todos")); });
+    });
+    applyFilters();
+  });
+  document.getElementById("expandAll").addEventListener("click", function () { cards.forEach(function (c) { if (!c.hidden) c.open = true; }); });
+  document.getElementById("collapseAll").addEventListener("click", function () { cards.forEach(function (c) { c.open = false; }); });
+
+  /* open a finding when its anchor is targeted */
+  function openFromHash() {
+    var id = location.hash.slice(1);
+    if (!/^f\d\d$/.test(id)) return;
+    var el = document.getElementById(id);
+    if (!el) return;
+    if (el.hidden) document.getElementById("clearFilters").click();
+    el.open = true;
+    el.scrollIntoView({ block: "start" });
+  }
+  window.addEventListener("hashchange", openFromHash);
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest('a[href^="#f"]');
+    if (a && a.getAttribute("href") === location.hash) { e.preventDefault(); openFromHash(); }
+  });
+  openFromHash();
+
+  /* ---- parameter table ---- */
+  var rows = Array.prototype.slice.call(document.querySelectorAll("#paramTable tbody tr"));
+  var groupSel = document.getElementById("paramGroup");
+  var pSearch = document.getElementById("paramSearch");
+  var pCount = document.getElementById("paramCount");
+  function filterParams() {
+    var g = groupSel.value, q = norm(pSearch.value.trim()), shown = 0;
+    rows.forEach(function (r) {
+      var ok = (!g || r.cells[0].textContent === g) && (!q || norm(r.textContent).indexOf(q) !== -1);
+      r.hidden = !ok;
+      if (ok) shown++;
+    });
+    pCount.textContent = shown + " de " + rows.length + " parâmetros";
+  }
+  groupSel.addEventListener("change", filterParams);
+  pSearch.addEventListener("input", filterParams);
+
+  /* ---- checklist ---- */
+  var boxes = Array.prototype.slice.call(document.querySelectorAll("#checklist input[type=checkbox]"));
+  var KEY = "gb-bancada-v1";
+  var saved = {};
+  try { saved = JSON.parse(load(KEY) || "{}") || {}; } catch (e) { saved = {}; }
+  function refreshChecks() {
+    var done = 0;
+    boxes.forEach(function (b) { b.closest("li").classList.toggle("done", b.checked); if (b.checked) done++; });
+    document.getElementById("checkProgress").textContent = done + " de " + boxes.length + " concluídos";
+    document.getElementById("checkBar").style.width = (100 * done / boxes.length) + "%";
+  }
+  boxes.forEach(function (b) {
+    b.checked = !!saved[b.dataset.key];
+    b.addEventListener("change", function () {
+      saved[b.dataset.key] = b.checked;
+      store(KEY, JSON.stringify(saved));
+      refreshChecks();
+    });
+  });
+  document.getElementById("checkReset").addEventListener("click", function () {
+    boxes.forEach(function (b) { b.checked = false; });
+    saved = {};
+    store(KEY, null);
+    refreshChecks();
+  });
+  refreshChecks();
+})();
+</script>
+</body>
+</html>
