@@ -107,6 +107,12 @@ void test_reject_out_of_range() {
   assertRejected(pin34, sizeof pin34);
   const uint8_t ledpin[] = {0x31, 1, 255};
   assertRejected(ledpin, sizeof ledpin);
+  const uint8_t flash6[] = {0x30, 1, 6};
+  assertRejected(flash6, sizeof flash6);
+  const uint8_t flash11[] = {0x31, 1, 11};
+  assertRejected(flash11, sizeof flash11);
+  const uint8_t nopin20[] = {0x31, 1, 20};
+  assertRejected(nopin20, sizeof nopin20);
   const uint8_t nonprint[] = {0x40, 3, 'a', 0x01, 'b'};
   assertRejected(nonprint, sizeof nonprint);
   const uint8_t pinalpha[] = {0x41, 4, '1', '2', 'a', '4'};
@@ -125,6 +131,13 @@ void test_accept_boundaries_and_pin_write() {
   TEST_ASSERT_EQUAL(33, c.co2LedPin);
   TEST_ASSERT_EQUAL_STRING("0909", c.pin);
   TEST_ASSERT_TRUE(tlvApply(c, buf, 0));  // empty buffer is a valid no-op
+}
+
+void test_accept_valid_output_gpio() {
+  GaiaConfig c;
+  const uint8_t buf[] = {0x30, 1, 13};
+  TEST_ASSERT_TRUE(tlvApply(c, buf, sizeof buf));
+  TEST_ASSERT_EQUAL(13, c.soundLedPin);
 }
 
 void test_shorter_name_clears_old_tail() {
@@ -167,6 +180,7 @@ int main(int, char **) {
   RUN_TEST(test_reject_truncated);
   RUN_TEST(test_reject_out_of_range);
   RUN_TEST(test_accept_boundaries_and_pin_write);
+  RUN_TEST(test_accept_valid_output_gpio);
   RUN_TEST(test_shorter_name_clears_old_tail);
   RUN_TEST(test_serialize_cap_too_small);
   RUN_TEST(test_pin_not_serialized);

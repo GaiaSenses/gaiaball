@@ -13,7 +13,7 @@ struct Reg {
 };
 
 constexpr uint32_t kAnyU8 = 0xFF, kAnyU16 = 0xFFFF, kAnyU32 = 0xFFFFFFFFu;
-constexpr uint32_t kMaxGpio = 33;  // ESP32 output-capable GPIOs: 0..33
+constexpr uint32_t kMaxGpio = 33;  // ESP32 output-capable GPIOs: 0..33 (see isValidOutputGpio)
 constexpr size_t kNameMax = 16;
 constexpr size_t kPinLen = 4;
 
@@ -91,6 +91,15 @@ uint32_t loadNum(const void *f, Kind k) {
   }
 }
 
+// Output-capable ESP32 GPIOs; excludes SPI-flash 6..11 and nonexistent 20, 24, 28..31.
+bool isValidOutputGpio(uint8_t pin) {
+  static const uint8_t kValid[] = {0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16,
+                                   17, 18, 19, 21, 22, 23, 25, 26, 27, 32, 33};
+  for (uint8_t p : kValid)
+    if (p == pin) return true;
+  return false;
+}
+
 // Validates one record's value; returns true if acceptable.
 bool validValue(const Reg &r, const uint8_t *v, size_t len) {
   switch (r.kind) {
@@ -107,6 +116,7 @@ bool validValue(const Reg &r, const uint8_t *v, size_t len) {
     default: {
       if (len != numSize(r.kind)) return false;
       uint32_t x = readLe(v, len);
+      if (r.id == 0x30 || r.id == 0x31) return x <= 0xFF && isValidOutputGpio(static_cast<uint8_t>(x));
       return x >= r.min && x <= r.max;
     }
   }

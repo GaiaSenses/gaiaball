@@ -1,6 +1,8 @@
 import type { GaiaballClient, StatusDetail } from '../ble/gaiaball-client.ts';
 import { PresetStore } from '../presets/preset-store.ts';
-import { encodeTlv, TLV, type TlvWrite } from '../protocol/tlv.ts';
+import { encodeTlv, TLV, VALID_OUTPUT_GPIOS, type TlvWrite } from '../protocol/tlv.ts';
+
+const GPIO_OPTIONS: [number, string][] = VALID_OUTPUT_GPIOS.map((p) => [p, `GPIO ${p}`]);
 
 type Kind = 'number' | 'range' | 'checkbox' | 'select' | 'text' | 'pin';
 interface Field {
@@ -38,8 +40,8 @@ const GROUPS: Group[] = [
     { id: TLV.co2RawLogMode, label: 'Log bruto', kind: 'checkbox' },
   ] },
   { title: 'LEDs', fields: [
-    { id: TLV.soundLedPin, label: 'Pino LED de som', kind: 'number', min: 0, max: 33 },
-    { id: TLV.co2LedPin, label: 'Pino LED de CO₂', kind: 'number', min: 0, max: 33 },
+    { id: TLV.soundLedPin, label: 'Pino LED de som', kind: 'select', options: GPIO_OPTIONS },
+    { id: TLV.co2LedPin, label: 'Pino LED de CO₂', kind: 'select', options: GPIO_OPTIONS },
     { id: TLV.co2AlertPpm, label: 'Alerta CO₂ (ppm)', kind: 'number', min: 0, max: 65535 },
   ] },
   { title: 'Sistema', fields: [
@@ -232,6 +234,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   q('[data-act=psave]').addEventListener('click', () => {
     const name = pname.value.trim();
     if (!name) { pmsg.textContent = 'Informe um nome para o preset.'; return; }
+    if (snapshot.size === 0) { pmsg.textContent = 'Leia a configuração do dispositivo antes de salvar um preset.'; return; }
     const regs: TlvWrite[] = [];
     for (const f of FIELDS) {
       if (hasPin(f)) continue; // never persist the PIN in presets

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { decodeCo2Packet, decodeDiagPacket, decodeImuPacket } from './packets';
-import { TLV, buildCommand, decodeTlv, encodeTlv } from './tlv';
+import { TLV, VALID_OUTPUT_GPIOS, buildCommand, decodeTlv, encodeTlv } from './tlv';
 
 const hex = (s: string) => new DataView(new Uint8Array(s.trim().split(/\s+/).map((b) => parseInt(b, 16))).buffer);
 
@@ -110,5 +110,14 @@ describe('TLV', () => {
   it('buildCommand', () => {
     expect(Array.from(buildCommand(0x10))).toEqual([0x10]);
     expect(Array.from(buildCommand(0x20, new TextEncoder().encode('1234')))).toEqual([0x20, 0x31, 0x32, 0x33, 0x34]);
+  });
+});
+
+describe('VALID_OUTPUT_GPIOS', () => {
+  it('excludes flash and nonexistent pins, includes valid ones', () => {
+    for (const p of [6, 7, 8, 9, 10, 11, 20]) expect(VALID_OUTPUT_GPIOS).not.toContain(p);
+    expect(VALID_OUTPUT_GPIOS).toContain(13);
+    expect(VALID_OUTPUT_GPIOS).toContain(33);
+    expect(VALID_OUTPUT_GPIOS).toHaveLength(22);
   });
 });

@@ -116,8 +116,8 @@ A sequence of records `id u8 | len u8 | value (len bytes, little-endian)`.
 | 0x24 | u16 | 1000 | virtualDelayMs |
 | 0x25 | u16 | 17000 | virtualHoldMs |
 | 0x26 | u8 | 0 | co2RawLogMode |
-| 0x30 | u8 | 2 | soundLedPin |
-| 0x31 | u8 | 4 | co2LedPin |
+| 0x30 | u8 | 2 | soundLedPin (GPIOs de saída válidos; 6–11 (flash) e pinos inexistentes são rejeitados) |
+| 0x31 | u8 | 4 | co2LedPin (GPIOs de saída válidos; 6–11 (flash) e pinos inexistentes são rejeitados) |
 | 0x32 | u16 | 2000 | co2AlertPpm |
 | 0x40 | char[≤16] | "Globo_1" | bleName |
 | 0x41 | char[4] | "1234" | pin (write-only: never serialized/readable) |
