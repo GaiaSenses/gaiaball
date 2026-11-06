@@ -43,7 +43,6 @@ Quat loadMount(const GaiaConfig &cfg) {
 }  // namespace
 
 bool ImuService::begin(ConfigStore &store) {
-  store_ = &store;
   const GaiaConfig &cfg = store.get();
   qMount_ = loadMount(cfg);
   activeMode_ = clampMode(cfg.orientationMode);
@@ -213,15 +212,14 @@ void ImuService::processPacket(const icm_20948_DMP_data_t &d, uint32_t tUs) {
     qMount_ = raw;
     qZero_ = Quat{1, 0, 0, 0};  // the old zero lived in the previous mounting frame
     havePrev_ = false;
-    if (store_ != nullptr) {
-      GaiaConfig &cfg = store_->get();
-      cfg.mountQuat[0] = raw.w;
-      cfg.mountQuat[1] = raw.x;
-      cfg.mountQuat[2] = raw.y;
-      cfg.mountQuat[3] = raw.z;
-      const bool saved = store_->save();
-      GB_LOGI(kTag, "mounting calibrated (%s)", saved ? "saved" : "NOT saved");
-    }
+    portENTER_CRITICAL(&mountMux_);
+    capturedMount_[0] = raw.w;
+    capturedMount_[1] = raw.x;
+    capturedMount_[2] = raw.y;
+    capturedMount_[3] = raw.z;
+    mountCaptured_.store(true);
+    portEXIT_CRITICAL(&mountMux_);
+    GB_LOGI(kTag, "mounting calibrated (pending persistence by app task)");
   }
 
   const Quat mounted = quatMultiply(quatConjugate(qMount_), raw);
@@ -243,6 +241,17 @@ void ImuService::processPacket(const icm_20948_DMP_data_t &d, uint32_t tUs) {
   prevOut_ = q;
   havePrev_ = true;
   publish(s);
+}
+
+bool ImuService::takeCapturedMounting(float out[4]) {
+  if (!mountCaptured_.load()) return false;
+  portENTER_CRITICAL(&mountMux_);
+  const bool had = mountCaptured_.exchange(false);
+  if (had) {
+    for (int i = 0; i < 4; ++i) out[i] = capturedMount_[i];
+  }
+  portEXIT_CRITICAL(&mountMux_);
+  return had;
 }
 
 void ImuService::publish(const ImuSample &s) {

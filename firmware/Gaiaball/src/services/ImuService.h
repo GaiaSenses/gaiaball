@@ -47,6 +47,10 @@ class ImuService {
   // Callable from any task (e.g. BLE). Executed by the IMU task on its next packet.
   void requestZeroOrientation() { zeroRequested_.store(true); }
   void requestMountingCalibration() { mountRequested_.store(true); }
+  // Hands a captured mounting quaternion (w,x,y,z) to the App task for persistence
+  // (GaiaConfig.mountQuat + save()). Returns true once per capture; the IMU task
+  // never touches ConfigStore after begin(). Safe from any task.
+  bool takeCapturedMounting(float out[4]);
   // Picks up orientationMode / slerpAmount. Safe from the App task; a mode change
   // re-enables the DMP sensors on the IMU task's next cycle.
   void applyConfig(const GaiaConfig &cfg);
@@ -65,7 +69,6 @@ class ImuService {
   void updateRate(uint32_t nowUs);
 
   ICM_20948_I2C icm_;
-  ConfigStore *store_ = nullptr;
   QueueHandle_t queue_ = nullptr;
   TaskHandle_t task_ = nullptr;
   bool imuOk_ = false;
@@ -75,6 +78,12 @@ class ImuService {
   std::atomic<bool> mountRequested_{false};
   std::atomic<uint8_t> desiredMode_{0};
   std::atomic<uint8_t> slerpAmount_{0};
+
+  // Mounting capture handoff (IMU task -> App task). Short critical section, taken
+  // only on a capture or a take, never per packet.
+  portMUX_TYPE mountMux_ = portMUX_INITIALIZER_UNLOCKED;
+  float capturedMount_[4] = {1, 0, 0, 0};
+  std::atomic<bool> mountCaptured_{false};
 
   // Stats (written by the IMU task only).
   std::atomic<uint16_t> overflowCount_{0};
