@@ -1,3 +1,4 @@
 .pio/
 node_modules/
 dist/
+.superpowers/
