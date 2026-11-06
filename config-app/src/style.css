@@ -14,3 +14,18 @@ input[type=password] { width: 6ch; }
 .status, .msg { color: #9aa3ad; font-size: 0.9rem; }
 .banner { background: #5a3d00; color: #ffd98a; padding: 10px 20px; }
 @media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+#viz { position: relative; padding: 0; overflow: hidden; border-style: solid; }
+#viz canvas { display: block; width: 100%; height: 100%; }
+#viz-stage { position: relative; height: 420px; }
+.viz-labels { position: absolute; bottom: 8px; left: 0; right: 0; display: flex; justify-content: space-around; pointer-events: none; color: #9aa3ad; font-size: 0.85rem; }
+.viz-labels.single { justify-content: center; }
+.viz-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 8px 12px; font-size: 0.9rem; }
+.viz-controls select { background: #262a32; color: inherit; border: 1px solid #3a3f49; border-radius: 6px; padding: 4px 8px; }
+.viz-controls input[type=range] { padding: 0; width: 120px; }
+.metrics { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 12px; align-items: center; margin: 0 0 16px; font-size: 0.9rem; }
+.metrics dt { color: #9aa3ad; }
+.metrics dd { margin: 0; font-variant-numeric: tabular-nums; }
+.ok { color: #5fd38d; } .fail { color: #ff6b6b; }
+.badge { background: #313640; border-radius: 4px; padding: 1px 6px; font-size: 0.75rem; }
+.badge.warn { background: #5a3d00; color: #ffd98a; }
+aside#panels { display: flex; flex-direction: column; gap: 20px; }
