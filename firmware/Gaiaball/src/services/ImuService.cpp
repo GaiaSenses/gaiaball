@@ -23,6 +23,8 @@ constexpr int kMaxPacketsPerCycle = 16;
 constexpr float kMovingThresholdDeg = 0.25f;
 constexpr double kQ30 = 1073741824.0;  // 2^30
 constexpr uint32_t kRateWindowUs = 1000000;
+constexpr uint8_t kFifoOverflowBits = 0x1F;   // INT_STATUS_2 FIFO_OVERFLOW_INT[4:0]
+constexpr uint8_t kMaxOverflowStatusStreak = 3;
 
 inv_icm20948_sensor quatSensorFor(uint8_t mode) {
   return mode == 1 ? INV_ICM20948_SENSOR_ORIENTATION : INV_ICM20948_SENSOR_GAME_ROTATION_VECTOR;
@@ -83,6 +85,12 @@ bool ImuService::begin(ConfigStore &store) {
 bool ImuService::initDmp(uint8_t mode) {
   bool ok = true;
   ok &= icm_.initializeDMP() == ICM_20948_Stat_Ok;
+  // Arm the FIFO overflow interrupt so INT_STATUS_2 latches overflows (the INT pin
+  // is not wired). initializeDMP() leaves it commented out. Non-fatal on failure.
+  if (icm_.intEnableOverflowFIFO(kFifoOverflowBits) != ICM_20948_Stat_Ok) {
+    overflowStatusUsable_ = false;
+    GB_LOGW(kTag, "FIFO overflow status unavailable; backlog check only");
+  }
   ok &= icm_.enableDMPSensor(quatSensorFor(mode)) == ICM_20948_Stat_Ok;
   ok &= icm_.enableDMPSensor(INV_ICM20948_SENSOR_ACCELEROMETER) == ICM_20948_Stat_Ok;
   ok &= icm_.setDMPODRrate(quatOdrRegFor(mode), 0) == ICM_20948_Stat_Ok;  // 0 = max rate
@@ -147,7 +155,41 @@ void ImuService::taskLoop() {
   }
 }
 
+void ImuService::resyncFifo() {
+  icm_.resetFIFO();
+  const uint16_t c = resyncCount_.load();
+  if (c != UINT16_MAX) resyncCount_.store(c + 1);
+}
+
+bool ImuService::checkOverflow() {
+  if (overflowStatusUsable_) {
+    uint8_t st2 = 0;
+    if (icm_.setBank(0) == ICM_20948_Stat_Ok &&
+        icm_.read(AGB0_REG_INT_STATUS_2, &st2, 1) == ICM_20948_Stat_Ok &&  // clear-on-read
+        (st2 & kFifoOverflowBits) != 0) {
+      // Guard: if the bit never clears, stop trusting it instead of resetting forever.
+      if (++overflowStatusStreak_ >= kMaxOverflowStatusStreak) {
+        overflowStatusUsable_ = false;
+        GB_LOGE(kTag, "INT_STATUS_2 overflow bit stuck; using backlog check only");
+      }
+      resyncFifo();
+      GB_LOGW(kTag, "FIFO overflow; FIFO reset (resync #%u)", (unsigned)resyncCount_.load());
+      return true;
+    }
+    overflowStatusStreak_ = 0;
+  }
+  uint16_t count = 0;
+  if (icm_.getFIFOcount(&count) == ICM_20948_Stat_Ok && count >= kFifoBacklogResetBytes) {
+    resyncFifo();
+    GB_LOGW(kTag, "FIFO backlog %u B; FIFO reset (resync #%u)", (unsigned)count,
+            (unsigned)resyncCount_.load());
+    return true;
+  }
+  return false;
+}
+
 void ImuService::drainFifo() {
+  if (checkOverflow()) return;
   icm_20948_DMP_data_t data;
   for (int n = 0; n < kMaxPacketsPerCycle; ++n) {
     icm_.readDMPdataFromFIFO(&data);
@@ -157,14 +199,14 @@ void ImuService::drainFifo() {
       if (st == ICM_20948_Stat_Ok) return;  // FIFO empty after this packet
       continue;
     }
-    if (st == ICM_20948_Stat_UnrecognisedDMPHeader || st == ICM_20948_Stat_UnrecognisedDMPHeader2) {
-      // Packet framing lost: the FIFO overflowed (wrapped) or was corrupted. Resync.
-      const uint16_t c = overflowCount_.load();
-      if (c != UINT16_MAX) overflowCount_.store(c + 1);
-      icm_.resetFIFO();
-      GB_LOGW(kTag, "FIFO desync/overflow (#%u); FIFO reset", (unsigned)(c + 1));
+    if (st == ICM_20948_Stat_FIFOIncompleteData) {
+      // The library already consumed this packet's header and leading fields, so
+      // the next read would start mid-packet. Resync, losing at most this packet.
+      resyncFifo();
+      GB_LOGD(kTag, "incomplete DMP packet; FIFO reset (resync #%u)",
+              (unsigned)resyncCount_.load());
     }
-    // FIFONoDataAvail / FIFOIncompleteData: wait for the next wake. I2C errors: same.
+    // FIFONoDataAvail / I2C errors: retry on the next wake.
     return;
   }
 }

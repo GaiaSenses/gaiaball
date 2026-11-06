@@ -34,6 +34,10 @@ struct ImuSample {
 class ImuService {
  public:
   static constexpr uint8_t kQueueDepth = 8;
+  // Backlog cap before a drain burst. Bytes this old (~40 DMP packets, >150 ms of
+  // latency) are stale for a live globe; also catches an overflow should the
+  // INT_STATUS_2 check be unavailable. Independent of the exact HW FIFO size.
+  static constexpr uint16_t kFifoBacklogResetBytes = 1024;
 
   // I2C init + up to 10 begin() attempts (500 ms apart) + DMP init. Blocking; call
   // from setup(). Returns imuOk. On failure the service stays usable: the queue
@@ -55,7 +59,10 @@ class ImuService {
   // re-enables the DMP sensors on the IMU task's next cycle.
   void applyConfig(const GaiaConfig &cfg);
 
-  uint16_t fifoOverflowCount() const { return overflowCount_.load(); }
+  // FIFO recoveries (resetFIFO) since boot, saturating: hardware overflow
+  // (INT_STATUS_2), backlog over kFifoBacklogResetBytes, and packet desync
+  // (FIFOIncompleteData leaves the stream mid-packet).
+  uint16_t fifoResyncCount() const { return resyncCount_.load(); }
   float measuredHz() const { return measuredHz_.load(); }
 
  private:
@@ -64,6 +71,8 @@ class ImuService {
   bool initDmp(uint8_t mode);    // full legacy-like DMP init sequence
   bool switchMode(uint8_t mode); // DMP sensor re-enable on Quat6<->Quat9 change
   void drainFifo();
+  bool checkOverflow();  // true = FIFO was reset, skip this burst
+  void resyncFifo();
   void processPacket(const icm_20948_DMP_data_t &d, uint32_t tUs);
   void publish(const ImuSample &s);
   void updateRate(uint32_t nowUs);
@@ -86,11 +95,13 @@ class ImuService {
   std::atomic<bool> mountCaptured_{false};
 
   // Stats (written by the IMU task only).
-  std::atomic<uint16_t> overflowCount_{0};
+  std::atomic<uint16_t> resyncCount_{0};
   std::atomic<float> measuredHz_{0.0f};
 
   // IMU-task-only state.
   uint8_t activeMode_ = 0;
+  bool overflowStatusUsable_ = true;  // INT_STATUS_2 FIFO_OVERFLOW check enabled
+  uint8_t overflowStatusStreak_ = 0;
   Quat qMount_{1, 0, 0, 0};
   Quat qZero_{1, 0, 0, 0};
   Quat prevOut_{1, 0, 0, 0};
