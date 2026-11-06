@@ -6,6 +6,8 @@ namespace gaia {
 enum class LogLevel : uint8_t { Error = 0, Warn = 1, Info = 2, Debug = 3 };
 
 // Leveled, globally rate-limited (max 20 lines/s) Serial logger.
+// Thread-safe across FreeRTOS tasks (mutex created once in begin(); no heap per call).
+// Must NOT be called from an ISR.
 // No heap allocation per call; lines longer than the stack buffer are truncated.
 class Logger {
  public:

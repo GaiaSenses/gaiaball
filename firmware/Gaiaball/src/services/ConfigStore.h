@@ -11,10 +11,13 @@ namespace gaia {
 // Bump when GaiaConfig layout changes; mismatched stored data falls back to defaults.
 constexpr uint8_t kConfigSchemaVersion = 1;
 
+// Threading: cfg_ is single-writer (App task); onChange runs synchronously on the
+// caller's context. Not internally locked.
 // Persists the whole GaiaConfig as one NVS blob (namespace "gaia", keys "cfg" + "ver").
 class ConfigStore {
  public:
   // Opens NVS and loads the stored config; keeps defaults on missing/mismatched data.
+  // Returns false = NVS unavailable, running volatile (defaults, save() will fail).
   bool begin();
   GaiaConfig &get() { return cfg_; }
   bool save();
