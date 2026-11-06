@@ -2,6 +2,7 @@ import './style.css';
 import { GaiaballClient } from './ble/gaiaball-client.ts';
 import { mountConnectionPanel } from './panels/connection-panel.ts';
 import { StreamStats } from './metrics/stream-stats.ts';
+import { mountConfigPanel } from './panels/config-panel.ts';
 import { mountMetricsPanel } from './panels/metrics-panel.ts';
 import { OrientationScene, type ViewMode } from './viz/orientation-scene.ts';
 import type { ImuSample } from './protocol/packets.ts';
@@ -24,6 +25,7 @@ app.innerHTML = `
     </div>
     <aside id="panels">
       <section id="panel-conexao"></section>
+      <section id="panel-config"></section>
       <section id="panel-metricas"></section>
     </aside>
   </main>`;
@@ -40,6 +42,7 @@ client.addEventListener('status', (ev) => {
   if ((ev as CustomEvent<{ connected: boolean }>).detail.connected) stats.reset();
 });
 mountConnectionPanel(app.querySelector<HTMLElement>('#panel-conexao')!, client);
+mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client);
 mountMetricsPanel(app.querySelector<HTMLElement>('#panel-metricas')!, client, stats);
 
 // 3D view. Smoothing is UI-only (client-side slerp); it never touches device config.
