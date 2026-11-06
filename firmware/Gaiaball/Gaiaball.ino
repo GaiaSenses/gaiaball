@@ -1,12 +1,10 @@
-// Gaiaball v2 firmware entry point (placeholder; modules are added in later tasks).
+// Gaiaball v2 firmware entry point. All work happens in gaia::App and its tasks;
+// see firmware/README.md and firmware/docs/architecture.md.
+#include "src/App.h"
 
-void setup() {
-  Serial.begin(115200);
-  delay(100);
-  Serial.println();
-  Serial.println("Gaiaball v2 booting...");
-}
+static gaia::App app;
 
-void loop() {
-  delay(1000);
-}
+void setup() { app.begin(); }
+
+// The Arduino loop task has nothing to do: park it forever.
+void loop() { vTaskDelay(portMAX_DELAY); }
