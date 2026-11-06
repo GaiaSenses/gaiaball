@@ -52,7 +52,7 @@ class ImuService {
   void requestZeroOrientation() { zeroRequested_.store(true); }
   void requestMountingCalibration() { mountRequested_.store(true); }
   // Hands a captured mounting quaternion (w,x,y,z) to the App task for persistence
-  // (GaiaConfig.mountQuat + save()). Returns true once per capture; the IMU task
+  // (ConfigStore::setMountQuat + save()). Returns true once per capture; the IMU task
   // never touches ConfigStore after begin(). Safe from any task.
   bool takeCapturedMounting(float out[4]);
   // Picks up orientationMode / slerpAmount. Safe from the App task; a mode change
