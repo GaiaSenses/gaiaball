@@ -9,7 +9,7 @@
 namespace gaia {
 
 // Bump when GaiaConfig layout changes; mismatched stored data falls back to defaults.
-constexpr uint8_t kConfigSchemaVersion = 1;
+constexpr uint8_t kConfigSchemaVersion = 2;  // v2: GaiaConfig.mountQuat
 
 // Threading: cfg_ is single-writer (App task); onChange runs synchronously on the
 // caller's context. Not internally locked.

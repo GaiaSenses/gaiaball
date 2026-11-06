@@ -6,6 +6,11 @@
 namespace gaia {
 
 struct GaiaConfig {
+  // IMU mounting calibration quaternion (w,x,y,z). Persisted in the NVS blob only:
+  // no TLV register, set exclusively by the 0x14 calibration command. Kept first so
+  // the 4-byte-aligned array adds no padding.
+  float mountQuat[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+
   uint8_t orientationMode = 0;  // 0=Quat6 relative, 1=Quat9
   uint8_t imuNotifyHz = 50;     // 10..60
   uint8_t slerpAmount = 0;      // 0..100, 0=off
