@@ -67,6 +67,7 @@ architecture, including a per-core execution diagram, is in
 |---|---|
 | `firmware/` | **The v2 firmware** (ESP32, FreeRTOS, NimBLE, binary protocol). Dual toolchain: PlatformIO and Arduino IDE/CLI. See [`firmware/README.md`](firmware/README.md). |
 | `config-app/` | **Bench & configuration web app** (Vite + TypeScript, Web Bluetooth): 3D orientation view, per-sensor real-time charts with a shared time axis, audio spectrum analyzer, stream metrics, full parameter editor with presets. See [`config-app/README.md`](config-app/README.md). |
+| `pd-gaiaball/` | **Pure Data object `[gaiaball]`** (vanilla abstraction + cross-platform BLE→UDP bridge in Python/bleak): read-only access to every Gaiaball reading from inside Pd on Windows, Linux and macOS. See [`pd-gaiaball/README.md`](pd-gaiaball/README.md). |
 | `docs/bench-validation.md` | Step-by-step hardware validation script (flash, rates, loss, filters, CO₂, 24 h soak). |
 | `relatorio/index.html` | Interactive report (pt-BR): every defect found in the legacy firmware, the fix, the expected impact, and the bench checklist. Open it in a browser. |
 | `firmware-original.ino` | The legacy (v1) firmware, **preserved untouched as a historical reference**; no longer built. |

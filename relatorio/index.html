@@ -1449,6 +1449,14 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
         </ul>
       </div>
       <div class="tool">
+        <h3>Objeto Pure Data <code>[gaiaball]</code></h3>
+        <p>Em <code>gaiaball/pd-gaiaball/</code>: abstração Pd 100&nbsp;% vanilla + ponte BLE→UDP multiplataforma (Python/<code>bleak</code>) — leitura de todos os dados da bola direto num patch Pd, em Windows, Linux e macOS, sem compilar nada.</p>
+        <ul>
+          <li>9 outlets já decodificados: euler (convenção legada, a mesma do site), quaternion, aceleração, CO₂ (ppm + flags), microfones (dBFS/RMS), potenciômetro, diagnóstico, áudio cru opcional e status da conexão.</li>
+          <li>Somente leitura (nunca escreve na bola; dispensa PIN) e reconexão automática. README próprio com instalação por SO, referência de outlets com unidades e solução de problemas.</li>
+        </ul>
+      </div>
+      <div class="tool">
         <h3>Modo demo</h3>
         <p>Abrindo <code>http://localhost:5173/?demo=1</code>, o config-app mostra a vista 3D, as métricas e os gráficos de sensores com dados sintéticos, sem dispositivo. Serve para apresentar a ferramenta e conferir o navegador antes da bancada.</p>
         <p>O site e o config-app podem ficar conectados ao mesmo tempo (o firmware aceita 2 centrais): ajusta-se o filtro no config-app vendo o globo real reagir no site.</p>
