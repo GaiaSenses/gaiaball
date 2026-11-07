@@ -1,6 +1,6 @@
 # Gaiaball Config
 
-App web (Vite + TypeScript) para configurar e testar o Gaiaball v2 via Web Bluetooth: visualização 3D da orientação (cru × filtrado), métricas do fluxo (taxa, perda, jitter), parâmetros do firmware, presets e um painel de **sensores em tempo real** com gráficos de linha (Plotly.js).
+App web (Vite + TypeScript) para configurar e testar o Gaiaball v2 via Web Bluetooth: visualização 3D da orientação (quaternion recebido × prévia suavizada), métricas do fluxo (taxa, perda, jitter), parâmetros do firmware, presets e um painel de **sensores em tempo real** com gráficos de linha (Plotly.js).
 
 ## Sensores em tempo real
 
@@ -62,7 +62,7 @@ npm test           # testes (vitest)
 2. **Desbloquear** com o PIN (padrão de fábrica: `1234`). O firmware não confirma o PIN; sem ele, comandos e escritas sensíveis são ignorados.
 3. **Ler do dispositivo** (painel Configuração) para preencher o formulário.
 4. Em **superfície plana**, gire a bola e acompanhe **Taxa**, **Perda** e **Jitter** no painel Métricas.
-5. Compare **Cru × Filtrado** na vista 3D (seletor "Vista") e ajuste Modo, Taxa (Hz) e Suavização.
+5. Compare **Recebido (BLE) × Prévia suavizada** na vista 3D (seletor "Vista") e ajuste Modo e Taxa (Hz). Os dois modelos mostram o mesmo quaternion tratado que chega da bola; o slider **Suavização da prévia** adiciona um slerp só na visualização (nada é enviado ao dispositivo) — use-o para escolher o valor de "Suavização do quaternion (slerp)" no painel Configuração.
 6. **Aplicar**: só os campos alterados são enviados; em seguida o app relê o dispositivo para verificar. Se algum valor voltar ao anterior, aparece o aviso "alguns valores não foram aceitos (desbloqueou com o PIN?)".
 7. **Salvar no dispositivo** (painel Conexão) para persistir. "Aplicar" vale somente até reiniciar.
 8. **Presets**: salve a configuração atual com um nome, carregue (só preenche o formulário; clique em Aplicar para enviar), exclua, exporte/importe JSON. O PIN nunca entra nos presets nem é lido do dispositivo.

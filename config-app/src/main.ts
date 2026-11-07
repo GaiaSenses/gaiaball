@@ -16,12 +16,12 @@ app.innerHTML = `
     <div id="viz">
       <div class="viz-controls">
         <label>Modelo: <select id="sel-model"><option value="plane">avião</option><option value="box">caixa</option></select></label>
-        <label>Vista: <select id="sel-view"><option value="both">cru × filtrado</option><option value="raw">cru</option><option value="filtered">filtrado</option></select></label>
-        <label>Suavização <input id="rng-smooth" type="range" min="0" max="100" value="0" /></label>
+        <label>Vista: <select id="sel-view"><option value="both">recebido × prévia</option><option value="raw">recebido (BLE)</option><option value="filtered">prévia suavizada</option></select></label>
+        <label title="Suavização extra aplicada só nesta visualização; não altera o dispositivo">Suavização da prévia <input id="rng-smooth" type="range" min="0" max="100" value="0" /></label>
       </div>
       <div id="viz-stage">
         <canvas id="viz-canvas"></canvas>
-        <div class="viz-labels" id="viz-labels"><span>Cru</span><span>Filtrado</span></div>
+        <div class="viz-labels" id="viz-labels"><span>Recebido (BLE)</span><span>Prévia suavizada</span></div>
       </div>
     </div>
     <aside id="panels">
@@ -58,7 +58,7 @@ app.querySelector<HTMLSelectElement>('#sel-view')!.addEventListener('change', (e
   const v = (e.target as HTMLSelectElement).value as ViewMode;
   scene.setView(v);
   labels.classList.toggle('single', v !== 'both');
-  labels.innerHTML = v === 'both' ? '<span>Cru</span><span>Filtrado</span>' : `<span>${v === 'raw' ? 'Cru' : 'Filtrado'}</span>`;
+  labels.innerHTML = v === 'both' ? '<span>Recebido (BLE)</span><span>Prévia suavizada</span>' : `<span>${v === 'raw' ? 'Recebido (BLE)' : 'Prévia suavizada'}</span>`;
 });
 app.querySelector<HTMLInputElement>('#rng-smooth')!.addEventListener('input', (e) =>
   scene.setSmoothing(Number((e.target as HTMLInputElement).value) / 100));
