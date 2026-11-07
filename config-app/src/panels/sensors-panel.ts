@@ -157,14 +157,16 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
     line('limiar (dBFS)', C.threshold, 3, 'dot'),
     line('mic D (dBFS)', C.micR, 4),
     line('limiar (dBFS)', C.threshold, 4, 'dot'),
-    line('CO₂ (ppm)', C.co2, 5),
-    line('pot (%)', C.pot, 6),
+    line('pico instantâneo (dBFS)', '#f87171', 5),
+    line('RMS 100 ms (dBFS)', '#fbbf24', 5),
+    line('CO₂ (ppm)', C.co2, 6),
+    line('pot (%)', C.pot, 7),
   ];
 
-  const N_ROWS = 6;
+  const N_ROWS = 7;
   const axisStyle = { gridcolor: '#2a2e35', zerolinecolor: '#2a2e35', color: '#aab2bf' };
   const layout: Record<string, unknown> = {
-    height: 900,
+    height: 1040,
     margin: { l: 56, r: 8, t: 8, b: 40 },
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
@@ -172,7 +174,7 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
     showlegend: false,
     grid: { rows: N_ROWS, columns: 1, pattern: 'independent', ygap: 0.08 },
   };
-  const rowTitles = ['Orientação (°)', 'Aceleração (g)', 'Mic esquerdo (dBFS)', 'Mic direito (dBFS)', 'CO₂ (ppm)', 'Potenciômetro (%)'];
+  const rowTitles = ['Orientação (°)', 'Aceleração (g)', 'Mic esquerdo (dBFS)', 'Mic direito (dBFS)', 'Áudio cru mono (dBFS)', 'CO₂ (ppm)', 'Potenciômetro (%)'];
   for (let i = 1; i <= N_ROWS; i++) {
     const xk = i === 1 ? 'xaxis' : `xaxis${i}`;
     const yk = i === 1 ? 'yaxis' : `yaxis${i}`;
@@ -237,6 +239,23 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
     const e = imu && imu.quatValid ? quatToEulerLegacy(imu.quat) : null;
     const thrDb = sensors ? rmsToDbfs(sensors.threshold) : null;
     const audioLive = sensors !== null && sensors.audioOk && sensors.audioEnabled;
+    // Instantaneous peak + short RMS straight from the raw 2 kHz mono stream
+    // (int16 full scale; AES17 for the RMS line, plain amplitude for the peak).
+    let rawPeakDb: number | null = null;
+    let rawRmsDb: number | null = null;
+    if (audioRing.length >= 32) {
+      const win = audioRing.slice(-200); // last ~100 ms at 2 kHz
+      let peak = 0;
+      let acc = 0;
+      for (const v of win) {
+        const a = Math.abs(v);
+        if (a > peak) peak = a;
+        acc += v * v;
+      }
+      const rms = Math.sqrt(acc / win.length);
+      rawPeakDb = peak > 0 ? Math.max(-120, 20 * Math.log10(peak / 32768)) : -120;
+      rawRmsDb = rms > 0 ? Math.max(-120, 20 * Math.log10((rms * Math.SQRT2) / 32768)) : -120;
+    }
     const ys: (number | null)[] = [
       e ? e.rollDeg : null,
       e ? e.pitchDeg : null,
@@ -248,6 +267,8 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
       thrDb,
       audioLive ? rmsToDbfs(sensors.rmsR) : null,
       thrDb,
+      rawPeakDb,
+      rawRmsDb,
       co2 ? co2.ppm : null,
       sensors ? (sensors.potRaw / 4095) * 100 : null,
     ];

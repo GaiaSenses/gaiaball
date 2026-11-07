@@ -11,8 +11,8 @@ com uma cor própria. Arraste para dar zoom; duplo clique restaura.
 
 | Sensor | Unidade | Derivação |
 |---|---|---|
-| Orientação (IMU ICM-20948) | graus (°) | quaternion → Euler na convenção legada (mesma saída que o site entrega ao patch Pd) |
-| Aceleração (IMU) | g | contagens do DMP ÷ 8192 (fundo de escala ±4 g) |
+| Orientação (IMU GY-91/MPU-9250) | graus (°) | fusão Madgwick no firmware → quaternion → Euler na convenção legada (mesma saída que o site entrega ao patch Pd) |
+| Aceleração (IMU) | g | contagens do MPU-9250 ÷ 8192 (fundo de escala ±4 g) |
 | Microfones esq./dir. (INMP441) | dBFS (AES17) + dB SPL estimado | RMS em contagens de 24 bits (I²S 32 bits, `>>8`; fundo de escala 2²³); 0 dBFS = seno de fundo de escala; SPL ≈ dBFS + 120 (sensibilidade do INMP441: −26 dBFS @ 94 dB SPL, 1 kHz) |
 | CO₂ (Senseair S8) | ppm | leitura Modbus do firmware (EMA opcional, TLV `0x28`) |
 | Potenciômetro | % do curso | ADC filtrado 0–4095 → 0–100 % (o limiar mapeado aparece no cartão e como linha pontilhada nos gráficos dos microfones) |

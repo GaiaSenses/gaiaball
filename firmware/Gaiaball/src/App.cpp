@@ -64,7 +64,6 @@ void App::begin() {
   audioBpf_ = cfg.audioBpfEnabled != 0;
   audioHpHz_ = cfg.audioHpHz;
   audioLpHz_ = cfg.audioLpHz;
-  Logger::setEnabled(cfg.serialLogEnabled != 0);  // default OFF: CPU over chatter
   imuThrottle_.setRateHz(imuNotifyHz_);
   // Runs on the caller's task (NimBLE host for BLE config writes): flag only.
   store_.setOnChange([this](const GaiaConfig &) { configDirty_.store(true); });
@@ -97,6 +96,9 @@ void App::begin() {
   audio_.startTask();
   co2_.startTask();
   GB_LOGI(kTag, "boot complete, free heap %u", (unsigned)esp_get_free_heap_size());
+  // Applied only now so the whole boot (incl. the I2C identity probe) always prints;
+  // from here on the config switch (TLV 0x50, default OFF) rules.
+  Logger::setEnabled(cfg.serialLogEnabled != 0);
 }
 
 void App::taskEntry(void *arg) {

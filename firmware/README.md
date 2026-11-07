@@ -1,6 +1,6 @@
 # Gaiaball v2 firmware
 
-ESP32 firmware for the Gaiaball: ICM-20948 orientation (DMP quaternions), stereo
+ESP32 firmware for the Gaiaball: GY-91 (MPU-9250) orientation via on-chip Madgwick fusion, stereo
 INMP441 sound-peak detection, UART CO2 sensor with a sound-triggered virtual CO2 pulse,
 two status LEDs, and a NimBLE GATT server streaming binary packets to up to two
 centrals.
@@ -18,7 +18,6 @@ firmware/
     src/App.*           application core: boot order + App task
     src/services/       hardware/RTOS services (BLE, IMU, audio, CO2, pot, LEDs, NVS, diag)
     src/logic/          pure logic, host-tested
-    src/vendor/         SparkFun ICM-20948 v1.3.1, vendored with DMP enabled
   test/                 Unity tests for src/logic (native)
   docs/
 ```
@@ -26,9 +25,10 @@ firmware/
 ## Build and flash
 
 Toolchain versions are pinned: **ESP32 Arduino core 2.0.17** and **NimBLE-Arduino
-1.4.3**. NimBLE 2.x and core 3.x are not supported (different APIs). The SparkFun
-ICM-20948 library is vendored under `src/vendor/` with the DMP already enabled: do
-**not** install it from the Library Manager and do **not** edit any library header.
+1.4.3**. NimBLE 2.x and core 3.x are not supported (different APIs). The IMU driver
+(GY-91 module: MPU-9250 + AK8963) is register-level code in `src/services/Mpu9250.*`
+— no external IMU library, no DMP; the Madgwick fusion runs on the ESP32
+(`src/logic/Fusion.*`, host-tested).
 
 ### PlatformIO (recommended)
 
@@ -84,7 +84,7 @@ cross-check lives in [docs/hardware-pinout.md](docs/hardware-pinout.md).
 
 | Function | GPIO | Notes |
 |---|---|---|
-| IMU I2C SDA | 21 | ICM-20948, 400 kHz, AD0 low (board header U1; NCS unconnected → I2C) |
+| IMU I2C SDA | 21 | GY-91 module (MPU-9250 + AK8963 + BMP280), 400 kHz, AD0/SDO low (board header U1) |
 | IMU I2C SCL | 22 | |
 | I2S WS (LRCLK) | 25 | two INMP441 (L/R), 16 kHz, 32-bit stereo (board M1/M2) |
 | I2S SCK (BCLK) | 26 | |
@@ -109,8 +109,8 @@ config write that lands both LED functions on the same GPIO is rejected atomical
 
 - Advertises as **`Globo_1`** (config TLV `0x40`, applied after reboot); accepts two
   simultaneous centrals.
-- IMU packets at `imuNotifyHz` (default 50 Hz, configurable 10–200 Hz — the DMP sample
-  rate follows), CO2 packets on every ppm/flag change plus a 1 Hz keepalive, diagnostics
+- IMU packets at `imuNotifyHz` (default 50 Hz, configurable 10–200 Hz — the MPU-9250
+  sample rate follows), CO2 packets on every ppm/flag change plus a 1 Hz keepalive, diagnostics
   at 1 Hz, live sensor levels (SensorsPacket) at 5 Hz and raw decimated audio (2 kHz
   int16, for the config-app's frontend FFT) at ~21 pkt/s on the diag characteristic.
   Notifications are only sent to subscribers.
@@ -118,8 +118,13 @@ config write that lands both LED functions on the same GPIO is rejected atomical
   slerp, accel EMA, breath band-pass on the mics (HP 10 Hz / LP 200 Hz, Q 5.00 default
   — tune against the live spectrum), potentiometer EMA, CO2 EMA.
 - Wi-Fi is explicitly stopped at boot (BLE/Wi-Fi coexistence would wreck notify pacing).
-- USB serial logging is OFF by default (TLV `0x50`); boot messages still print until the
-  stored config loads.
+- USB serial logging is OFF by default (TLV `0x50`); the boot sequence (including the
+  I2C identity probe below) always prints, the switch takes over afterwards.
+- The IMU is the **GY-91 module (MPU-9250 + AK8963 mag + BMP280 barometer)**. The
+  driver is register-level (`src/services/Mpu9250.*`), fusion is Madgwick on the ESP32
+  with a gyro-bias tracker that adapts only at rest. The BMP280 (I2C 0x76) is present
+  on the module but not read by this firmware. Builds for the older ICM-20948
+  prototype exist in the git history (before the GY-91 port).
 - Sound LED (GPIO2): 100 ms flash per detected sound peak, held on while the virtual CO2
   pulse is active. Nothing else drives it.
 - CO2 LED (GPIO4): on while the real (non-stale) reading exceeds `co2AlertPpm` (default 2000).

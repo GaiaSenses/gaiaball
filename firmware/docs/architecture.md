@@ -17,7 +17,7 @@ namespace `gaia` under `Gaiaball/src/`:
 2. `ConfigStore` (NVS load) → `CommandGate::setPin(cfg.pin)` → install onChange (flag only)
 3. `LedController` (two distinct pins; GPIO2 driven LOW first: strapping pin)
 4. `BleService` (GATT + advertising start early)
-5. `ImuService::begin` (I2C + DMP init, blocks up to ~5 s if the IMU is absent)
+5. `ImuService::begin` (I2C + MPU-9250 init, blocks up to ~5 s if the IMU is absent)
 6. `PotService::begin`, `AudioService` (peak callback + threshold provider set first)
 7. `Co2Service` (UART1)
 8. `Diagnostics::begin` (task WDT 10 s, panic)
@@ -29,7 +29,7 @@ After `setup()` returns, `loop()` blocks in `vTaskDelay(portMAX_DELAY)`.
 
 | Task | Core | Prio | Stack | Wakes on | Owns |
 |---|---|---|---|---|---|
-| `imu` | 1 | 3 | 6144 | `vTaskDelay(5 ms)` | ICM-20948 (I2C), mounting/zero state |
+| `imu` | 1 | 3 | 6144 | `vTaskDelay(2 ms)` | MPU-9250 (I2C), Madgwick fusion, gyro-bias tracker, mounting/zero state |
 | `audio` | 1 | 2 | 4096 | `i2s_read` (256 frames @ 16 kHz = 16 ms) | I2S0, PeakDetector |
 | `app` | 1 | 2 | 6144 | IMU queue (`xQueueReceive`, 20 ms timeout) | LEDs, pot ADC, virtual pulse, NVS saves, WDT |
 | `co2` | 1 | 1 | 3072 | `vTaskDelay(20 ms)` | UART1, S8 Modbus poll (2 s) or Co2FrameParser |
@@ -93,6 +93,37 @@ for (;;) {
   every  200 ms                   → sensors packet (audio RMS, threshold, pot) on diag char
   every loop (chunk every 48 ms)  → raw-audio chunk (2 kHz int16) on diag char, if subscribed
   every 1000 ms                   → diag collect + notifyDiag
+
+## Per-core execution detail (zoom into the firmware)
+
+```
+CORE 0 (PRO_CPU) - radio only              CORE 1 (APP_CPU) - acquisition + app logic
+┌───────────────────────────────┐          ┌─────────────────────────────────────────────┐
+│ NimBLE host task              │          │ imu task · prio 3 · 2 ms tick               │
+│  GATT server, 5 chars         │          │  INT_STATUS ready? → read accel/gyro(+mag)  │
+│  notify → up to 2 centrals    │          │  → gyro-bias tracker → Madgwick (6/9 axis)  │
+│  RX cmd write ────────────────┼─queue──▶ │  → mount⁻¹·q → zero⁻¹ → slerp → queue(8)    │
+│  RX config TLV → ConfigStore  │          ├─────────────────────────────────────────────┤
+│   (mutex) → dirty flag        │          │ audio task · prio 2 · blocks on i2s_read    │
+├───────────────────────────────┤          │  block DC-removal → mono → decimator 2 kHz  │
+│ BLE controller + radio ISRs   │          │  → chunk 48 ms ─▶ app (mux)                 │
+└───────────────────────────────┘          │  → HP/LP biquads → RMS L/R → peak detector  │
+        ▲        │                         ├─────────────────────────────────────────────┤
+        │ notify │ commands                │ co2 task · prio 1 · 20 ms tick              │
+        │        ▼                         │  every 2 s: Modbus poll → parse → EMA → ppm │
+┌───────┴───────────────┐                  ├─────────────────────────────────────────────┤
+│ Site GaiaSenses       │                  │ app task · prio 2 · paced by IMU queue      │
+│ config-app (bancada)  │                  │  1 queue → ImuPacket → notify (throttle)    │
+└───────────────────────┘                  │  2 config dirty? re-apply to services       │
+                                           │  3 pending peak? trigger virtual CO2        │
+                                           │  4 100 ms: pot poll → threshold atomic      │
+                                           │  5  50 ms: LEDs + CO2 notify (change/1 Hz)  │
+                                           │  6 200 ms: SensorsPacket                    │
+                                           │  7 chunk ready? AudioChunkPacket (~21 Hz)   │
+                                           │  8   1 s: DiagPacket                        │
+                                           │  9 drain cmd queue · persist mount · WDT    │
+                                           └─────────────────────────────────────────────┘
+```
   drain command queue (non-blocking)
   persist captured mounting (if any)
   WDT feed

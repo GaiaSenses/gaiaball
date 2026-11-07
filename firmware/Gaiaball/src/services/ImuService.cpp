@@ -14,24 +14,19 @@ constexpr const char *kTag = "imu";
 constexpr int kSdaPin = 21;
 constexpr int kSclPin = 22;
 constexpr uint32_t kI2cHz = 400000;
-constexpr bool kAd0Val = false;  // AD0 low, as the legacy firmware
+constexpr bool kAd0Val = false;  // AD0/SDO low -> 0x68, as the legacy firmware
 constexpr int kBeginAttempts = 10;
 constexpr uint32_t kBeginRetryMs = 500;
-constexpr TickType_t kPollTicks = pdMS_TO_TICKS(5);
+constexpr TickType_t kPollTicks = pdMS_TO_TICKS(2);  // >= 2x the fastest sample rate
 constexpr TickType_t kIdleTicks = pdMS_TO_TICKS(1000);
-constexpr int kMaxPacketsPerCycle = 16;
 constexpr float kMovingThresholdDeg = 0.25f;
-constexpr double kQ30 = 1073741824.0;  // 2^30
 constexpr uint32_t kRateWindowUs = 1000000;
-constexpr uint8_t kFifoOverflowBits = 0x1F;   // INT_STATUS_2 FIFO_OVERFLOW_INT[4:0]
-constexpr uint8_t kMaxOverflowStatusStreak = 3;
+constexpr float kDeg2Rad = (float)M_PI / 180.0f;
+constexpr float kMadgwickBeta = 0.1f;
+// dt guard: a missed poll or a wrapped timestamp must not fling the integration.
+constexpr float kDtMinS = 0.0005f;
+constexpr float kDtMaxS = 0.05f;
 
-inv_icm20948_sensor quatSensorFor(uint8_t mode) {
-  return mode == 1 ? INV_ICM20948_SENSOR_ORIENTATION : INV_ICM20948_SENSOR_GAME_ROTATION_VECTOR;
-}
-DMP_ODR_Registers quatOdrRegFor(uint8_t mode) {
-  return mode == 1 ? DMP_ODR_Reg_Quat9 : DMP_ODR_Reg_Quat6;
-}
 uint8_t clampMode(uint8_t mode) { return mode == 1 ? 1 : 0; }
 uint8_t clampRate(uint8_t hz) { return hz < 10 ? 10 : (hz > 200 ? 200 : hz); }
 
@@ -54,6 +49,7 @@ bool ImuService::begin(ConfigStore &store) {
   activeRateHz_ = clampRate(cfg.imuNotifyHz);
   desiredRateHz_.store(activeRateHz_);
   accelAlphaX1000_.store(cfg.accelLpAlphaX1000 > 1000 ? 1000 : cfg.accelLpAlphaX1000);
+  fusion_.configure(kMadgwickBeta);
 
   if (queue_ == nullptr) queue_ = xQueueCreate(kQueueDepth, sizeof(ImuSample));
   if (queue_ == nullptr) GB_LOGE(kTag, "sample queue allocation failed");
@@ -63,73 +59,27 @@ bool ImuService::begin(ConfigStore &store) {
 
   bool found = false;
   for (int attempt = 1; attempt <= kBeginAttempts; ++attempt) {
-    icm_.begin(Wire, kAd0Val);
-    if (icm_.status == ICM_20948_Stat_Ok) {
+    if (mpu_.begin(Wire, kAd0Val)) {
       found = true;
       break;
     }
-    GB_LOGW(kTag, "begin attempt %d/%d failed: %s", attempt, kBeginAttempts, icm_.statusString());
+    GB_LOGW(kTag, "begin attempt %d/%d failed", attempt, kBeginAttempts);
     if (attempt < kBeginAttempts) delay(kBeginRetryMs);  // setup-time only
   }
   if (!found) {
-    GB_LOGE(kTag, "ICM-20948 not found; IMU disabled");
+    GB_LOGE(kTag, "MPU-9250 (GY-91) not found; IMU disabled");
     imuOk_ = false;
     return false;
   }
 
-  imuOk_ = initDmp(activeMode_);
+  imuOk_ = mpu_.setSampleRateHz(activeRateHz_);
   if (imuOk_) {
-    GB_LOGI(kTag, "DMP ready (%s)", activeMode_ == 1 ? "Quat9" : "Quat6");
+    GB_LOGI(kTag, "Madgwick fusion ready (%s, %u Hz)", activeMode_ == 1 ? "Quat9" : "Quat6",
+            (unsigned)activeRateHz_);
   } else {
-    GB_LOGE(kTag, "DMP init failed; IMU disabled");
+    GB_LOGE(kTag, "sample-rate setup failed; IMU disabled");
   }
   return imuOk_;
-}
-
-bool ImuService::initDmp(uint8_t mode) {
-  bool ok = true;
-  ok &= icm_.initializeDMP() == ICM_20948_Stat_Ok;
-  // Arm the FIFO overflow interrupt so INT_STATUS_2 latches overflows (the INT pin
-  // is not wired). initializeDMP() leaves it commented out. Non-fatal on failure.
-  if (icm_.intEnableOverflowFIFO(kFifoOverflowBits) != ICM_20948_Stat_Ok) {
-    overflowStatusUsable_ = false;
-    GB_LOGW(kTag, "FIFO overflow status unavailable; backlog check only");
-  }
-  // initializeDMP() leaves the gyro/accel divisor at 19 (56.25 Hz); override it so
-  // the DMP runs at (or just above) the configured output rate.
-  ok &= applySampleRate(activeRateHz_);
-  ok &= icm_.enableDMPSensor(quatSensorFor(mode)) == ICM_20948_Stat_Ok;
-  ok &= icm_.enableDMPSensor(INV_ICM20948_SENSOR_ACCELEROMETER) == ICM_20948_Stat_Ok;
-  ok &= icm_.setDMPODRrate(quatOdrRegFor(mode), 0) == ICM_20948_Stat_Ok;  // 0 = max rate
-  ok &= icm_.setDMPODRrate(DMP_ODR_Reg_Accel, 0) == ICM_20948_Stat_Ok;
-  ok &= icm_.enableFIFO() == ICM_20948_Stat_Ok;
-  ok &= icm_.enableDMP() == ICM_20948_Stat_Ok;
-  ok &= icm_.resetDMP() == ICM_20948_Stat_Ok;
-  ok &= icm_.resetFIFO() == ICM_20948_Stat_Ok;
-  return ok;
-}
-
-bool ImuService::switchMode(uint8_t mode) {
-  const uint8_t old = activeMode_;
-  bool ok = true;
-  ok &= icm_.enableDMP(false) == ICM_20948_Stat_Ok;
-  ok &= icm_.enableDMPSensor(quatSensorFor(old), false) == ICM_20948_Stat_Ok;
-  ok &= icm_.enableDMPSensor(quatSensorFor(mode), true) == ICM_20948_Stat_Ok;
-  ok &= icm_.setDMPODRrate(quatOdrRegFor(mode), 0) == ICM_20948_Stat_Ok;
-  ok &= icm_.enableDMP(true) == ICM_20948_Stat_Ok;
-  ok &= icm_.resetDMP() == ICM_20948_Stat_Ok;
-  ok &= icm_.resetFIFO() == ICM_20948_Stat_Ok;
-  activeMode_ = mode;
-  // The reference frame changed (Quat6 yaw is arbitrary, Quat9 is magnetic north):
-  // a zero captured in the old frame is meaningless now.
-  qZero_ = Quat{1, 0, 0, 0};
-  havePrev_ = false;
-  if (ok) {
-    GB_LOGI(kTag, "mode -> %s", mode == 1 ? "Quat9" : "Quat6");
-  } else {
-    GB_LOGE(kTag, "mode switch to %s reported errors", mode == 1 ? "Quat9" : "Quat6");
-  }
-  return ok;
 }
 
 void ImuService::applyConfig(const GaiaConfig &cfg) {
@@ -137,23 +87,6 @@ void ImuService::applyConfig(const GaiaConfig &cfg) {
   slerpAmount_.store(cfg.slerpAmount > 100 ? 100 : cfg.slerpAmount);
   desiredRateHz_.store(clampRate(cfg.imuNotifyHz));
   accelAlphaX1000_.store(cfg.accelLpAlphaX1000 > 1000 ? 1000 : cfg.accelLpAlphaX1000);
-}
-
-// Divisor so the DMP runs at or just above the target: actual = 1125/(1+div).
-// E.g. 200 Hz -> div 4 (225 Hz actual); 100 -> div 10 (102.3 Hz); 50 -> div 21
-// (51.1 Hz); 10 -> div 111 (10.04 Hz). The NotifyThrottle paces the exact rate.
-bool ImuService::applySampleRate(uint8_t rateHz) {
-  uint16_t div = (uint16_t)(1125 / clampRate(rateHz));
-  if (div > 0) div -= 1;
-  if (div > 111) div = 111;
-  ICM_20948_smplrt_t s;
-  s.a = div;
-  s.g = (uint8_t)div;
-  const bool ok =
-      icm_.setSampleRate((ICM_20948_Internal_Acc | ICM_20948_Internal_Gyr), s) ==
-      ICM_20948_Stat_Ok;
-  if (!ok) GB_LOGE(kTag, "setSampleRate(div %u) failed", (unsigned)div);
-  return ok;
 }
 
 void ImuService::startTask() {
@@ -172,132 +105,93 @@ void ImuService::taskLoop() {
     for (;;) vTaskDelay(kIdleTicks);
   }
   rateWindowStartUs_ = micros();
+  lastSampleUs_ = micros();
   for (;;) {
-    const uint8_t wanted = desiredMode_.load();
-    if (wanted != activeMode_) switchMode(wanted);
+    const uint8_t wantedMode = desiredMode_.load();
+    if (wantedMode != activeMode_) {
+      activeMode_ = wantedMode;
+      // The reference frame changes (Quat6 yaw is arbitrary, Quat9 is magnetic
+      // north): restart the fusion and drop the old zero.
+      fusion_.reset();
+      qZero_ = Quat{1, 0, 0, 0};
+      havePrev_ = false;
+      GB_LOGI(kTag, "mode -> %s", activeMode_ == 1 ? "Quat9" : "Quat6");
+    }
     const uint8_t wantedRate = desiredRateHz_.load();
     if (wantedRate != activeRateHz_) {
-      bool ok = true;
-      ok &= icm_.enableDMP(false) == ICM_20948_Stat_Ok;
-      ok &= applySampleRate(wantedRate);
-      ok &= icm_.enableDMP(true) == ICM_20948_Stat_Ok;
-      ok &= icm_.resetDMP() == ICM_20948_Stat_Ok;
-      ok &= icm_.resetFIFO() == ICM_20948_Stat_Ok;
-      activeRateHz_ = wantedRate;
-      if (ok)
-        GB_LOGI(kTag, "DMP rate -> %u Hz target", (unsigned)wantedRate);
+      if (mpu_.setSampleRateHz(wantedRate))
+        GB_LOGI(kTag, "sample rate -> %u Hz", (unsigned)wantedRate);
       else
-        GB_LOGE(kTag, "DMP rate change to %u Hz reported errors", (unsigned)wantedRate);
+        GB_LOGE(kTag, "sample rate change to %u Hz failed", (unsigned)wantedRate);
+      activeRateHz_ = wantedRate;
     }
-    drainFifo();
+    if (mpu_.dataReady()) processSample(micros());
     updateRate(micros());
     vTaskDelay(kPollTicks);
   }
 }
 
-void ImuService::resyncFifo() {
-  icm_.resetFIFO();
-  const uint16_t c = resyncCount_.load();
-  if (c != UINT16_MAX) resyncCount_.store(c + 1);
-}
+void ImuService::processSample(uint32_t tUs) {
+  int16_t accRaw[3], gyroRaw[3];
+  if (!mpu_.readAccelGyro(accRaw, gyroRaw)) return;
 
-bool ImuService::checkOverflow() {
-  if (overflowStatusUsable_) {
-    uint8_t st2 = 0;
-    if (icm_.setBank(0) == ICM_20948_Stat_Ok &&
-        icm_.read(AGB0_REG_INT_STATUS_2, &st2, 1) == ICM_20948_Stat_Ok &&  // clear-on-read
-        (st2 & kFifoOverflowBits) != 0) {
-      // Guard: if the bit never clears, stop trusting it instead of resetting forever.
-      if (++overflowStatusStreak_ >= kMaxOverflowStatusStreak) {
-        overflowStatusUsable_ = false;
-        GB_LOGE(kTag, "INT_STATUS_2 overflow bit stuck; using backlog check only");
-      }
-      resyncFifo();
-      GB_LOGW(kTag, "FIFO overflow; FIFO reset (resync #%u)", (unsigned)resyncCount_.load());
-      return true;
+  // Accel for the wire: raw counts, optionally EMA-filtered (TLV 0x04).
+  int16_t accOut[3];
+  const uint16_t aX1000 = accelAlphaX1000_.load();
+  if (aX1000 == 0) {
+    for (int i = 0; i < 3; i++) accOut[i] = accRaw[i];
+    accSeeded_ = false;
+  } else {
+    const float a = (float)aX1000 / 1000.0f;
+    for (int i = 0; i < 3; i++) {
+      if (!accSeeded_) accFilt_[i] = (float)accRaw[i];
+      else accFilt_[i] += a * ((float)accRaw[i] - accFilt_[i]);
+      accOut[i] = (int16_t)lroundf(accFilt_[i]);
     }
-    overflowStatusStreak_ = 0;
+    accSeeded_ = true;
   }
-  uint16_t count = 0;
-  if (icm_.getFIFOcount(&count) == ICM_20948_Stat_Ok && count >= kFifoBacklogResetBytes) {
-    resyncFifo();
-    GB_LOGW(kTag, "FIFO backlog %u B; FIFO reset (resync #%u)", (unsigned)count,
-            (unsigned)resyncCount_.load());
-    return true;
-  }
-  return false;
-}
 
-void ImuService::drainFifo() {
-  if (checkOverflow()) return;
-  icm_20948_DMP_data_t data;
-  for (int n = 0; n < kMaxPacketsPerCycle; ++n) {
-    icm_.readDMPdataFromFIFO(&data);
-    const ICM_20948_Status_e st = icm_.status;
-    if (st == ICM_20948_Stat_Ok || st == ICM_20948_Stat_FIFOMoreDataAvail) {
-      processPacket(data, micros());
-      if (st == ICM_20948_Stat_Ok) return;  // FIFO empty after this packet
-      continue;
-    }
-    if (st == ICM_20948_Stat_FIFOIncompleteData) {
-      // The library already consumed this packet's header and leading fields, so
-      // the next read would start mid-packet. Resync, losing at most this packet.
-      resyncFifo();
-      GB_LOGD(kTag, "incomplete DMP packet; FIFO reset (resync #%u)",
-              (unsigned)resyncCount_.load());
-    }
-    // FIFONoDataAvail / I2C errors: retry on the next wake.
-    return;
-  }
-}
+  // Physical units for the fusion.
+  float gDps[3];
+  for (int i = 0; i < 3; i++) gDps[i] = (float)gyroRaw[i] / Mpu9250::kGyroLsbPerDps;
+  gyroBias_.correct(gDps, tUs / 1000u);
+  const float gx = gDps[0] * kDeg2Rad, gy = gDps[1] * kDeg2Rad, gz = gDps[2] * kDeg2Rad;
+  const float ax = (float)accRaw[0] / Mpu9250::kAccelLsbPerG;
+  const float ay = (float)accRaw[1] / Mpu9250::kAccelLsbPerG;
+  const float az = (float)accRaw[2] / Mpu9250::kAccelLsbPerG;
 
-void ImuService::processPacket(const icm_20948_DMP_data_t &d, uint32_t tUs) {
-  if ((d.header & DMP_header_bitmap_Accel) != 0) {
-    const int16_t raw[3] = {d.Raw_Accel.Data.X, d.Raw_Accel.Data.Y, d.Raw_Accel.Data.Z};
-    const uint16_t aX1000 = accelAlphaX1000_.load();
-    if (aX1000 == 0) {  // filter off: raw passthrough (legacy behavior)
-      lastAcc_[0] = raw[0];
-      lastAcc_[1] = raw[1];
-      lastAcc_[2] = raw[2];
-      accSeeded_ = false;
-    } else {
-      const float a = (float)aX1000 / 1000.0f;
-      for (int i = 0; i < 3; i++) {
-        if (!accSeeded_) accFilt_[i] = (float)raw[i];
-        else accFilt_[i] += a * ((float)raw[i] - accFilt_[i]);
-        lastAcc_[i] = (int16_t)lroundf(accFilt_[i]);
-      }
-      accSeeded_ = true;
-    }
-  }
+  float dt = (float)(uint32_t)(tUs - lastSampleUs_) * 1e-6f;
+  lastSampleUs_ = tUs;
+  if (dt < kDtMinS || dt > kDtMaxS) dt = 1.0f / (float)activeRateHz_;
 
   const bool nine = activeMode_ == 1;
-  const uint16_t quatBit = nine ? DMP_header_bitmap_Quat9 : DMP_header_bitmap_Quat6;
-  if ((d.header & quatBit) == 0) return;  // accel-only (or stale-mode) packet
-
-  int32_t q1, q2, q3;
   if (nine) {
-    q1 = d.Quat9.Data.Q1;
-    q2 = d.Quat9.Data.Q2;
-    q3 = d.Quat9.Data.Q3;
+    float uT[3];
+    if (mpu_.readMag(uT)) {
+      // AK8963 axes differ from the gyro/accel chip frame: X<->Y swapped, Z inverted.
+      lastMagBody_[0] = uT[1];
+      lastMagBody_[1] = uT[0];
+      lastMagBody_[2] = -uT[2];
+    }
+    fusion_.update9(gx, gy, gz, ax, ay, az, lastMagBody_[0], lastMagBody_[1],
+                    lastMagBody_[2], dt);
   } else {
-    q1 = d.Quat6.Data.Q1;
-    q2 = d.Quat6.Data.Q2;
-    q3 = d.Quat6.Data.Q3;
+    fusion_.update6(gx, gy, gz, ax, ay, az, dt);
   }
   ++rateCount_;
 
   ImuSample s;
   s.tUs = tUs;
-  s.acc[0] = lastAcc_[0];
-  s.acc[1] = lastAcc_[1];
-  s.acc[2] = lastAcc_[2];
+  s.acc[0] = accOut[0];
+  s.acc[1] = accOut[1];
+  s.acc[2] = accOut[2];
   s.flags = nine ? kImuNineAxis : 0;
 
-  Quat raw;
-  if (!sanitizeQuat(q1 / kQ30, q2 / kQ30, q3 / kQ30, raw)) {
-    // Invalid packet: no orientation math, no calibration capture. Publish the last
-    // good output with quatValid=0; the consumer decides what to do.
+  const Quat raw = fusion_.quat();
+  if (!isfinite(raw.w) || !isfinite(raw.x) || !isfinite(raw.y) || !isfinite(raw.z)) {
+    // Numeric blow-up (should not happen; fusion renormalizes): restart the filter
+    // and publish the last good output with quatValid=0.
+    fusion_.reset();
     s.q = prevOut_;
     publish(s);
     return;
@@ -360,7 +254,7 @@ void ImuService::publish(const ImuSample &s) {
 void ImuService::updateRate(uint32_t nowUs) {
   const uint32_t elapsed = nowUs - rateWindowStartUs_;
   if (elapsed < kRateWindowUs) return;
-  measuredHz_.store((float)rateCount_ * 1e6f / (float)elapsed);
+  measuredHz_.store((float)rateCount_ * 1000000.0f / (float)elapsed);
   rateCount_ = 0;
   rateWindowStartUs_ = nowUs;
 }

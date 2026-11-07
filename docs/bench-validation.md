@@ -9,7 +9,7 @@ notify de orientação 50–60 Hz, latência medida < 50 ms, 24 h sem travar, ze
 
 ## 1. Pré-requisitos
 
-- Placa ESP32 (DevKit) montada conforme o pinout de `firmware/README.md`: IMU ICM-20948 em
+- Placa ESP32 (DevKit) montada conforme o pinout de `firmware/README.md`: IMU GY-91 (MPU-9250) em
   SDA 21 / SCL 22, INMP441 em WS 25 / SCK 26 / SD 33, sensor de CO₂ com TX no GPIO 16,
   potenciômetro no GPIO 34, LED de som no GPIO 2 (D2 na placa) e LED de CO₂ no GPIO 4
   (D1). 1 pino = 1 função (ver `firmware/docs/hardware-pinout.md`).

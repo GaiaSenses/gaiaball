@@ -3,7 +3,7 @@
 
 export const TLV = {
   orientationMode: 0x01,
-  imuNotifyHz: 0x02, // 10..200; also drives the DMP sample rate
+  imuNotifyHz: 0x02, // 10..200; also drives the MPU-9250 sample rate
   slerpAmount: 0x03,
   accelLpAlphaX1000: 0x04, // 0 = off (raw)
   audioEnabled: 0x10,

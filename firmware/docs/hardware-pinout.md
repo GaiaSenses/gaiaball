@@ -11,7 +11,7 @@ assignments on 2026-11-06.
 | Ref | Component | Pin / function | Net | ESP32 GPIO |
 |---|---|---|---|---|
 | U4 | ESP32-DEVKITC-32E | — | — | — |
-| U1 | IMU breakout (10-pin header, ICM-20948) | SCL | `/GPIO22` | **22** |
+| U1 | IMU: **GY-91 module** (MPU-9250 + AK8963 + BMP280) on the 10-pin header (KiCAD symbol `Sensor_Motion:MPU-9250-IMU`) | SCL | `/GPIO22` | **22** |
 | U1 | | SDA | `/GPIO21` | **21** |
 | U1 | | EDA, ECL, AD0, INT, **NCS**, FSYNC | unconnected | — |
 | U2 | CO2 sensor — value `Sensor_CO2_SC8`, footprint `Senseair_S8_Down` (**Senseair S8**) | +5V / GND | `+5V` / `GND` | — |
@@ -39,10 +39,17 @@ not be used).
    client ever sends it (the Gaiasenses site declares the characteristic but never
    writes it), so it was removed rather than given a pin. The firmware enforces that
    the two LED pins are distinct.
-2. **The IMU is wired for I2C only.** U1's NCS pin is unconnected and SCL/SDA go to
-   GPIO22/21 — the board matches the legacy firmware's active I2C path (AD0 low) and
-   rules out ever enabling the vestigial SPI path. The v2 firmware uses I2C on 21/22
-   at 400 kHz and carries no SPI code.
+2. **The IMU is a GY-91 module (MPU-9250 + AK8963 + BMP280), confirmed by the user;
+   the KiCAD symbol (`MPU-9250-IMU`, datasheet property MPU-9250A) agrees.** This
+   drove a full driver change: the legacy firmware (and the first v2 iterations) used
+   the SparkFun ICM-20948 library — a DIFFERENT InvenSense chip (WHO_AM_I 0xEA vs the
+   MPU-9250's 0x71) that cannot talk to an MPU-9250. The current firmware has a
+   register-level MPU-9250 driver + Madgwick fusion on the ESP32 (no DMP, no FIFO).
+   Evidence note, for the record: a ball that visibly moved under the legacy
+   ICM-20948 firmware must have carried an ICM-20948 — if the ball in hand has a
+   GY-91, the legacy firmware never read its IMU at all. Wiring is I2C only (NCS
+   unconnected, SCL/SDA on 22/21, AD0/SDO low → 0x68); the GY-91's BMP280 barometer
+   sits at 0x76 and is not read by the firmware (available for future use).
 3. **The CO2 sensor is a Senseair S8** (the schematic's "SC8"). The S8 is a Modbus
    RTU slave: it **never transmits unsolicited**, so the legacy firmware's passive
    frame listener could never receive anything from it — real CO2 never updated,

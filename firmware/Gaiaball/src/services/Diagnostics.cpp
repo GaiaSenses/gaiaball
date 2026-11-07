@@ -27,7 +27,8 @@ DiagPacket Diagnostics::collect(uint16_t seq, uint16_t notifyHzX10, const ImuSer
   p.uptimeS = millis() / 1000;
   p.imuHzX10 = clamp16((uint32_t)(imu.measuredHz() * 10.0f + 0.5f));
   p.notifyHzX10 = notifyHzX10;
-  p.fifoOverflows = clamp16(imu.fifoResyncCount());
+  // Legacy wire slot "fifoOverflows" now carries the MPU-9250 I2C read-error count.
+  p.fifoOverflows = clamp16(imu.readErrorCount());
   p.i2sErrors = clamp16(audio.i2sErrorCount());
   p.uartFrameErrors = clamp16(co2.errorCount());
   p.freeHeapKb = clamp16(esp_get_free_heap_size() / 1024);

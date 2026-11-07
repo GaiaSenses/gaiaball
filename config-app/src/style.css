@@ -48,3 +48,7 @@ h3 { margin: 16px 0 8px; font-size: 0.95rem; }
 .sensor-chart { width: 100%; }
 .sensor-spectrum { width: 100%; margin-bottom: 8px; }
 .spec-title { margin: 16px 0 4px; font-size: 14px; color: #aab2bf; }
+
+/* --- per-filter toggles ------------------------------------------------------ */
+.filter-toggle { margin-right: 6px; accent-color: #4ade80; }
+.cfg-field.filter-off input:not(.filter-toggle), .cfg-field.filter-off select { opacity: 0.4; }

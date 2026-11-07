@@ -19,7 +19,7 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
     <dl class="metrics">
       <dt>IMU</dt><dd id="d-imuhz">–</dd><span></span>
       <dt>Notify</dt><dd id="d-nothz">–</dd><span></span>
-      <dt>FIFO resyncs</dt><dd id="d-fifo">–</dd><span></span>
+      <dt>Erros I²C da IMU</dt><dd id="d-fifo">–</dd><span></span>
       <dt>Erros I²S</dt><dd id="d-i2s">–</dd><span></span>
       <dt>Erros UART</dt><dd id="d-uart">–</dd><span></span>
       <dt>Heap livre / mín</dt><dd id="d-heap">–</dd><span></span>

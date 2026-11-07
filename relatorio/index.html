@@ -316,7 +316,7 @@ footer .wrap { display: grid; gap: 6px; }
 
 <header class="hero" id="topo">
   <div class="wrap">
-    <span class="eyebrow">GaiaSenses · firmware ESP32 + ICM-20948 · 06/11/2026</span>
+    <span class="eyebrow">GaiaSenses · firmware ESP32 + GY-91 (MPU-9250) · 06/11/2026</span>
     <h1>Relatório Gaiaball v2</h1>
     <p class="lede">O que estava errado no firmware que roda hoje no globo, o que mudou no firmware v2 e o que se espera ganhar com cada mudança. Cada achado aponta a linha exata do código legado (<code>firmware-original.ino</code>) e o trecho que o substitui.</p>
     <div class="meta-row">
@@ -434,6 +434,7 @@ footer .wrap { display: grid; gap: 6px; }
   </summary>
   <div class="fbody">
     <p>O DMP entrega só três componentes do quaternion (q1, q2, q3, em ponto fixo Q30). O firmware reconstrói o quarto com <code>q0 = √(1 − (q1² + q2² + q3²))</code>. Por quantização e ruído, a soma dos quadrados pode passar um pouco de 1; o argumento fica negativo e <code>sqrt</code> devolve NaN. Não havia proteção, normalização nem descarte: o NaN seguia para os ângulos de Euler e para o site, e o globo virtual saltava ou congelava.</p>
+    <p><strong>Nota (port para o GY-91):</strong> com a fusão Madgwick no ESP32, a reconstrução da raiz deixou de existir — o filtro produz o quaternion completo e renormalizado a cada amostra (invariante coberto por teste). O <code>sanitizeQuat</code> permanece na base como especificação testada, e o firmware ainda publica <code>quatValid=0</code> se a fusão degenerar.</p>
     <div class="ba">
       <figure class="before"><figcaption>Antes · firmware-original.ino L545–548</figcaption>
 <pre><code>double q1 = ((double)data.Quat9.Data.Q1) / 1073741824.0;
@@ -485,7 +486,7 @@ if (myICM.status != ICM_20948_Stat_FIFOMoreDataAvail) {
   if (!haveQuat) delay(2);
   delay(10);
 }</code></pre></figure>
-      <figure class="after"><figcaption>Depois · src/services/ImuService.cpp (drainFifo)</figcaption>
+      <figure class="after"><figcaption>Depois (era ICM-20948) · drenagem total da FIFO — hoje superado: com o GY-91/MPU-9250 não há FIFO; leitura direta de registradores + fusão Madgwick (ver Arquitetura)</figcaption>
 <pre><code>void ImuService::drainFifo() {
   if (checkOverflow()) return;
   icm_20948_DMP_data_t data;
@@ -1036,6 +1037,7 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
       <span class="eyebrow">3 · Arquitetura v2</span>
       <h2>Uma tarefa por subsistema, rádio isolado no outro núcleo</h2>
       <p>O ESP32 tem dois núcleos. No v2, o núcleo 0 fica só com a pilha BLE (NimBLE); aquisição e lógica rodam no núcleo 1, cada uma na sua tarefa. A IMU tem a maior prioridade e entrega amostras por fila; a tarefa <em>app</em> decide o que enviar e quando.</p>
+      <p><strong>Hardware confirmado (06/11):</strong> a IMU é um módulo <strong>GY-91 (MPU-9250 + magnetômetro AK8963 + barômetro BMP280)</strong> — confirmado pelo usuário e coerente com o símbolo <code>MPU-9250-IMU</code> do esquemático KiCAD. O firmware foi portado: driver MPU-9250 em nível de registrador + <strong>fusão Madgwick no ESP32</strong> (com rastreador de viés do giroscópio que só adapta em repouso), <em>sem DMP e sem FIFO</em>. Os cartões F02/F05/F09 descrevem o firmware legado da era ICM-20948; suas proteções de FIFO foram substituídas por leitura direta de registradores. O BMP280 do módulo (I²C 0x76) fica disponível para uso futuro. Observação de evidência: uma bola que se movia sob o firmware legado (driver ICM-20948) carregava um ICM-20948 — com um GY-91, aquele firmware jamais leu a IMU.</p>
     </div>
 
     <div class="diagram" role="img" aria-label="Diagrama de tarefas do firmware v2: sensores alimentam as tarefas imu, audio e co2 no núcleo 1, que passam dados para a tarefa app; a app notifica a pilha NimBLE no núcleo 0, que fala com o site e o config-app.">
@@ -1053,8 +1055,8 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
 
         <!-- hardware -->
         <rect x="20" y="60" width="130" height="56" rx="5" class="d-hw"/>
-        <text x="32" y="84" class="d-t">ICM-20948</text>
-        <text x="32" y="102" class="d-s">I²C 400 kHz · DMP</text>
+        <text x="32" y="84" class="d-t">GY-91 (MPU-9250)</text>
+        <text x="32" y="102" class="d-s">I²C 400 kHz · sem DMP</text>
         <rect x="20" y="190" width="130" height="56" rx="5" class="d-hw"/>
         <text x="32" y="214" class="d-t">2× INMP441</text>
         <text x="32" y="232" class="d-s">I²S 16 kHz estéreo</text>
@@ -1065,7 +1067,7 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
         <!-- tasks -->
         <rect x="200" y="60" width="170" height="56" rx="5" class="d-task"/>
         <text x="212" y="84" class="d-t">imu · prio 3</text>
-        <text x="212" y="102" class="d-s">drena FIFO a cada 5 ms</text>
+        <text x="212" y="102" class="d-s">fusão Madgwick · 2 ms</text>
         <rect x="200" y="190" width="170" height="56" rx="5" class="d-task"/>
         <text x="212" y="214" class="d-t">audio · prio 2</text>
         <text x="212" y="232" class="d-s">RMS + detector de pico</text>
@@ -1075,9 +1077,9 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
 
         <rect x="470" y="140" width="206" height="160" rx="6" class="d-app"/>
         <text x="484" y="164" class="d-t">app · prio 2</text>
-        <text x="484" y="186" class="d-m">IMU → limite 50 Hz → 23 B</text>
+        <text x="484" y="186" class="d-m">IMU → 10–200 Hz → 23 B</text>
         <text x="484" y="204" class="d-m">CO₂: na mudança ou 1 Hz</text>
-        <text x="484" y="222" class="d-m">diagnóstico 1 Hz</text>
+        <text x="484" y="222" class="d-m">diag 1 Hz · sensores 5 Hz · áudio 21 Hz</text>
         <text x="484" y="240" class="d-m">LEDs 20 Hz · pot 10 Hz</text>
         <text x="484" y="258" class="d-m">comandos · config</text>
         <text x="484" y="276" class="d-m">watchdog 10 s</text>
@@ -1130,14 +1132,100 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
       </svg>
     </div>
 
+    <h3 style="margin:28px 0 8px">Zoom: dentro de cada núcleo</h3>
+    <p>Detalhe dos componentes e da sequência de execução em cada núcleo do ESP32 — o interior das caixas do diagrama acima.</p>
+    <div class="diagram" role="img" aria-label="Diagrama detalhado por núcleo: no núcleo 1, as tarefas imu (leitura, viés, fusão Madgwick, montagem, zero, slerp, fila), audio (DC, decimador, biquads, RMS, detector) e co2 (consulta Modbus, parser, EMA); a tarefa app consome tudo numa sequência numerada e notifica o NimBLE no núcleo 0, que atende as duas centrais.">
+      <svg viewBox="0 0 1060 640" xmlns="http://www.w3.org/2000/svg">
+        <!-- frames -->
+        <rect x="20" y="20" width="660" height="600" rx="8" class="d-frame"/>
+        <text x="34" y="40" class="d-frame-lbl">NÚCLEO 1 (APP_CPU) · AQUISIÇÃO E LÓGICA</text>
+        <rect x="700" y="20" width="340" height="600" rx="8" class="d-frame"/>
+        <text x="714" y="40" class="d-frame-lbl">NÚCLEO 0 (PRO_CPU) · SÓ RÁDIO</text>
+
+        <!-- imu task -->
+        <rect x="40" y="56" width="300" height="160" rx="6" class="d-task"/>
+        <text x="54" y="80" class="d-t">imu · prio 3 · tick 2 ms</text>
+        <text x="54" y="102" class="d-m">1 INT_STATUS pronto? lê accel/gyro (+mag)</text>
+        <text x="54" y="120" class="d-m">2 rastreador de viés do gyro (só em repouso)</text>
+        <text x="54" y="138" class="d-m">3 fusão Madgwick (Quat6 / Quat9)</text>
+        <text x="54" y="156" class="d-m">4 montagem⁻¹ · zero⁻¹ · slerp opcional</text>
+        <text x="54" y="174" class="d-m">5 EMA opcional da aceleração</text>
+        <text x="54" y="192" class="d-m">6 publica na fila (8, descarta o mais velho)</text>
+
+        <!-- audio task -->
+        <rect x="40" y="236" width="300" height="150" rx="6" class="d-task"/>
+        <text x="54" y="260" class="d-t">audio · prio 2 · bloqueia no i2s_read</text>
+        <text x="54" y="282" class="d-m">1 bloco 256 quadros → remove DC</text>
+        <text x="54" y="300" class="d-m">2 mix mono → decimador ÷8 → chunk 48 ms</text>
+        <text x="54" y="318" class="d-m">3 biquads HP/LP (se ligados)</text>
+        <text x="54" y="336" class="d-m">4 RMS esq/dir → detector de pico</text>
+        <text x="54" y="354" class="d-m">5 pico → flag atômica p/ app</text>
+        <text x="54" y="372" class="d-m">(limiar vem do app, atômico)</text>
+
+        <!-- co2 task -->
+        <rect x="40" y="406" width="300" height="110" rx="6" class="d-task"/>
+        <text x="54" y="430" class="d-t">co2 · prio 1 · tick 20 ms</text>
+        <text x="54" y="452" class="d-m">1 a cada 2 s: envia FE 04 00 03 00 01 D5 C5</text>
+        <text x="54" y="470" class="d-m">2 parser da resposta (CRC-16 Modbus)</text>
+        <text x="54" y="488" class="d-m">3 EMA opcional → ppm atômico</text>
+
+        <!-- app task -->
+        <rect x="370" y="56" width="290" height="460" rx="6" class="d-app"/>
+        <text x="384" y="80" class="d-t">app · prio 2 · compassada pela fila da IMU</text>
+        <text x="384" y="106" class="d-m">1 fila IMU (≤20 ms) → ImuPacket → notify</text>
+        <text x="384" y="124" class="d-m">   (throttle na taxa configurada)</text>
+        <text x="384" y="146" class="d-m">2 config mudou? reaplica nos serviços</text>
+        <text x="384" y="168" class="d-m">3 pico pendente? dispara CO₂ virtual</text>
+        <text x="384" y="190" class="d-m">4 a cada 100 ms: pot → limiar (atômico)</text>
+        <text x="384" y="212" class="d-m">5 a cada 50 ms: LEDs + notify CO₂</text>
+        <text x="384" y="234" class="d-m">6 a cada 200 ms: SensorsPacket</text>
+        <text x="384" y="256" class="d-m">7 chunk pronto? AudioChunkPacket ~21 Hz</text>
+        <text x="384" y="278" class="d-m">8 a cada 1 s: DiagPacket</text>
+        <text x="384" y="300" class="d-m">9 drena comandos · persiste montagem · WDT</text>
+        <text x="384" y="336" class="d-s">Estados próprios: pulso virtual de CO₂,</text>
+        <text x="384" y="354" class="d-s">LEDs (som GPIO2 · CO₂ GPIO4), seq de cada</text>
+        <text x="384" y="372" class="d-s">pacote, janela de taxa p/ diagnóstico.</text>
+        <text x="384" y="402" class="d-s">Escritas na NVS só sob comando 0x11</text>
+        <text x="384" y="420" class="d-s">(Aplicar no config-app já envia).</text>
+
+        <!-- core 0 content -->
+        <rect x="720" y="56" width="300" height="250" rx="6" class="d-task"/>
+        <text x="734" y="80" class="d-t">NimBLE host task</text>
+        <text x="734" y="104" class="d-m">GATT: 5 características · MTU 247</text>
+        <text x="734" y="122" class="d-m">notify p/ até 2 centrais (bitmask por char)</text>
+        <text x="734" y="140" class="d-m">RX comando → fila p/ app (nunca executa)</text>
+        <text x="734" y="158" class="d-m">RX config TLV → ConfigStore (mutex)</text>
+        <text x="734" y="176" class="d-m">   → valida tudo → aplica → flag dirty</text>
+        <text x="734" y="194" class="d-m">desbloqueio PIN por conexão (slot)</text>
+        <text x="734" y="212" class="d-m">reanuncia após conectar/desconectar</text>
+        <rect x="720" y="330" width="300" height="80" rx="6" class="d-task"/>
+        <text x="734" y="354" class="d-t">Controlador BLE + ISRs de rádio</text>
+        <text x="734" y="372" class="d-s">eventos de conexão a cada 15–30 ms</text>
+        <text x="734" y="390" class="d-s">(intervalo escolhido pela central)</text>
+
+        <!-- edges -->
+        <path d="M340 136 H368" class="d-edge" marker-end="url(#arr)"/>
+        <text x="342" y="128" class="d-m">fila</text>
+        <path d="M340 320 H368" class="d-edge" marker-end="url(#arr)"/>
+        <text x="342" y="312" class="d-m">atômicos</text>
+        <path d="M340 460 H355 V500 H368" class="d-edge" marker-end="url(#arr)"/>
+        <text x="342" y="452" class="d-m">ppm</text>
+        <path d="M660 150 H718" class="d-edge" marker-end="url(#arr)"/>
+        <text x="668" y="142" class="d-m">notify</text>
+        <path d="M718 230 H662" class="d-edge" marker-end="url(#arr)"/>
+        <text x="668" y="250" class="d-m">fila cmd</text>
+        <path d="M870 306 V328" class="d-edge" marker-end="url(#arr)"/>
+      </svg>
+    </div>
+
     <div class="scroll">
       <table class="task-table">
         <thead><tr><th>Tarefa</th><th>Núcleo</th><th>Prioridade</th><th>Acorda com</th><th>Responsável por</th></tr></thead>
         <tbody>
-          <tr><td><code>imu</code></td><td>1</td><td>3</td><td>a cada 5 ms</td><td>ICM-20948 (I²C), drenagem da FIFO, montagem e zero</td></tr>
-          <tr><td><code>audio</code></td><td>1</td><td>2</td><td><code>i2s_read</code> (256 quadros = 16 ms)</td><td>I²S, detector de pico</td></tr>
-          <tr><td><code>app</code></td><td>1</td><td>2</td><td>fila da IMU (timeout 20 ms)</td><td>envio BLE, LEDs, potenciômetro, pulso de CO₂ virtual, NVS, watchdog</td></tr>
-          <tr><td><code>co2</code></td><td>1</td><td>1</td><td>a cada 20 ms</td><td>UART1, parser de frames</td></tr>
+          <tr><td><code>imu</code></td><td>1</td><td>3</td><td>a cada 2 ms</td><td>MPU-9250 (I²C), viés do gyro, fusão Madgwick, montagem e zero</td></tr>
+          <tr><td><code>audio</code></td><td>1</td><td>2</td><td><code>i2s_read</code> (256 quadros = 16 ms)</td><td>I²S, decimador 2 kHz, biquads HP/LP, RMS, detector de pico</td></tr>
+          <tr><td><code>app</code></td><td>1</td><td>2</td><td>fila da IMU (timeout 20 ms)</td><td>envio BLE (IMU/CO₂/sensores/áudio/diag), LEDs, potenciômetro, pulso de CO₂ virtual, NVS, watchdog</td></tr>
+          <tr><td><code>co2</code></td><td>1</td><td>1</td><td>a cada 20 ms</td><td>UART1, consulta Modbus do S8, parser, EMA</td></tr>
           <tr><td>NimBLE host</td><td>0</td><td>(biblioteca)</td><td>eventos BLE</td><td>GATT, desbloqueio por PIN, aplicação da config</td></tr>
         </tbody>
       </table>
@@ -1419,7 +1507,7 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
 
 <footer>
   <div class="wrap">
-    <p>Fontes: <code>firmware-original.ino</code> (legado, intocado), <code>docs/superpowers/specs/2026-11-06-gaiaball-v2-design.md</code>, <code>relatorio.md</code> (relatório inicial), <code>firmware/docs/protocol.md</code>, <code>firmware/docs/architecture.md</code>, código em <code>firmware/Gaiaball/src/</code>; projeto KiCAD da placa <code>Globo_GaiaSenses_PCi</code> (esquemático + 2 revisões de PCB, netlist extraído em 06/11/2026 — ver <code>firmware/docs/hardware-pinout.md</code>) e documento Senseair “Modbus on Senseair S8” (SE-0119).</p>
+    <p>Fontes: <code>firmware-original.ino</code> (legado, intocado), <code>docs/superpowers/specs/2026-11-06-gaiaball-v2-design.md</code>, <code>relatorio.md</code> (relatório inicial), <code>firmware/docs/protocol.md</code>, <code>firmware/docs/architecture.md</code>, código em <code>firmware/Gaiaball/src/</code>; projeto KiCAD da placa <code>Globo_GaiaSenses_PCi</code> (esquemático + 2 revisões de PCB, netlist extraído em 06/11/2026 — ver <code>firmware/docs/hardware-pinout.md</code>); documento Senseair “Modbus on Senseair S8” (SE-0119); confirmação do usuário (06/11): IMU = módulo GY-91 (MPU-9250 + BMP280).</p>
     <p>Números de linha referem-se a <code>firmware-original.ino</code>. Nenhuma medição de hardware foi feita; os valores de desempenho são metas.</p>
   </div>
 </footer>

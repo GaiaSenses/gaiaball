@@ -13,6 +13,10 @@ interface Field {
   max?: number;
   options?: [number, string][];
   hint?: string;
+  /** Per-filter on/off toggle: the register value that means "filter OFF". */
+  offValue?: number;
+  /** Value restored in the input when the toggle is turned on with nothing sensible. */
+  onDefault?: number;
 }
 interface Group { title: string; fields: Field[] }
 
@@ -20,9 +24,11 @@ const GROUPS: Group[] = [
   { title: 'Orientação', fields: [
     { id: TLV.orientationMode, label: 'Modo', kind: 'select', options: [[0, 'Quat6 (relativo)'], [1, 'Quat9 (absoluto)']] },
     { id: TLV.imuNotifyHz, label: 'Taxa (Hz)', kind: 'number', min: 10, max: 200,
-      hint: 'Também reconfigura o DMP da IMU para rodar nessa taxa (até 200 Hz).' },
-    { id: TLV.slerpAmount, label: 'Suavização do quaternion (slerp)', kind: 'range', min: 0, max: 100 },
-    { id: TLV.accelLpAlphaX1000, label: 'Filtro da aceleração (EMA ×1000, 0 = desligado)', kind: 'number', min: 0, max: 1000 },
+      hint: 'Também reconfigura a taxa de amostragem da IMU (MPU-9250, até 200 Hz).' },
+    { id: TLV.slerpAmount, label: 'Suavização do quaternion (slerp)', kind: 'range', min: 0, max: 100,
+      offValue: 0, onDefault: 20 },
+    { id: TLV.accelLpAlphaX1000, label: 'Filtro da aceleração (EMA ×1000)', kind: 'number', min: 0, max: 1000,
+      offValue: 0, onDefault: 300 },
   ] },
   { title: 'Áudio', fields: [
     { id: TLV.audioEnabled, label: 'Habilitado', kind: 'checkbox' },
@@ -31,7 +37,8 @@ const GROUPS: Group[] = [
     { id: TLV.debounceMs, label: 'Debounce (ms)', kind: 'number', min: 0, max: 65535 },
     { id: TLV.potControlsThreshold, label: 'Pot controla limiar', kind: 'checkbox' },
     { id: TLV.thresholdFixed, label: 'Limiar fixo', kind: 'number', min: 0, max: 4294967295 },
-    { id: TLV.potEmaAlphaX1000, label: 'Suavização do potenciômetro (EMA ×1000)', kind: 'number', min: 1, max: 1000 },
+    { id: TLV.potEmaAlphaX1000, label: 'Suavização do potenciômetro (EMA ×1000)', kind: 'number', min: 1, max: 1000,
+      offValue: 1000, onDefault: 300 },
     { id: TLV.audioBpfEnabled, label: 'Filtro passa-banda (sopro)', kind: 'checkbox',
       hint: 'HP e LP aplicados antes do detector de pico. Ajuste os cortes olhando o espectro no painel Sensores.' },
     { id: TLV.audioHpHz, label: 'High-pass (Hz)', kind: 'number', min: 1, max: 7000 },
@@ -50,7 +57,8 @@ const GROUPS: Group[] = [
       options: [[0, 'Senseair S8 (Modbus, placa atual)'], [1, 'Frames 0x42 0x4D (passivo)']],
       hint: 'A placa KiCAD usa um Senseair S8, que só responde quando consultado (Modbus).' },
     { id: TLV.co2ChecksumVariant, label: 'Variante de checksum (modo passivo)', kind: 'select', options: [[0, 'Variante 0'], [1, 'Variante 1']] },
-    { id: TLV.co2EmaAlphaX1000, label: 'Suavização (EMA ×1000, 1000 = desligada)', kind: 'number', min: 1, max: 1000 },
+    { id: TLV.co2EmaAlphaX1000, label: 'Suavização (EMA ×1000)', kind: 'number', min: 1, max: 1000,
+      offValue: 1000, onDefault: 300 },
     { id: TLV.co2RawLogMode, label: 'Log bruto', kind: 'checkbox' },
   ] },
   { title: 'LEDs (1 pino = 1 função; pinos distintos)', fields: [
@@ -104,6 +112,8 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   const msg = q('[data-el=msg]');
   const pmsg = q('[data-el=pmsg]');
   const inputs = new Map<number, HTMLInputElement | HTMLSelectElement>();
+  /** On/off checkboxes for fields with offValue (one toggle per filter). */
+  const toggles = new Map<number, HTMLInputElement>();
 
   for (const g of GROUPS) {
     const fs = document.createElement('fieldset');
@@ -125,6 +135,17 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
         if (f.kind === 'pin') { el.maxLength = 4; el.inputMode = 'numeric'; el.autocomplete = 'off'; el.placeholder = '····'; }
       }
       el.dataset.reg = String(f.id);
+      if (f.offValue !== undefined) {
+        const tg = document.createElement('input');
+        tg.type = 'checkbox';
+        tg.className = 'filter-toggle';
+        tg.title = 'Ligar/desligar este filtro';
+        tg.setAttribute('aria-label', `Ligar/desligar: ${f.label}`);
+        tg.checked = true;
+        label.prepend(tg);
+        toggles.set(f.id, tg);
+        tg.addEventListener('change', () => label.classList.toggle('filter-off', !tg.checked));
+      }
       label.append(el);
       if (f.hint) { const s = document.createElement('small'); s.textContent = f.hint; label.append(s); }
       fs.append(label);
@@ -138,9 +159,12 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   /** Fields the user (or a loaded preset) touched that the device never reported. */
   const dirty = new Set<number>();
   for (const [id, el] of inputs) el.addEventListener('input', () => dirty.add(id));
+  for (const [id, tg] of toggles) tg.addEventListener('change', () => dirty.add(id));
 
   const getValue = (f: Field): number | string | null => {
     const el = inputs.get(f.id)!;
+    // A filter whose toggle is off writes its "off" value, whatever the input shows.
+    if (f.offValue !== undefined && !toggles.get(f.id)!.checked) return f.offValue;
     if (f.kind === 'checkbox') return (el as HTMLInputElement).checked ? 1 : 0;
     if (f.kind === 'text' || f.kind === 'pin') return el.value;
     if (el.value.trim() === '') return null;
@@ -148,6 +172,14 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   };
   const setValue = (f: Field, v: number | string): void => {
     const el = inputs.get(f.id)!;
+    if (f.offValue !== undefined) {
+      const on = Number(v) !== f.offValue;
+      toggles.get(f.id)!.checked = on;
+      el.closest('.cfg-field')?.classList.toggle('filter-off', !on);
+      // Keep a sensible value visible while off, so turning the filter back on works.
+      el.value = String(on ? v : (f.onDefault ?? f.min ?? 0));
+      return;
+    }
     if (f.kind === 'checkbox') (el as HTMLInputElement).checked = Number(v) !== 0;
     else el.value = String(v);
   };
@@ -336,7 +368,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   });
 
   // ---- connection gating (presets stay usable offline) ----
-  const gated = [...inputs.values(), q<HTMLButtonElement>('[data-act=read]'), q<HTMLButtonElement>('[data-act=apply]')];
+  const gated = [...inputs.values(), ...toggles.values(), q<HTMLButtonElement>('[data-act=read]'), q<HTMLButtonElement>('[data-act=apply]')];
   const render = (d: StatusDetail): void => {
     for (const el of gated) el.disabled = !d.connected;
     if (!d.connected) snapshot = new Map();

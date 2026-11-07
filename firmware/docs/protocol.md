@@ -19,7 +19,7 @@ Service `19b10000-e8f2-537e-4f6c-d104768a1214`.
 ## Scales
 
 - Quaternion: `int16 = round(float * 16384)` (Q14), saturating; `value / 16384` on decode.
-- Accel: raw DMP counts, `int16` passthrough (no scaling).
+- Accel: raw MPU-9250 counts (±4 g, 8192 LSB/g), `int16` passthrough (no scaling).
 - Non-finite quaternion input is encoded as identity (`W=16384`) with `quatValid` cleared.
 
 ## Packet type ids
@@ -108,9 +108,17 @@ Units:
   32-bit I2S configuration with `>>8`; a 16-bit I2S configuration would change it.**
 - `potRaw` is the EMA-filtered 12-bit ADC reading (0..4095) of the threshold
   potentiometer; percent of travel = potRaw / 4095 × 100.
-- IMU acceleration (ImuPacket) is in raw DMP counts at ±4 g full scale:
+- IMU acceleration (ImuPacket) is in raw MPU-9250 counts at ±4 g full scale:
   g = counts / 8192. With `accelLpAlphaX1000` > 0 the published counts are
   EMA-filtered on-device (same scale).
+- The IMU stream carries TREATED data only (mounting + zero + configured filters
+  applied); raw-and-treated side by side is intentionally NOT exported, to keep the
+  high-rate flow simple. Filters can be toggled live from the config-app.
+- The quaternion source is Madgwick fusion on the ESP32 over the GY-91's MPU-9250
+  (Quat6 = gyro+accel; Quat9 adds the AK8963 magnetometer). The wire format is
+  identical to the previous DMP-based firmware.
+- DiagPacket's `fifoOverflows` slot now carries the MPU-9250 I2C read-error count
+  (same offset and type; there is no FIFO anymore).
 
 ## AudioChunkPacket (208 bytes, type 0x05, ~21 Hz, diag characteristic)
 
@@ -156,7 +164,7 @@ A sequence of records `id u8 | len u8 | value (len bytes, little-endian)`.
 | id | type | default | field |
 |---|---|---|---|
 | 0x01 | u8 | 0 | orientationMode (0=Quat6 relative, 1=Quat9) |
-| 0x02 | u8 | 50 | imuNotifyHz (10–200). Also reconfigures the DMP: the gyro/accel divisor is set so the DMP runs at or just above this rate (e.g. 200 -> 225 Hz internal); the notify throttle paces the exact rate |
+| 0x02 | u8 | 50 | imuNotifyHz (10–200). Also sets the MPU-9250 sample-rate divisor (1 kHz base), applied live; the notify throttle paces the exact rate |
 | 0x03 | u8 | 0 | slerpAmount 0–100 (0=off) |
 | 0x04 | u16 | 0 | accelLpAlphaX1000 — EMA on published accel counts (0=off/raw) |
 | 0x10 | u8 | 1 | audioEnabled |

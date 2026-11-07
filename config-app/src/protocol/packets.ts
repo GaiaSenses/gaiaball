@@ -16,7 +16,7 @@ export const AUDIO_PACKET_SIZE = 208;
 export const AUDIO_CHUNK_SAMPLES = 96;
 
 export const QUAT_SCALE = 16384; // Q14
-/** DMP accel full scale is ±4 g (SparkFun initializeDMP) -> 8192 LSB/g. */
+/** MPU-9250 accel full scale is ±4 g -> 8192 LSB/g. */
 export const ACCEL_LSB_PER_G = 8192;
 /** Audio RMS counts: INMP441 24-bit samples (int32 >> 8), full-scale amplitude 2^23. */
 export const AUDIO_FULL_SCALE = 8388608;
