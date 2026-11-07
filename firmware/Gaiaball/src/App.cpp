@@ -165,7 +165,7 @@ void App::applyConfigIfDirty() {
 void App::updateSoundLed(uint32_t nowMs) {
   // Legacy: LED flashes 100 ms on a peak and stays on while the virtual pulse is active.
   const bool recentPeak = peakSeen_ && (uint32_t)(nowMs - peakMs_) < kSoundLedHoldMs;
-  led_.set(LedPriority::Source::SoundEvent, recentPeak || co2_.virtualActive(nowMs));
+  led_.setSoundLed(recentPeak || co2_.virtualActive(nowMs));
 }
 
 void App::maybeNotifyCo2(uint32_t nowMs) {
@@ -219,7 +219,6 @@ void App::sendDiag(uint32_t nowMs) {
 
   const DiagPacket p = diag_.collect(diagSeq_++, (uint16_t)hzX10, imu_, audio_, co2_, nowMs);
   ble_.notifyDiag(p);
-  diag_.driveErrorLed(led_, imu_, audio_);
 }
 
 void App::drainCommands() {
@@ -232,10 +231,10 @@ void App::drainCommands() {
 void App::dispatch(const BleCommand &cmd) {
   switch (cmd.opcode) {
     case kCmdLedOff:
-      led_.set(LedPriority::Source::BleCommand, false);
+      led_.setStatusLed(false);
       return;
     case kCmdLedOn:
-      led_.set(LedPriority::Source::BleCommand, true);
+      led_.setStatusLed(true);
       return;
     case kCmdZero:
     case kCmdSave:

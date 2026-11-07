@@ -32,16 +32,21 @@ const GROUPS: Group[] = [
   ] },
   { title: 'CO₂', fields: [
     { id: TLV.co2Enabled, label: 'Habilitado', kind: 'checkbox' },
-    { id: TLV.co2ChecksumVariant, label: 'Variante de checksum', kind: 'select', options: [[0, 'Variante 0'], [1, 'Variante 1']] },
     { id: TLV.co2StaleTimeoutMs, label: 'Timeout de dado velho (ms)', kind: 'number', min: 0, max: 65535 },
     { id: TLV.virtualPeakPpm, label: 'Pico virtual (ppm)', kind: 'number', min: 0, max: 65535 },
     { id: TLV.virtualDelayMs, label: 'Atraso virtual (ms)', kind: 'number', min: 0, max: 65535 },
     { id: TLV.virtualHoldMs, label: 'Duração virtual (ms)', kind: 'number', min: 0, max: 65535 },
+    { id: TLV.co2Protocol, label: 'Protocolo do sensor', kind: 'select',
+      options: [[0, 'Senseair S8 (Modbus, placa atual)'], [1, 'Frames 0x42 0x4D (passivo)']],
+      hint: 'A placa KiCAD usa um Senseair S8, que só responde quando consultado (Modbus).' },
+    { id: TLV.co2ChecksumVariant, label: 'Variante de checksum (modo passivo)', kind: 'select', options: [[0, 'Variante 0'], [1, 'Variante 1']] },
     { id: TLV.co2RawLogMode, label: 'Log bruto', kind: 'checkbox' },
   ] },
-  { title: 'LEDs', fields: [
-    { id: TLV.soundLedPin, label: 'Pino LED de som', kind: 'select', options: GPIO_OPTIONS },
-    { id: TLV.co2LedPin, label: 'Pino LED de CO₂', kind: 'select', options: GPIO_OPTIONS },
+  { title: 'LEDs (1 pino = 1 função; pinos distintos)', fields: [
+    { id: TLV.soundLedPin, label: 'Pino LED de som (D2 na placa)', kind: 'select', options: GPIO_OPTIONS },
+    { id: TLV.co2LedPin, label: 'Pino LED de CO₂ (D1 na placa)', kind: 'select', options: GPIO_OPTIONS },
+    { id: TLV.statusLedPin, label: 'Pino LED de status (comando BLE)', kind: 'select', options: GPIO_OPTIONS,
+      hint: 'LED novo: não existe na placa original — adicionar LED + resistor de 220 Ω no GPIO escolhido (padrão 23).' },
     { id: TLV.co2AlertPpm, label: 'Alerta CO₂ (ppm)', kind: 'number', min: 0, max: 65535 },
   ] },
   { title: 'Sistema', fields: [
@@ -171,6 +176,24 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   const fail = (e: unknown): void => say(e instanceof Error ? e.message : String(e));
   const hasPin = (f: Field): boolean => f.id === TLV.pin;
 
+  /** Mirror of the firmware rule: the three LED functions must sit on distinct GPIOs.
+   *  Checks the RESULTING state (written value, else device snapshot, else firmware
+   *  default) and only when some LED pin is being written — the firmware check stays
+   *  authoritative either way. */
+  const LED_PIN_DEFAULTS: ReadonlyMap<number, number> = new Map([
+    [TLV.soundLedPin, 2], [TLV.co2LedPin, 4], [TLV.statusLedPin, 23],
+  ]);
+  const ledPinsError = (regs: TlvWrite[]): string | null => {
+    const ids = [...LED_PIN_DEFAULTS.keys()];
+    if (!regs.some((r) => ids.includes(r.id))) return null;
+    const finalPin = (id: number): number =>
+      Number(regs.find((r) => r.id === id)?.value ?? snapshot.get(id) ?? LED_PIN_DEFAULTS.get(id));
+    const pins = ids.map(finalPin);
+    if (new Set(pins).size !== pins.length)
+      return 'Pinos de LED repetidos: som, CO₂ e status precisam de GPIOs distintos (1 pino = 1 função).';
+    return null;
+  };
+
   /** Collect only fields that differ from the snapshot (PIN: only when typed). */
   const collectChanged = (): { regs: TlvWrite[]; error: string | null } => {
     const regs: TlvWrite[] = [];
@@ -185,6 +208,8 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       if (err) return { regs: [], error: err };
       regs.push({ id: f.id, value: v as number | string });
     }
+    const dupErr = ledPinsError(regs);
+    if (dupErr) return { regs: [], error: dupErr };
     return { regs, error: null };
   };
 

@@ -79,18 +79,38 @@ purpose for core 2.0.17): `'I2S_COMM_FORMAT_I2S' is deprecated` (AudioService) a
 
 ## Pinout
 
+Verified against the KiCAD board design (`Globo_GaiaSenses_PCi`); the full netlist
+cross-check lives in [docs/hardware-pinout.md](docs/hardware-pinout.md).
+
 | Function | GPIO | Notes |
 |---|---|---|
-| IMU I2C SDA | 21 | ICM-20948, 400 kHz, AD0 low |
+| IMU I2C SDA | 21 | ICM-20948, 400 kHz, AD0 low (board header U1; NCS unconnected → I2C) |
 | IMU I2C SCL | 22 | |
-| I2S WS (LRCLK) | 25 | two INMP441 (L/R), 16 kHz, 32-bit stereo |
+| I2S WS (LRCLK) | 25 | two INMP441 (L/R), 16 kHz, 32-bit stereo (board M1/M2) |
 | I2S SCK (BCLK) | 26 | |
 | I2S SD (data in) | 33 | |
-| CO2 UART RX | 16 | UART1, 9600 8N1 (sensor TX → 16) |
-| CO2 UART TX | 17 | |
-| Threshold potentiometer | 34 | ADC1 channel 6, 11 dB |
-| Sound LED | 2 | default; config TLV `0x30` (reboot to apply). Strapping pin, held LOW at boot |
-| CO2 alert LED | 4 | default; config TLV `0x31` (reboot to apply) |
+| CO2 UART RX | 16 | UART1, 9600 8N1 (Senseair S8 TXD → 16) |
+| CO2 UART TX | 17 | (GPIO17 → S8 RXD; required — the S8 is polled over Modbus) |
+| Threshold potentiometer | 34 | ADC1 channel 6, 11 dB (board RV1 via R3) |
+| Sound LED | 2 | board LED D2 ("LED mic"); config TLV `0x30` (reboot to apply). Strapping pin, held LOW at boot |
+| CO2 alert LED | 4 | board LED D1 ("LED co2"); config TLV `0x31` (reboot to apply) |
+| Status LED (BLE command) | 23 | **NEW — physical board change required** (see below); config TLV `0x33` (reboot to apply) |
+
+### ⚠️ Physical board change: status LED on GPIO23
+
+The legacy firmware drove **three different functions on GPIO2** (BLE LED command,
+sound LED, and a bogus SPI chip-select): a design error — one pin must carry one
+function. The board has only two LEDs (D2 = GPIO2, D1 = GPIO4), so the BLE-controlled
+LED (command `0x00`/`0x01`, used by the Gaiasenses site) gets its **own, new LED**:
+
+- **Add to the board: GPIO23 → 220 Ω resistor → LED anode; LED cathode → GND**
+  (same topology as D1/D2 on the KiCAD design).
+- GPIO23 is free on the board (header J3 pin 2, unconnected in the netlist) and has
+  no strapping role.
+- Until the LED is added, command `0x00`/`0x01` still works — it just drives an
+  unconnected pin. The sound and CO2 LEDs are unaffected.
+- The three LED pins are enforced distinct: a config write that lands two LED
+  functions on the same GPIO is rejected atomically.
 
 ## Runtime behavior
 
@@ -98,9 +118,14 @@ purpose for core 2.0.17): `'I2S_COMM_FORMAT_I2S' is deprecated` (AudioService) a
   simultaneous centrals.
 - IMU packets at `imuNotifyHz` (default 50 Hz), CO2 packets on every ppm/flag change plus
   a 1 Hz keepalive, diagnostics at 1 Hz. Notifications are only sent to subscribers.
-- Sound LED: 100 ms flash per detected sound peak, held on while the virtual CO2 pulse is
-  active, also driven by command `0x01`/`0x00` and lit on IMU/audio failure.
-- CO2 LED: on while the real (non-stale) reading exceeds `co2AlertPpm` (default 2000).
+- Sound LED (GPIO2): 100 ms flash per detected sound peak, held on while the virtual CO2
+  pulse is active. Nothing else drives it.
+- CO2 LED (GPIO4): on while the real (non-stale) reading exceeds `co2AlertPpm` (default 2000).
+- Status LED (GPIO23, new): driven only by the legacy BLE command `0x01`/`0x00`.
+  Subsystem failures are reported in the diagnostics packet (config-app), not on an LED.
+- CO2 sensor: **Senseair S8** (per the KiCAD board), polled over Modbus every 2 s
+  (`FE 04 00 03 00 01 D5 C5`); TLV `0x27` selects the legacy passive 0x42 0x4D frame
+  parser instead, for bench experiments with other sensors.
 - A sound peak triggers the virtual CO2 pulse: after `virtualDelayMs` (1 s) the reported
   ppm becomes `virtualPeakPpm` (2100) for `virtualHoldMs` (17 s).
 
@@ -113,7 +138,7 @@ that connection's unlock for 30 s. Unlock lasts until disconnect.
 
 | Opcode | Action | PIN required |
 |---|---|---|
-| `0x00` / `0x01` | sound LED off / on (legacy) | no |
+| `0x00` / `0x01` | status LED off / on (legacy BLE LED command, GPIO23) | no |
 | `0x10` | zero orientation (current pose becomes identity) | yes |
 | `0x11` | save the current config to NVS | yes |
 | `0x12` | factory reset (defaults, incl. PIN `1234` and mounting) + reboot | yes |
@@ -147,7 +172,8 @@ persisted only by command `0x11`. Full table with types: [`docs/protocol.md`](do
 | `0x03` | slerpAmount (0–100, 0 off) | 0 |
 | `0x10`–`0x15` | audio: enabled, fast/slow alpha ×1000, debounceMs, potControlsThreshold, thresholdFixed | 1, 250, 995, 300, 1, 100000 |
 | `0x20`–`0x26` | CO2: enabled, checksum variant, stale timeout, virtual peak/delay/hold, raw log | 1, 0, 5000, 2100, 1000, 17000, 0 |
-| `0x30`–`0x32` | sound LED pin, CO2 LED pin, co2AlertPpm | 2, 4, 2000 |
+| `0x27` | CO2 protocol: 0 = Senseair S8 Modbus (poll), 1 = passive 0x42 0x4D frames | 0 |
+| `0x30`–`0x33` | sound LED pin, CO2 LED pin, co2AlertPpm, status LED pin (pins pairwise distinct) | 2, 4, 2000, 23 |
 | `0x40` | bleName (≤16 chars) | `Globo_1` |
 | `0x41` | PIN (4 ASCII digits, write-only) | `1234` |
 
@@ -155,4 +181,4 @@ persisted only by command `0x11`. Full table with types: [`docs/protocol.md`](do
 
 115200 baud, leveled (`E/W/I/D`), rate-limited to 20 lines/s. Boot prints each service's
 status; failures (IMU absent, I2S init, NVS) are logged and the rest of the firmware keeps
-running, with the error LED lit for IMU/audio failures.
+running; subsystem health is reported in the diagnostics packet (there is no error LED).

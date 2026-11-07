@@ -4,7 +4,9 @@ Target: ESP32 (esp32dev), Arduino core 2.0.17, NimBLE-Arduino 1.4.3. All code li
 namespace `gaia` under `Gaiaball/src/`:
 
 - `logic/` — pure, host-testable code (packets, TLV codec, filters, CO2 parser, peak
-  detector, PIN gate, LED arbitration, notify throttle). Covered by `pio test -e native`.
+  detector, PIN gate, S8 Modbus client, notify throttle). Covered by `pio test -e native`.
+  LEDs have NO arbitration layer: each of the three LED pins has exactly one driver
+  (sound events → GPIO2, CO2 alert → GPIO4, BLE LED command → GPIO23).
 - `services/` — hardware/RTOS wrappers, one per peripheral.
 - `App.h/.cpp` — owns every service, boots them, runs the App task.
 - `Gaiaball.ino` — `setup(){ app.begin(); }`, `loop()` parks forever.
@@ -13,7 +15,7 @@ namespace `gaia` under `Gaiaball/src/`:
 
 1. `Serial` 115200 + `Logger`
 2. `ConfigStore` (NVS load) → `CommandGate::setPin(cfg.pin)` → install onChange (flag only)
-3. `LedController` (GPIO2 driven LOW first: strapping pin)
+3. `LedController` (three distinct pins; GPIO2 driven LOW first: strapping pin)
 4. `BleService` (GATT + advertising start early)
 5. `ImuService::begin` (I2C + DMP init, blocks up to ~5 s if the IMU is absent)
 6. `PotService::begin`, `AudioService` (peak callback + threshold provider set first)
@@ -30,7 +32,7 @@ After `setup()` returns, `loop()` blocks in `vTaskDelay(portMAX_DELAY)`.
 | `imu` | 1 | 3 | 6144 | `vTaskDelay(5 ms)` | ICM-20948 (I2C), mounting/zero state |
 | `audio` | 1 | 2 | 4096 | `i2s_read` (256 frames @ 16 kHz = 16 ms) | I2S0, PeakDetector |
 | `app` | 1 | 2 | 6144 | IMU queue (`xQueueReceive`, 20 ms timeout) | LEDs, pot ADC, virtual pulse, NVS saves, WDT |
-| `co2` | 1 | 1 | 3072 | `vTaskDelay(20 ms)` | UART1, Co2FrameParser |
+| `co2` | 1 | 1 | 3072 | `vTaskDelay(20 ms)` | UART1, S8 Modbus poll (2 s) or Co2FrameParser |
 | NimBLE host | 0 | (lib) | (lib) | BLE events | GATT, CommandGate unlock, config TLV apply |
 | Arduino `loopTask` | 1 | 1 | — | never (parked) | — |
 
@@ -88,7 +90,7 @@ for (;;) {
   every  50 ms                    → sound LED = peak<100 ms || virtual pulse active
                                     CO2 notify if ppm/flags changed or 1 s since last
                                     led.update (CO2 LED from the real, non-stale ppm)
-  every 1000 ms                   → diag collect + notifyDiag + error LED
+  every 1000 ms                   → diag collect + notifyDiag
   drain command queue (non-blocking)
   persist captured mounting (if any)
   WDT feed

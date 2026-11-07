@@ -5,7 +5,6 @@
 #include "AudioService.h"
 #include "Co2Service.h"
 #include "ImuService.h"
-#include "LedController.h"
 
 namespace gaia {
 
@@ -24,12 +23,10 @@ class Diagnostics {
   // Resets the WDT for the calling task (App task, every loop).
   void feed();
 
+  // Subsystem health travels in the diag packet flags (shown by the config-app);
+  // there is no error LED — each LED pin has exactly one function.
   DiagPacket collect(uint16_t seq, uint16_t notifyHzX10, const ImuService &imu,
                      const AudioService &audio, const Co2Service &co2, uint32_t nowMs) const;
-
-  // Error LED source is ON when the IMU or audio is not ok. CO2 staleness is NOT an
-  // error: it is the expected state when the sensor is absent.
-  void driveErrorLed(LedController &led, const ImuService &imu, const AudioService &audio) const;
 };
 
 }  // namespace gaia

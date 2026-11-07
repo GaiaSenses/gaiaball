@@ -28,6 +28,8 @@ void test_defaults_match_legacy() {
   TEST_ASSERT_EQUAL(17000, c.virtualHoldMs);
   TEST_ASSERT_EQUAL(2, c.soundLedPin);
   TEST_ASSERT_EQUAL(4, c.co2LedPin);
+  TEST_ASSERT_EQUAL(23, c.statusLedPin);  // new status LED (board change, not legacy)
+  TEST_ASSERT_EQUAL(0, c.co2Protocol);    // S8 Modbus: the board's actual sensor
   TEST_ASSERT_EQUAL_STRING("Globo_1", c.bleName);
   TEST_ASSERT_EQUAL_STRING("1234", c.pin);
 }
@@ -140,6 +142,40 @@ void test_accept_valid_output_gpio() {
   TEST_ASSERT_EQUAL(13, c.soundLedPin);
 }
 
+void test_status_led_and_protocol_registers() {
+  GaiaConfig c;
+  const uint8_t buf[] = {0x33, 1, 18, 0x27, 1, 1};
+  TEST_ASSERT_TRUE(tlvApply(c, buf, sizeof buf));
+  TEST_ASSERT_EQUAL(18, c.statusLedPin);
+  TEST_ASSERT_EQUAL(1, c.co2Protocol);
+  const uint8_t flash7[] = {0x33, 1, 7};
+  assertRejected(flash7, sizeof flash7);
+  const uint8_t proto2[] = {0x27, 1, 2};
+  assertRejected(proto2, sizeof proto2);
+}
+
+void test_reject_duplicate_led_pins() {
+  // Final-state check: a write that lands two LED functions on one GPIO must fail
+  // atomically, whether the collision is with a default or inside the same buffer.
+  const uint8_t soundOnCo2[] = {0x30, 1, 4};  // sound -> co2's default pin
+  assertRejected(soundOnCo2, sizeof soundOnCo2);
+  const uint8_t statusOnSound[] = {0x33, 1, 2};  // status -> sound's default pin
+  assertRejected(statusOnSound, sizeof statusOnSound);
+  const uint8_t inBuffer[] = {0x30, 1, 18, 0x31, 1, 18};  // collision within buffer
+  assertRejected(inBuffer, sizeof inBuffer);
+  GaiaConfig c;
+  const uint8_t allDistinct[] = {0x30, 1, 18, 0x31, 1, 19, 0x33, 1, 27};
+  TEST_ASSERT_TRUE(tlvApply(c, allDistinct, sizeof allDistinct));
+  TEST_ASSERT_EQUAL(18, c.soundLedPin);
+  TEST_ASSERT_EQUAL(19, c.co2LedPin);
+  TEST_ASSERT_EQUAL(27, c.statusLedPin);
+  // Last-one-wins still applies before the distinctness check.
+  const uint8_t lastWins[] = {0x30, 1, 4, 0x30, 1, 5};
+  GaiaConfig d;
+  TEST_ASSERT_TRUE(tlvApply(d, lastWins, sizeof lastWins));
+  TEST_ASSERT_EQUAL(5, d.soundLedPin);
+}
+
 void test_shorter_name_clears_old_tail() {
   GaiaConfig c;  // "Globo_1"
   const uint8_t buf[] = {0x40, 2, 'H', 'i'};
@@ -181,6 +217,8 @@ int main(int, char **) {
   RUN_TEST(test_reject_out_of_range);
   RUN_TEST(test_accept_boundaries_and_pin_write);
   RUN_TEST(test_accept_valid_output_gpio);
+  RUN_TEST(test_status_led_and_protocol_registers);
+  RUN_TEST(test_reject_duplicate_led_pins);
   RUN_TEST(test_shorter_name_clears_old_tail);
   RUN_TEST(test_serialize_cap_too_small);
   RUN_TEST(test_pin_not_serialized);

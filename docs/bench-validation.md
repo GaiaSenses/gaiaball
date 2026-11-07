@@ -11,7 +11,9 @@ notify de orientação 50–60 Hz, latência medida < 50 ms, 24 h sem travar, ze
 
 - Placa ESP32 (DevKit) montada conforme o pinout de `firmware/README.md`: IMU ICM-20948 em
   SDA 21 / SCL 22, INMP441 em WS 25 / SCK 26 / SD 33, sensor de CO₂ com TX no GPIO 16,
-  potenciômetro no GPIO 34, LED de som no GPIO 2 e LED de CO₂ no GPIO 4.
+  potenciômetro no GPIO 34, LED de som no GPIO 2 (D2 na placa), LED de CO₂ no GPIO 4 (D1)
+  e LED de status no GPIO 23 (LED **novo**: adicionar LED + resistor de 220 Ω à placa;
+  ver `firmware/docs/hardware-pinout.md`). 1 pino = 1 função.
 - Cabo USB de dados, computador com PlatformIO (`pio`) **ou** `arduino-cli`.
 - Chrome ou Edge (Web Bluetooth) para o config-app.
 - Uma superfície plana e um celular/ímã pequeno para o teste de deriva.
@@ -89,30 +91,31 @@ Se a taxa ficar abaixo do esperado, confira o campo **Taxa (Hz)** (faixa 10–60
    **Quat9 (absoluto)**.
 5. Para persistir ajustes, **Salvar no dispositivo** (`0x11`). "Aplicar" vale só até reiniciar.
 
-## 5. CO₂: confirmar o protocolo do "SC8"
+## 5. CO₂: validar o Senseair S8 (Modbus)
 
-O protocolo do sensor não é confirmado; o parser assume quadro de 16 bytes, cabeçalho
-`42 4D`, ppm nos bytes 6–7 (big-endian) e checksum no último byte (item 09).
+O desenho da placa no KiCAD identifica o sensor: valor `Sensor_CO2_SC8`, footprint
+`Senseair_S8_Down` — um **Senseair S8**. O S8 é escravo Modbus e **nunca transmite
+sozinho**: o firmware v2 o consulta a cada 2 s (padrão, TLV `0x27` = 0) com
+`FE 04 00 03 00 01 D5 C5` e espera `FE 04 02 <ppm hi> <ppm lo> <crc> <crc>`.
+Detalhes e vetores em `firmware/docs/protocol.md` e `firmware/docs/hardware-pinout.md`.
 
-1. Ligue o log bruto: no config-app, painel Configuração › CO₂ › **Log bruto** e **Aplicar**
-   (equivale ao TLV `0x26` = 1; ver `firmware/docs/protocol.md`).
-2. No monitor serial (`pio device monitor -d firmware -e esp32dev`, 115200) aparecem linhas
-   como `raw: 42 4D 00 ...`, 16 bytes por linha (máximo de 4 linhas por ciclo e 20 linhas/s no total).
-3. Confira:
-   - O quadro começa com `42 4D`? Se não, o protocolo é outro e o parser precisa ser ajustado.
-   - Quantos bytes entre dois `42 4D` consecutivos? Deve ser 16.
-   - Os bytes 6 e 7 formam o ppm esperado (`(b6 << 8) | b7`)? Compare com um valor conhecido
-     (ar externo ~420 ppm, ou respire no sensor para subir).
-   - **Qual checksum bate.** Some os bytes em módulo 256 (8 bits, descarte o excesso):
-     - Variante **0** (padrão, TLV `0x21` = 0): soma dos bytes `0..13` (índices 0 a 13).
-     - Variante **1** (legado, `0x21` = 1): soma dos bytes `0..14`.
-     - Compare o resultado com o **último byte** (índice 15). A variante que igualar é a certa.
-     Exemplo de conta: some os 14 (ou 15) primeiros bytes em hexadecimal e fique só com os
-     dois dígitos finais.
-4. Se a variante for a 1, mude **Variante de checksum** para "Variante 1" e **Aplicar**. Confirme
-   que o CO₂ em Firmware › **CO₂** passa a ser válido e que **Erros UART** para de crescer.
-5. **Salvar no dispositivo** (`0x11`) e **desligar o Log bruto** (volta a `0x26` = 0, para não
-   poluir o serial). Aplique e salve de novo.
+1. Com o firmware v2 gravado, confira em Firmware › **CO₂** no config-app: o valor deve
+   ficar **válido** em até ~10 s após o boot e acompanhar o ambiente (ar externo
+   ~420 ppm; respire perto do sensor para subir).
+2. Se o CO₂ ficar sempre "stale": ligue o **Log bruto** (CO₂ › Log bruto › **Aplicar**,
+   TLV `0x26` = 1) e abra o monitor serial (`pio device monitor -d firmware -e esp32dev`,
+   115200):
+   - Linhas `raw: FE 04 02 ...` a cada 2 s → o sensor responde; se **Erros UART** cresce,
+     verifique interferência/fiação nos GPIOs 16/17.
+   - Nenhuma linha `raw:` → o sensor não responde. Confira a alimentação de **5 V** do S8
+     e o cruzamento TX/RX (S8 TXD → GPIO16; GPIO17 → S8 RXD, conforme a placa).
+   - Linhas começando com `42 4D` → o sensor instalado NÃO é um S8 e transmite quadros
+     espontâneos: mude **Protocolo do sensor** para "Frames 0x42 0x4D (passivo)"
+     (TLV `0x27` = 1) e valide o checksum com as variantes 0/1 (TLV `0x21`), como no
+     roteiro antigo: some os bytes `0..13` (variante 0) ou `0..14` (variante 1) módulo
+     256 e compare com o último byte do quadro de 16 bytes.
+3. Ao final, **Salvar no dispositivo** (`0x11`) e **desligar o Log bruto** (volta a
+   `0x26` = 0). Aplique e salve de novo.
 
 Também verifique o CO₂ virtual (item 10): uma palma a ~1 m faz o LED de som piscar na hora; o
 CO₂ virtual (2100 ppm) chega ~1 s depois e dura ~17 s. A taxa da IMU não pode cair.
@@ -151,18 +154,17 @@ segue) de reboot (uptime volta a zero).
   use **Salvar no dispositivo** (`0x11`). Sem salvar, o PIN antigo volta após reiniciar. Se
   esquecer o PIN: `pio run -d firmware -e esp32dev -t erase` e regrave.
 - **Ligar sem a IMU (item 13):** desconecte a IMU e reinicie. O boot demora cerca de 5 s a
-  mais, o BLE sobe, o LED de erro acende e o diagnóstico mostra a flag `imuOk` desligada
+  mais, o BLE sobe e o diagnóstico mostra a flag `imuOk` desligada
   (Firmware › **Saúde**).
 
 ## 9. Troubleshooting
 
 | Sintoma | Causa provável / ação |
 |---|---|
-| IMU ausente: boot lento (+5 s) e LED de erro aceso | IMU não responde no I²C (fiação SDA 21 / SCL 22, AD0 em GND, alimentação). `imuOk` fica desligada; o resto do firmware segue rodando. |
-| LED de som aceso fixo | O LED de som também sinaliza falha de IMU/áudio; veja o log serial e Firmware › **Saúde**. |
+| IMU ausente: boot lento (+5 s) | IMU não responde no I²C (fiação SDA 21 / SCL 22, AD0 em GND, alimentação). `imuOk` fica desligada (Firmware › **Saúde**); o resto do firmware segue rodando. |
 | Escritas e comandos ignorados | Não desbloqueado, PIN errado, ou bloqueio de 30 s (5 erros seguidos). Aguarde 30 s ou reconecte e tente de novo. |
 | Valores voltam ao anterior após **Aplicar** | O app avisa "alguns valores não foram aceitos (desbloqueou com o PIN?)". |
 | Config sumiu após reiniciar | Faltou **Salvar no dispositivo** (`0x11`). |
 | Navegador não lista o dispositivo | Use Chrome/Edge em `localhost` ou HTTPS; confira se o nome BLE continua `Globo_1`. |
-| Erros UART crescendo / CO₂ inválido | Variante de checksum errada (seção 5) ou fiação do GPIO 16. |
+| Erros UART crescendo / CO₂ inválido | Sensor não é S8 ou fiação dos GPIOs 16/17 (seção 5); em modo passivo, variante de checksum errada. |
 | Site novo não conecta no firmware antigo, ou o contrário | Veja a ordem de deploy no `README.md` da raiz. |

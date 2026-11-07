@@ -7,6 +7,7 @@
 
 #include "../logic/Co2FrameParser.h"
 #include "../logic/GaiaConfig.h"
+#include "../logic/S8Modbus.h"
 #include "../logic/VirtualCo2Pulse.h"
 #include "ConfigStore.h"
 
@@ -14,8 +15,12 @@ namespace gaia {
 
 // CO2 sensor reader (UART1: RX 16, TX 17, 9600 8N1, legacy pins) plus the virtual pulse.
 //
+// Protocols (TLV 0x27): 0 = Senseair S8 Modbus polling (default — the sensor on the
+// KiCAD board never transmits unsolicited; a read request is sent every poll period
+// and the 7-byte response is parsed); 1 = passive 0x42 0x4D frame stream (legacy).
+//
 // Threading:
-//  - A "co2" task (core 1, prio 1) drains the UART and owns the Co2FrameParser.
+//  - A "co2" task (core 1, prio 1) drains the UART and owns both parsers.
 //  - realPpm()/stale()/frameCount()/errorCount() are safe from any task.
 //  - The virtual pulse is NOT thread-safe: triggerVirtualPulse(), virtualActive() and
 //    reportedPpm() must all be called from ONE task (the App task).
@@ -54,10 +59,12 @@ class Co2Service {
   TaskHandle_t task_ = nullptr;
   bool began_ = false;
 
-  Co2FrameParser parser_;  // co2-task-only after startTask()
-  VirtualCo2Pulse pulse_;  // App-task-only
+  Co2FrameParser parser_;    // co2-task-only after startTask()
+  S8ResponseParser s8_;      // co2-task-only after startTask()
+  VirtualCo2Pulse pulse_;    // App-task-only
 
   // Config handoff.
+  std::atomic<uint8_t> protocol_{0};
   std::atomic<uint8_t> frameLen_{16}, ppmHiIndex_{6}, checksumVariant_{0};
   std::atomic<bool> parserDirty_{true};
   std::atomic<uint16_t> peakPpm_{2100};

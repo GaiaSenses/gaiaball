@@ -18,9 +18,11 @@ export const TLV = {
   virtualDelayMs: 0x24,
   virtualHoldMs: 0x25,
   co2RawLogMode: 0x26,
+  co2Protocol: 0x27, // 0 = Senseair S8 Modbus polling (board default), 1 = passive 0x42 0x4D frames
   soundLedPin: 0x30,
   co2LedPin: 0x31,
   co2AlertPpm: 0x32,
+  statusLedPin: 0x33, // the legacy BLE LED command's pin (new LED; one pin = one function)
   bleName: 0x40,
   pin: 0x41,
 } as const;
@@ -58,9 +60,11 @@ const SPECS: Record<number, Spec> = {
   [TLV.virtualDelayMs]: U16,
   [TLV.virtualHoldMs]: U16,
   [TLV.co2RawLogMode]: U8,
+  [TLV.co2Protocol]: U8,
   [TLV.soundLedPin]: U8,
   [TLV.co2LedPin]: U8,
   [TLV.co2AlertPpm]: U16,
+  [TLV.statusLedPin]: U8,
   [TLV.bleName]: { kind: 'str', min: 1, max: 16 },
   [TLV.pin]: { kind: 'str', min: 4, max: 4 },
 };

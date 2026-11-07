@@ -374,16 +374,16 @@ footer .wrap { display: grid; gap: 6px; }
           </tr>
           <tr>
             <td>CO₂ (não relatado, descoberto na análise)</td>
-            <td>O site recebia <code>{}</code> e descartava amostras; o parser não ressincronizava; o checksum provavelmente nunca validou, então o CO₂ real pode nunca ter sido atualizado.</td>
-            <td><div class="links"><a href="#f03">F03</a><a href="#f07">F07</a><a href="#f08">F08</a></div></td>
-            <td><span class="state">Corrigido no v2 · protocolo do sensor a confirmar</span></td>
+            <td>O site recebia <code>{}</code> e descartava amostras; o parser não ressincronizava; e a placa KiCAD revelou o motivo definitivo: o sensor é um Senseair S8, que só responde a consultas Modbus — o firmware legado apenas escutava, então o CO₂ real nunca foi lido.</td>
+            <td><div class="links"><a href="#f15">F15</a><a href="#f03">F03</a><a href="#f07">F07</a><a href="#f08">F08</a></div></td>
+            <td><span class="state">Corrigido no v2 · sensor identificado pela placa</span></td>
           </tr>
         </tbody>
       </table>
     </div>
     <div class="counts" id="sevCounts">
-      <span>14 achados:</span>
-      <span class="sev sev-critico">2 críticos</span>
+      <span>15 achados:</span>
+      <span class="sev sev-critico">3 críticos</span>
       <span class="sev sev-alto">7 altos</span>
       <span class="sev sev-medio">5 médios</span>
       <span style="color:var(--muted)">· 11 deles também apontados pelo relatório inicial (relatorio.md), um em parte</span>
@@ -419,7 +419,7 @@ footer .wrap { display: grid; gap: 6px; }
         <button class="chip-btn" type="button" data-val="co2" aria-pressed="false">CO₂</button>
       </div>
       <input class="search" id="findSearch" type="search" placeholder="Buscar nos achados (ex.: FIFO, checksum, GPIO2, L413)" aria-label="Buscar nos achados">
-      <div class="result-line"><span id="resultCount">14 de 14 achados</span> · <button type="button" id="expandAll">abrir todos</button> · <button type="button" id="collapseAll">fechar todos</button></div>
+      <div class="result-line"><span id="resultCount">15 de 15 achados</span> · <button type="button" id="expandAll">abrir todos</button> · <button type="button" id="collapseAll">fechar todos</button></div>
     </div>
 
     <div class="findings" id="findings">
@@ -559,7 +559,8 @@ ble_.notifyCo2(p);</code></pre></figure>
     <span class="fchips"><span class="sev sev-medio">Médio</span><span class="sym">LEDs / hardware</span></span>
   </summary>
   <div class="fbody">
-    <p>O mesmo GPIO2 aparece como <code>CS_PIN</code> do SPI (L18, sem uso em I²C), <code>ledPin</code> do comando BLE (L48) e <code>LED_SOM_PIN</code> (L99). O callback BLE escrevia direto no pino (L74) e podia apagar o LED enquanto um evento de som ou o CO₂ virtual deveria mantê-lo aceso. Além disso, o GPIO2 é pino de <em>strapping</em> do ESP32: o nível dele no boot influencia o modo de inicialização.</p>
+    <p>O mesmo GPIO2 aparece como <code>CS_PIN</code> do SPI (L18 — código morto: <code>USE_SPI</code> está comentado, mas a definição cimentou a confusão), <code>ledPin</code> do comando BLE (L48) e <code>LED_SOM_PIN</code> (L99). O callback BLE escrevia direto no pino (L74) e podia apagar o LED enquanto um evento de som ou o CO₂ virtual deveria mantê-lo aceso. Além disso, o GPIO2 é pino de <em>strapping</em> do ESP32: o nível dele no boot influencia o modo de inicialização.</p>
+    <p><strong>Verificado na placa (KiCAD <code>Globo_GaiaSenses_PCi</code>):</strong> o GPIO2 liga só no LED <strong>D2 “LED mic”</strong> e o GPIO4 no LED <strong>D1 “LED co2”</strong> — a placa tem exatamente dois LEDs. Ou seja, o conflito era inteiramente de software: três funções lógicas disputando um LED físico. <strong>Um pino não pode ter mais de uma função.</strong> A primeira versão do v2 ainda mascarava isso com uma camada de arbitragem (<code>LedPriority</code>, “a fonte de maior prioridade vence”); essa abstração foi <strong>removida</strong> — ela escondia o erro de projeto em vez de corrigi-lo.</p>
     <div class="ba">
       <figure class="before"><figcaption>Antes · firmware-original.ino L18, L48, L74, L99</figcaption>
 <pre><code>#define CS_PIN 2
@@ -569,21 +570,23 @@ const int ledPin = 2;
       digitalWrite(ledPin, receivedValue == 1 ? HIGH : LOW);
 ⋮
 #define LED_SOM_PIN 2   // Vermelho (som) - mantido no GPIO2</code></pre></figure>
-      <figure class="after"><figcaption>Depois · src/logic/LedPriority.h</figcaption>
-<pre><code>// Arbitrates the single physical LED between independent sources. Each source
-// holds its own on/off state; the level is that of the highest-priority source
-// that is currently ON (Error &gt; SoundEvent &gt; Co2Alert &gt; BleCommand).
-class LedPriority {
+      <figure class="after"><figcaption>Depois · src/services/LedController.h — 1 pino = 1 função</figcaption>
+<pre><code>// Drives the three LEDs, one pin per function (no sharing, no arbitration).
+//  - Sound LED  (board D2, GPIO2):  sound events / virtual-pulse hold.
+//  - CO2 LED    (board D1, GPIO4):  real ppm &gt; co2AlertPpm.
+//  - Status LED (NEW,     GPIO23):  legacy BLE LED command (0x00/0x01) only.
+class LedController {
  public:
-  enum class Source : uint8_t { BleCommand = 0, Co2Alert = 1, SoundEvent = 2, Error = 3 };
-
-  void set(Source s, bool on) { ⋯ }
-  bool resolved() const { return mask_ != 0; }</code></pre></figure>
+  bool begin(ConfigStore &amp;store);
+  void setSoundLed(bool on);
+  void setStatusLed(bool on);
+  void update(uint32_t nowMs, uint16_t realPpm, uint16_t alertPpm);</code></pre></figure>
     </div>
     <dl class="facts">
-      <dt>Correção</dt><dd>Um único <code>LedController</code> decide o nível do pino a partir de fontes independentes (comando BLE, alerta de CO₂, evento de som, erro). O GPIO2 é forçado para LOW no boot. Os pinos dos LEDs viraram configuráveis (TLV <code>0x30</code>/<code>0x31</code>, com reboot), o que permite tirar o LED do GPIO2 se a placa permitir.</dd>
-      <dt>Impacto esperado</dt><dd>O LED reflete o estado real; um comando BLE não “rouba” a sinalização de som. Menos risco no boot.</dd>
-      <dt>Validar na bancada</dt><dd>Enviar <code>0x00</code> (apagar LED) durante o pulso de CO₂ virtual: o LED deve continuar aceso até o fim do pulso.</dd>
+      <dt>Correção</dt><dd>Três saídas, cada uma com um único dono: LED de som = GPIO2 (D2, só eventos de som/pulso virtual), LED de CO₂ = GPIO4 (D1, só alerta de CO₂ real) e o comando BLE legado (<code>0x00</code>/<code>0x01</code>) vai para um <strong>LED de status novo no GPIO23</strong>. Os três pinos são configuráveis (TLV <code>0x30</code>/<code>0x31</code>/<code>0x33</code>, com reboot) e o firmware <strong>rejeita</strong> qualquer configuração que repita um GPIO entre eles. Sinalização de erro de subsistema saiu dos LEDs: ela vive no pacote de diagnóstico (visível no config-app). O GPIO2 continua forçado para LOW no boot (strapping).</dd>
+      <dt>⚠️ Mudança física na placa</dt><dd><strong>Adicionar um LED novo: GPIO23 → resistor de 220 Ω → anodo do LED; catodo → GND</strong> (mesma topologia de D1/D2 no desenho KiCAD). O GPIO23 está livre na placa (header J3, pino 2, sem rede no netlist) e não tem papel de strapping. Enquanto o LED não for montado, o comando <code>0x00</code>/<code>0x01</code> funciona, só não acende nada — som e CO₂ não são afetados. Detalhes em <code>firmware/docs/hardware-pinout.md</code>.</dd>
+      <dt>Impacto esperado</dt><dd>Cada LED significa uma única coisa; um comando BLE não “rouba” nem mascara a sinalização de som. Menos risco no boot.</dd>
+      <dt>Validar na bancada</dt><dd>Com o LED novo montado: enviar <code>0x01</code>/<code>0x00</code> e ver só o LED de status mudar; bater palma e ver só o LED de som piscar; CO₂ alto acende só o LED de CO₂. Tentar gravar dois LEDs no mesmo GPIO pelo config-app: a escrita deve ser recusada.</dd>
     </dl>
     <p class="credit">Apontado também pelo relatório inicial (§3.7).</p>
   </div>
@@ -726,10 +729,11 @@ if (buffer[0] == 0x42 &amp;&amp; buffer[1] == 0x4D) {</code></pre></figure>
     <span class="fid">F08</span>
     <span class="ftitle"><h3>Checksum do CO₂ provavelmente nunca validou</h3></span>
     <span class="caret">▶</span>
-    <span class="fchips"><span class="sev sev-alto">Alto</span><span class="sym">CO₂</span><span class="discovery">descoberta desta análise · a confirmar</span></span>
+    <span class="fchips"><span class="sev sev-alto">Alto</span><span class="sym">CO₂</span><span class="discovery">descoberta desta análise · superada por F15</span></span>
   </summary>
   <div class="fbody">
-    <p>O código legado soma os bytes 0 a 14 e compara com o byte 15. A referência pública para frames <code>0x42 0x4D</code> de 16 bytes (engenharia reversa publicada em spezifisch.codeberg.page, 23/08/2022) define o checksum como a soma dos bytes 0 a 13. Se o byte 14 do frame não for zero, a conta legada nunca bate, nenhum frame é aceito e <code>co2_real</code> nunca é atualizado: o site receberia sempre o valor inicial de 600 ppm ou o pico virtual de 2100 ppm. O modelo informado (“SC8”) não tem datasheet público confirmado, por isso o v2 trata o layout do frame como configurável em vez de cravar uma versão.</p>
+    <p>O código legado soma os bytes 0 a 14 e compara com o byte 15. A referência pública para frames <code>0x42 0x4D</code> de 16 bytes (engenharia reversa publicada em spezifisch.codeberg.page, 23/08/2022) define o checksum como a soma dos bytes 0 a 13. Se o byte 14 do frame não for zero, a conta legada nunca bate, nenhum frame é aceito e <code>co2_real</code> nunca é atualizado: o site receberia sempre o valor inicial de 600 ppm ou o pico virtual de 2100 ppm. O modelo informado (“SC8”) não tinha datasheet público confirmado, por isso o v2 tratou o layout do frame como configurável.</p>
+    <p><strong>Atualização (placa KiCAD):</strong> o desenho da placa identifica o sensor como um <strong>Senseair S8</strong> (<a href="#f15">F15</a>) — que <em>nunca transmite sozinho</em>. Para o sensor real da placa, portanto, a questão do checksum é secundária: nenhum frame jamais chegaria. O parser passivo e as duas variantes de checksum ficam no firmware como modo alternativo (TLV <code>0x27</code> = 1) para experimentos com outros sensores.</p>
     <div class="ba">
       <figure class="before"><figcaption>Antes · firmware-original.ino L344–348</figcaption>
 <pre><code>uint8_t soma = 0;
@@ -980,11 +984,45 @@ const float mapped = kThresholdMin + (filtered_ / 4095.0f) * (kThresholdMax - kT
 if (!haveOutput_ || fabsf(mapped - output_) &gt;= 0.02f * output_) {</code></pre></figure>
     </div>
     <dl class="facts">
-      <dt>Correção</dt><dd>Áudio com falha fica desativado (<code>audioOk = 0</code> no diagnóstico, LED de erro) sem afetar IMU, CO₂ e BLE. Potenciômetro com uma leitura por ciclo, filtro EMA e histerese de 2%. Opção de limiar fixo sem potenciômetro (TLV <code>0x14</code>/<code>0x15</code>).</dd>
+      <dt>Correção</dt><dd>Áudio com falha fica desativado (<code>audioOk = 0</code> no pacote de diagnóstico, visível no config-app) sem afetar IMU, CO₂ e BLE. Potenciômetro com uma leitura por ciclo, filtro EMA e histerese de 2%. Opção de limiar fixo sem potenciômetro (TLV <code>0x14</code>/<code>0x15</code>).</dd>
       <dt>Impacto esperado</dt><dd>Falha de áudio vira estado visível em vez de leituras falsas; limiar de som estável.</dd>
       <dt>Validar na bancada</dt><dd>Girar o potenciômetro devagar e ver o limiar mudar em degraus suaves; com o potenciômetro parado, o limiar não deve oscilar.</dd>
     </dl>
     <p class="credit">Apontado também pelo relatório inicial (§3.5, item 4, e §3.8).</p>
+  </div>
+</details>
+
+<!-- F15 -->
+<details class="finding" id="f15" data-sev="critico" data-sym="co2">
+  <summary>
+    <span class="fid">F15</span>
+    <span class="ftitle"><h3>O sensor de CO₂ é um Senseair S8 — e ele nunca transmite sozinho</h3></span>
+    <span class="caret">▶</span>
+    <span class="fchips"><span class="sev sev-critico">Crítico</span><span class="sym">CO₂</span><span class="discovery">descoberta desta análise · confirmada pela placa KiCAD</span></span>
+  </summary>
+  <div class="fbody">
+    <p>O desenho da placa (<code>Globo_GaiaSenses_PCi.kicad_sch</code>) identifica o sensor: valor <code>Sensor_CO2_SC8</code> com footprint <code>Senseair_S8_Down</code> — um <strong>Senseair S8</strong> (alimentação 5 V, UART nos pads 6/7, exatamente como no netlist: S8 TXD → GPIO16, GPIO17 → S8 RXD). O S8 é um <em>escravo Modbus RTU</em>: ele <strong>só responde quando consultado</strong>. O firmware legado apenas escutava a UART esperando frames espontâneos <code>42 4D</code> — desse sensor, <strong>nunca chegaria um único byte</strong>. O CO₂ real nunca funcionou, independentemente do bug de checksum (<a href="#f08">F08</a>).</p>
+    <div class="ba">
+      <figure class="before"><figcaption>Antes · firmware-original.ino L338–343 (escuta passiva)</figcaption>
+<pre><code>if (co2Serial.available() &lt; 16) return;   // espera frames espontâneos
+
+uint8_t buffer[16];
+co2Serial.readBytes(buffer, 16);
+
+if (buffer[0] == 0x42 &amp;&amp; buffer[1] == 0x4D) {   // que um S8 nunca envia</code></pre></figure>
+      <figure class="after"><figcaption>Depois · src/logic/S8Modbus.cpp + Co2Service (consulta ativa)</figcaption>
+<pre><code>// Poll every 2 s: "any sensor" addr 0xFE, fn 0x04, input register IR4 (CO2).
+const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
+                                      0x00, 0x01, 0xD5, 0xC5};
+// Response: FE 04 02 &lt;ppm hi&gt; &lt;ppm lo&gt; &lt;crc lo&gt; &lt;crc hi&gt;
+// CRC-16/Modbus verified against the Senseair SE-0119 doc example.</code></pre></figure>
+    </div>
+    <dl class="facts">
+      <dt>Evidência</dt><dd>Netlist do KiCAD (pads do footprint <code>Senseair_S8_Down</code>) + documento oficial Senseair “Modbus on Senseair S8” (SE-0119): função 0x04, registrador IR4 = ppm de CO₂, CRC-16 Modbus. O CRC da implementação foi validado contra o exemplo do documento (<code>FE 04 00 00 00 04 → E5 C6</code>) e virou vetor de teste.</dd>
+      <dt>Correção</dt><dd>Novo cliente Modbus (<code>S8Modbus</code>, 8 testes nativos): o firmware consulta o sensor a cada 2 s e valida a resposta por CRC. O modo passivo legado continua disponível (TLV <code>0x27</code> = 1) para outros sensores. O log bruto (TLV <code>0x26</code>) funciona nos dois modos.</dd>
+      <dt>Impacto esperado</dt><dd>O CO₂ real passa a existir de fato: leitura válida em até ~10 s após o boot, acompanhando o ambiente. O LED de CO₂ (D1) e o disparo de composição no site passam a responder ao sensor, não só ao pulso virtual.</dd>
+      <dt>Validar na bancada</dt><dd>Seção 5 do <code>docs/bench-validation.md</code>: leitura válida e plausível (~420 ppm ao ar livre; sobe ao respirar perto); com log bruto, respostas <code>FE 04 02 …</code> a cada 2 s.</dd>
+    </dl>
   </div>
 </details>
 
@@ -1024,7 +1062,7 @@ if (!haveOutput_ || fabsf(mapped - output_) &gt;= 0.02f * output_) {</code></pre
         <text x="32" y="232" class="d-s">I²S 16 kHz estéreo</text>
         <rect x="20" y="320" width="130" height="56" rx="5" class="d-hw"/>
         <text x="32" y="344" class="d-t">Sensor CO₂</text>
-        <text x="32" y="362" class="d-s">UART1 9600 · “SC8”</text>
+        <text x="32" y="362" class="d-s">UART1 9600 · Senseair S8 (Modbus)</text>
 
         <!-- tasks -->
         <rect x="200" y="60" width="170" height="56" rx="5" class="d-task"/>
@@ -1196,7 +1234,7 @@ if (!haveOutput_ || fabsf(mapped - output_) &gt;= 0.02f * output_) {</code></pre
         <table>
           <thead><tr><th>Opcode</th><th>Ação</th><th>PIN</th></tr></thead>
           <tbody>
-            <tr><td><code>0x00</code> / <code>0x01</code></td><td>LED de som apagado / aceso (legado)</td><td>não</td></tr>
+            <tr><td><code>0x00</code> / <code>0x01</code></td><td>LED de status apagado / aceso (legado; GPIO23, ver <a href="#f04">F04</a>)</td><td>não</td></tr>
             <tr><td><code>0x10</code></td><td>Zerar orientação (pose atual vira referência)</td><td>sim</td></tr>
             <tr><td><code>0x11</code></td><td>Salvar config na NVS</td><td>sim</td></tr>
             <tr><td><code>0x12</code></td><td>Restaurar padrões de fábrica (inclui PIN e montagem) e reiniciar</td><td>sim</td></tr>
@@ -1244,15 +1282,17 @@ if (!haveOutput_ || fabsf(mapped - output_) &gt;= 0.02f * output_) {</code></pre
           <tr><td>Áudio</td><td>0x14</td><td><code>potControlsThreshold</code></td><td>0 / ≠0</td><td>1</td><td>1 = potenciômetro define o limiar; 0 = usa o limiar fixo (0x15).</td></tr>
           <tr><td>Áudio</td><td>0x15</td><td><code>thresholdFixed</code></td><td>u32</td><td>100000</td><td>Limiar de pico quando o potenciômetro está desligado.</td></tr>
           <tr><td>CO₂</td><td>0x20</td><td><code>co2Enabled</code></td><td>0 / ≠0</td><td>1</td><td>Liga ou desliga a leitura do sensor.</td></tr>
-          <tr><td>CO₂</td><td>0x21</td><td><code>co2ChecksumVariant</code></td><td>0 ou 1</td><td>0</td><td>0 = soma dos bytes 0..13 (referência); 1 = 0..14 (legado). Ver <a href="#f08">F08</a>.</td></tr>
+          <tr><td>CO₂</td><td>0x21</td><td><code>co2ChecksumVariant</code></td><td>0 ou 1</td><td>0</td><td>Só no modo passivo: 0 = soma dos bytes 0..13 (referência); 1 = 0..14 (legado). Ver <a href="#f08">F08</a>.</td></tr>
           <tr><td>CO₂</td><td>0x22</td><td><code>co2StaleTimeoutMs</code></td><td>0–65535</td><td>5000</td><td>Tempo sem frame válido até a leitura ser marcada como velha.</td></tr>
           <tr><td>CO₂</td><td>0x23</td><td><code>virtualPeakPpm</code></td><td>0–65535</td><td>2100</td><td>Valor de CO₂ virtual enviado após um pico de som.</td></tr>
           <tr><td>CO₂</td><td>0x24</td><td><code>virtualDelayMs</code></td><td>0–65535</td><td>1000</td><td>Atraso entre o pico de som e o início do CO₂ virtual.</td></tr>
           <tr><td>CO₂</td><td>0x25</td><td><code>virtualHoldMs</code></td><td>0–65535</td><td>17000</td><td>Duração do CO₂ virtual.</td></tr>
           <tr><td>CO₂</td><td>0x26</td><td><code>co2RawLogMode</code></td><td>0 / ≠0</td><td>0</td><td>Imprime os bytes brutos da UART em hexadecimal no serial (diagnóstico do protocolo do sensor).</td></tr>
-          <tr><td>LEDs</td><td>0x30</td><td><code>soundLedPin</code></td><td>GPIO 0–33</td><td>2</td><td>Pino do LED de som. <span class="reboot">requer reinício</span></td></tr>
-          <tr><td>LEDs</td><td>0x31</td><td><code>co2LedPin</code></td><td>GPIO 0–33</td><td>4</td><td>Pino do LED de alerta de CO₂. <span class="reboot">requer reinício</span></td></tr>
+          <tr><td>CO₂</td><td>0x27</td><td><code>co2Protocol</code></td><td>0 ou 1</td><td>0</td><td>0 = Senseair S8 via Modbus (consulta a cada 2 s — o sensor da placa, ver <a href="#f15">F15</a>); 1 = frames passivos <code>42 4D</code>.</td></tr>
+          <tr><td>LEDs</td><td>0x30</td><td><code>soundLedPin</code></td><td>GPIO 0–33</td><td>2</td><td>Pino do LED de som (D2 na placa). Distinto dos demais LEDs. <span class="reboot">requer reinício</span></td></tr>
+          <tr><td>LEDs</td><td>0x31</td><td><code>co2LedPin</code></td><td>GPIO 0–33</td><td>4</td><td>Pino do LED de alerta de CO₂ (D1 na placa). Distinto dos demais LEDs. <span class="reboot">requer reinício</span></td></tr>
           <tr><td>LEDs</td><td>0x32</td><td><code>co2AlertPpm</code></td><td>0–65535</td><td>2000</td><td>Acima disso (leitura real, não velha) o LED de CO₂ acende.</td></tr>
+          <tr><td>LEDs</td><td>0x33</td><td><code>statusLedPin</code></td><td>GPIO 0–33</td><td>23</td><td>Pino do LED de status (comando BLE <code>0x00</code>/<code>0x01</code>; LED novo — ver <a href="#f04">F04</a>). Distinto dos demais LEDs. <span class="reboot">requer reinício</span></td></tr>
           <tr><td>Identidade</td><td>0x40</td><td><code>bleName</code></td><td>1–16 caracteres ASCII</td><td>Globo_1</td><td>Nome anunciado no Bluetooth. O site filtra por UUID, não por nome. <span class="reboot">requer reinício</span></td></tr>
           <tr><td>Identidade</td><td>0x41</td><td><code>pin</code></td><td>4 dígitos</td><td>1234</td><td>PIN de desbloqueio. Só escrita: nunca aparece numa leitura nem nos presets.</td></tr>
         </tbody>
@@ -1321,7 +1361,7 @@ if (!haveOutput_ || fabsf(mapped - output_) &gt;= 0.02f * output_) {</code></pre
       <li><label for="c06"><span class="n"></span><input type="checkbox" id="c06" data-key="mount"><span class="txt"><b>Calibrar montagem e zerar</b><span>Bola na posição de referência, comando <code>0x14</code> e depois <code>0x10</code> (<a href="#f10">F10</a>).</span></span></label></li>
       <li><label for="c07"><span class="n"></span><input type="checkbox" id="c07" data-key="flat"><span class="txt"><b>Giro em superfície plana × vista 3D</b><span>Uma volta física em cada eixo deve ser exatamente uma volta no modelo, no mesmo eixo. Comparar cru × filtrado.</span></span></label></li>
       <li><label for="c08"><span class="n"></span><input type="checkbox" id="c08" data-key="drift"><span class="txt"><b>Deriva em Quat6 e teste do ímã</b><span>Bola parada 5 min: anotar a deriva do yaw. Aproximar ímã ou celular: em Quat6 nada muda (<a href="#f11">F11</a>).</span></span></label></li>
-      <li><label for="c09"><span class="n"></span><input type="checkbox" id="c09" data-key="co2raw"><span class="txt"><b>Confirmar o protocolo do sensor “SC8”</b><span>Ligar <code>co2RawLogMode</code> (0x26 = 1), capturar frames, conferir cabeçalho <code>42 4D</code>, posição do ppm e qual checksum bate (0..13 ou 0..14). Ajustar 0x21, salvar com <code>0x11</code> e desligar o log (<a href="#f08">F08</a>).</span></span></label></li>
+      <li><label for="c09"><span class="n"></span><input type="checkbox" id="c09" data-key="co2raw"><span class="txt"><b>Validar o Senseair S8 (Modbus)</b><span>Leitura de CO₂ válida em ~10 s após o boot e plausível (~420 ppm ao ar livre). Se ficar “stale”: ligar <code>co2RawLogMode</code> (0x26 = 1) e conferir respostas <code>FE 04 02 …</code> a cada 2 s; checar 5 V e o cruzamento TX/RX (<a href="#f15">F15</a>). Desligar o log ao final.</span></span></label></li>
       <li><label for="c10"><span class="n"></span><input type="checkbox" id="c10" data-key="sound"><span class="txt"><b>Som e CO₂ virtual</b><span>Palma a ~1 m: LED pisca na hora; CO₂ virtual chega ~1 s depois e dura ~17 s. A taxa da IMU não cai durante o teste.</span></span></label></li>
       <li><label for="c11"><span class="n"></span><input type="checkbox" id="c11" data-key="dual"><span class="txt"><b>Site e config-app conectados ao mesmo tempo</b><span>O globo do site responde enquanto o config-app mede a perda; nenhum dos dois cai.</span></span></label></li>
       <li><label for="c12"><span class="n"></span><input type="checkbox" id="c12" data-key="pin"><span class="txt"><b>Bloqueio do PIN</b><span>5 PINs errados seguidos: o desbloqueio deve ser recusado por 30 s, mesmo com o PIN certo.</span></span></label></li>
@@ -1336,7 +1376,7 @@ if (!haveOutput_ || fabsf(mapped - output_) &gt;= 0.02f * output_) {</code></pre
 
 <footer>
   <div class="wrap">
-    <p>Fontes: <code>firmware-original.ino</code> (legado, intocado), <code>docs/superpowers/specs/2026-11-06-gaiaball-v2-design.md</code>, <code>relatorio.md</code> (relatório inicial), <code>firmware/docs/protocol.md</code>, <code>firmware/docs/architecture.md</code>, código em <code>firmware/Gaiaball/src/</code>.</p>
+    <p>Fontes: <code>firmware-original.ino</code> (legado, intocado), <code>docs/superpowers/specs/2026-11-06-gaiaball-v2-design.md</code>, <code>relatorio.md</code> (relatório inicial), <code>firmware/docs/protocol.md</code>, <code>firmware/docs/architecture.md</code>, código em <code>firmware/Gaiaball/src/</code>; projeto KiCAD da placa <code>Globo_GaiaSenses_PCi</code> (esquemático + 2 revisões de PCB, netlist extraído em 06/11/2026 — ver <code>firmware/docs/hardware-pinout.md</code>) e documento Senseair “Modbus on Senseair S8” (SE-0119).</p>
     <p>Números de linha referem-se a <code>firmware-original.ino</code>. Nenhuma medição de hardware foi feita; os valores de desempenho são metas.</p>
   </div>
 </footer>

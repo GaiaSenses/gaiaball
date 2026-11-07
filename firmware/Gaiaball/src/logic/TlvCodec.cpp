@@ -26,8 +26,9 @@ constexpr Reg kRegs[] = {
     {0x21, Kind::U8, 0, kAnyU8},      {0x22, Kind::U16, 0, kAnyU16},
     {0x23, Kind::U16, 0, kAnyU16},    {0x24, Kind::U16, 0, kAnyU16},
     {0x25, Kind::U16, 0, kAnyU16},    {0x26, Kind::U8, 0, kAnyU8},
-    {0x30, Kind::U8, 0, kMaxGpio},    {0x31, Kind::U8, 0, kMaxGpio},
-    {0x32, Kind::U16, 0, kAnyU16},    {0x40, Kind::Str, 0, 0},
+    {0x27, Kind::U8, 0, 1},           {0x30, Kind::U8, 0, kMaxGpio},
+    {0x31, Kind::U8, 0, kMaxGpio},    {0x32, Kind::U16, 0, kAnyU16},
+    {0x33, Kind::U8, 0, kMaxGpio},    {0x40, Kind::Str, 0, 0},
     {kTlvPin, Kind::Pin, 0, 0},
 };
 
@@ -56,9 +57,11 @@ void *numField(GaiaConfig &c, uint8_t id) {
     case 0x24: return &c.virtualDelayMs;
     case 0x25: return &c.virtualHoldMs;
     case 0x26: return &c.co2RawLogMode;
+    case 0x27: return &c.co2Protocol;
     case 0x30: return &c.soundLedPin;
     case 0x31: return &c.co2LedPin;
     case 0x32: return &c.co2AlertPpm;
+    case 0x33: return &c.statusLedPin;
     default: return nullptr;
   }
 }
@@ -116,7 +119,8 @@ bool validValue(const Reg &r, const uint8_t *v, size_t len) {
     default: {
       if (len != numSize(r.kind)) return false;
       uint32_t x = readLe(v, len);
-      if (r.id == 0x30 || r.id == 0x31) return x <= 0xFF && isValidOutputGpio(static_cast<uint8_t>(x));
+      if (r.id == 0x30 || r.id == 0x31 || r.id == 0x33)
+        return x <= 0xFF && isValidOutputGpio(static_cast<uint8_t>(x));
       return x >= r.min && x <= r.max;
     }
   }
@@ -150,15 +154,23 @@ size_t tlvSerialize(const GaiaConfig &cfg, uint8_t *out, size_t cap) {
 
 bool tlvApply(GaiaConfig &cfg, const uint8_t *data, size_t len) {
   if (len != 0 && data == nullptr) return false;
-  // Pass 1: validate everything; cfg untouched.
+  // Pass 1: validate everything; cfg untouched. LED pins are also validated as a
+  // SET: the resulting config must keep sound/CO2/status on three distinct GPIOs
+  // (one pin = one function; sharing is a board-level design error, not a feature).
+  uint8_t ledPins[3] = {cfg.soundLedPin, cfg.co2LedPin, cfg.statusLedPin};
   for (size_t pos = 0; pos < len;) {
     if (len - pos < 2) return false;
     const Reg *r = findReg(data[pos]);
     size_t vlen = data[pos + 1];
     if (r == nullptr || vlen > len - pos - 2) return false;
     if (!validValue(*r, data + pos + 2, vlen)) return false;
+    if (r->id == 0x30) ledPins[0] = data[pos + 2];
+    if (r->id == 0x31) ledPins[1] = data[pos + 2];
+    if (r->id == 0x33) ledPins[2] = data[pos + 2];
     pos += 2 + vlen;
   }
+  if (ledPins[0] == ledPins[1] || ledPins[0] == ledPins[2] || ledPins[1] == ledPins[2])
+    return false;
   // Pass 2: commit (cannot fail).
   for (size_t pos = 0; pos < len;) {
     const Reg *r = findReg(data[pos]);

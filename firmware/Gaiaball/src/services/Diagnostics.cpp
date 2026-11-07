@@ -40,9 +40,4 @@ DiagPacket Diagnostics::collect(uint16_t seq, uint16_t notifyHzX10, const ImuSer
   return p;
 }
 
-void Diagnostics::driveErrorLed(LedController &led, const ImuService &imu,
-                                const AudioService &audio) const {
-  led.set(LedPriority::Source::Error, !imu.imuOk() || !audio.ok());
-}
-
 }  // namespace gaia

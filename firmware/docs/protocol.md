@@ -82,7 +82,7 @@ Flags: bit0 `imuOk`, bit1 `audioOk`, bit2 `co2Ok`.
 
 | Opcode | Meaning |
 |---|---|
-| `0x00` / `0x01` | legacy LED off / on |
+| `0x00` / `0x01` | legacy LED off / on (drives the status LED, TLV `0x33`) |
 | `0x10` | zero orientation |
 | `0x11` | save config |
 | `0x12` | factory reset |
@@ -110,17 +110,40 @@ A sequence of records `id u8 | len u8 | value (len bytes, little-endian)`.
 | 0x14 | u8 | 1 | potControlsThreshold |
 | 0x15 | u32 | 100000 | thresholdFixed (used when 0x14=0) |
 | 0x20 | u8 | 1 | co2Enabled |
-| 0x21 | u8 | 0 | co2ChecksumVariant (0=sum bytes 0..13; 1=legacy sum 0..14) |
+| 0x21 | u8 | 0 | co2ChecksumVariant — passive mode only (0=sum bytes 0..13; 1=legacy sum 0..14) |
 | 0x22 | u16 | 5000 | co2StaleTimeoutMs |
 | 0x23 | u16 | 2100 | virtualPeakPpm |
 | 0x24 | u16 | 1000 | virtualDelayMs |
 | 0x25 | u16 | 17000 | virtualHoldMs |
 | 0x26 | u8 | 0 | co2RawLogMode |
-| 0x30 | u8 | 2 | soundLedPin (GPIOs de saída válidos; 6–11 (flash) e pinos inexistentes são rejeitados) |
-| 0x31 | u8 | 4 | co2LedPin (GPIOs de saída válidos; 6–11 (flash) e pinos inexistentes são rejeitados) |
+| 0x27 | u8 | 0 | co2Protocol (0=Senseair S8 Modbus polling — the board's sensor; 1=passive 0x42 0x4D frames) |
+| 0x30 | u8 | 2 | soundLedPin (valid output GPIOs only; 6–11 (flash) and nonexistent pins rejected) |
+| 0x31 | u8 | 4 | co2LedPin (same validation as 0x30) |
 | 0x32 | u16 | 2000 | co2AlertPpm |
+| 0x33 | u8 | 23 | statusLedPin (same validation as 0x30; drives commands 0x00/0x01) |
 | 0x40 | char[≤16] | "Globo_1" | bleName |
 | 0x41 | char[4] | "1234" | pin (write-only: never serialized/readable) |
+
+The three LED pins (0x30, 0x31, 0x33) are additionally validated **as a set**: a
+write whose resulting configuration puts two LED functions on the same GPIO is
+rejected atomically (one pin = one function).
+
+## CO2 sensor protocol (UART1, 9600 8N1)
+
+The board's sensor is a **Senseair S8** (KiCAD value `Sensor_CO2_SC8`, footprint
+`Senseair_S8_Down`): a Modbus RTU slave that never transmits unsolicited. With
+`co2Protocol = 0` (default) the firmware polls it every 2 s:
+
+- Request (fixed): `FE 04 00 03 00 01 D5 C5` — "any sensor" address 0xFE, function
+  0x04 (read input registers), register IR4 (CO2 ppm), per Senseair document SE-0119.
+- Response: `FE 04 02 <ppm hi> <ppm lo> <crc lo> <crc hi>` — CRC-16/Modbus (poly
+  0xA001, init 0xFFFF) over the first 5 bytes, low byte first.
+- Golden vectors (CRC verified against the SE-0119 example `FE 04 00 00 00 04 E5 C6`):
+  400 ppm → `FE 04 02 01 90 AC D8`; 1226 ppm → `FE 04 02 04 CA 2F B3`.
+
+`co2Protocol = 1` restores the legacy passive parser (0x42 0x4D 16-byte frames,
+checksum per 0x21) for bench experiments with streaming sensors. `co2RawLogMode`
+hex-dumps every received byte in both modes.
 
 ## Euler convention (decoder side only, never on the wire)
 

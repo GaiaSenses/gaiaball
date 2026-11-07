@@ -1,7 +1,6 @@
 #include <unity.h>
 #include <cstring>
 #include "../../Gaiaball/src/logic/CommandGate.h"
-#include "../../Gaiaball/src/logic/LedPriority.h"
 #include "../../Gaiaball/src/logic/NotifyThrottle.h"
 
 using namespace gaia;
@@ -126,50 +125,6 @@ void test_lockout_slot_isolation() {
   TEST_ASSERT_FALSE(g.isUnlocked(0));
 }
 
-void test_led_priority() {
-  LedPriority l;
-  using S = LedPriority::Source;
-  TEST_ASSERT_FALSE(l.resolved());
-  l.set(S::BleCommand, true);
-  TEST_ASSERT_TRUE(l.resolved());
-  l.set(S::BleCommand, false);
-  TEST_ASSERT_FALSE(l.resolved());
-}
-
-void test_led_highest_source_wins() {
-  LedPriority l;
-  using S = LedPriority::Source;
-  l.set(S::BleCommand, true);
-  l.set(S::Co2Alert, false);
-  TEST_ASSERT_TRUE(l.resolved());
-  // A higher source that is OFF must not mask a lower one that is ON.
-  l.set(S::SoundEvent, false);
-  TEST_ASSERT_TRUE(l.resolved());
-  l.set(S::Co2Alert, true);
-  l.set(S::SoundEvent, true);
-  l.set(S::Error, true);
-  TEST_ASSERT_TRUE(l.resolved());
-  l.set(S::Error, false);
-  TEST_ASSERT_TRUE(l.resolved());  // falls back to SoundEvent
-  l.set(S::SoundEvent, false);
-  TEST_ASSERT_TRUE(l.resolved());  // falls back to Co2Alert
-  l.set(S::Co2Alert, false);
-  TEST_ASSERT_TRUE(l.resolved());  // falls back to BleCommand
-  l.set(S::BleCommand, false);
-  TEST_ASSERT_FALSE(l.resolved());
-}
-
-void test_led_independent_state() {
-  LedPriority l;
-  using S = LedPriority::Source;
-  l.set(S::Error, true);
-  l.set(S::Error, false);
-  l.set(S::Co2Alert, true);
-  TEST_ASSERT_TRUE(l.resolved());
-  l.set(S::Co2Alert, false);
-  TEST_ASSERT_FALSE(l.resolved());  // Error's earlier ON did not stick
-}
-
 static int countSends(NotifyThrottle &t, uint32_t startUs, int calls, uint32_t spanUs) {
   int n = 0;
   for (int i = 0; i < calls; i++) {
@@ -234,9 +189,6 @@ int main() {
   RUN_TEST(test_success_resets_streak);
   RUN_TEST(test_disconnect_resets_lockout);
   RUN_TEST(test_lockout_slot_isolation);
-  RUN_TEST(test_led_priority);
-  RUN_TEST(test_led_highest_source_wins);
-  RUN_TEST(test_led_independent_state);
   RUN_TEST(test_throttle_50hz);
   RUN_TEST(test_throttle_wraparound);
   RUN_TEST(test_throttle_zero_never_sends);

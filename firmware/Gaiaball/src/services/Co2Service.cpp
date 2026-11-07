@@ -13,6 +13,9 @@ constexpr int kPinTx = 17;
 constexpr uint32_t kBaud = 9600;
 constexpr size_t kMaxBytesPerCycle = 64;
 constexpr size_t kRawLineBytes = 16;  // bytes per hex-dump log line
+// S8 Modbus poll period. The sensor updates its measurement every 4 s; polling at
+// 2 s halves the worst-case reading age without meaningful UART/CPU cost.
+constexpr uint32_t kS8PollMs = 2000;
 HardwareSerial &uart() {
   static HardwareSerial s(1);
   return s;
@@ -28,6 +31,7 @@ bool Co2Service::begin(ConfigStore &store) {
 }
 
 void Co2Service::applyConfig(const GaiaConfig &cfg) {
+  protocol_.store(cfg.co2Protocol);
   checksumVariant_.store(cfg.co2ChecksumVariant);
   parserDirty_.store(true);
   peakPpm_.store(cfg.virtualPeakPpm);
@@ -55,6 +59,7 @@ void Co2Service::taskEntry(void *arg) {
 
 void Co2Service::taskLoop() {
   uint8_t raw[kMaxBytesPerCycle];
+  uint32_t lastPollMs = 0;
   for (;;) {
     if (parserDirty_.exchange(false)) {
       Co2FrameSpec spec;
@@ -64,6 +69,15 @@ void Co2Service::taskLoop() {
       parser_.configure(spec);
     }
     if (enabled_.load()) {
+      const bool modbus = protocol_.load() == 0;
+      if (modbus) {
+        const uint32_t nowMs = millis();
+        if (lastPollMs == 0 || (uint32_t)(nowMs - lastPollMs) >= kS8PollMs) {
+          lastPollMs = nowMs;
+          s8_.reset();  // a response never spans polls; drop any stale partial
+          uart().write(kS8ReadCo2Request, kS8RequestLen);
+        }
+      }
       size_t n = 0;
       while (n < kMaxBytesPerCycle && uart().available() > 0) {
         const int b = uart().read();
@@ -71,15 +85,25 @@ void Co2Service::taskLoop() {
         raw[n++] = (uint8_t)b;
       }
       for (size_t i = 0; i < n; i++) {
-        const Co2FrameParser::Result r = parser_.feed(raw[i]);
-        if (r == Co2FrameParser::Result::Frame) {
-          realPpm_.store(parser_.ppm());
+        bool gotFrame = false;
+        uint16_t ppm = 0;
+        if (modbus) {
+          if (s8_.feed(raw[i]) == S8ResponseParser::Result::Frame) {
+            gotFrame = true;
+            ppm = s8_.ppm();
+          }
+        } else if (parser_.feed(raw[i]) == Co2FrameParser::Result::Frame) {
+          gotFrame = true;
+          ppm = parser_.ppm();
+        }
+        if (gotFrame) {
+          realPpm_.store(ppm);
           lastFrameMs_.store(millis());
           haveFrame_.store(true);
         }
       }
-      frames_.store(parser_.frameCount());
-      errors_.store(parser_.errorCount());
+      frames_.store(modbus ? s8_.frameCount() : parser_.frameCount());
+      errors_.store(modbus ? s8_.errorCount() : parser_.errorCount());
       if (n > 0 && rawLog_.load()) {
         // Bench protocol capture: at most 4 lines per cycle (the logger also rate-limits).
         char line[kRawLineBytes * 3 + 1];
