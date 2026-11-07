@@ -3,7 +3,7 @@
 //
 // Units (sources documented in firmware/docs/protocol.md and hardware-pinout.md):
 //  - Orientation: degrees, legacy Euler convention (same output the site feeds to Pd).
-//  - Acceleration: g — DMP full scale is ±4 g, 8192 LSB/g.
+//  - Acceleration: g — MPU-9250 full scale is ±4 g, 8192 LSB/g.
 //  - Microphones (INMP441): dBFS per AES17 (0 dBFS = full-scale sine, FS = 2^23 for
 //    the 32-bit I2S config with >>8). Estimated dB SPL = dBFS + 120, from the
 //    INMP441 sensitivity spec (-26 dBFS @ 94 dB SPL, 1 kHz).

@@ -14,6 +14,8 @@ class VirtualCo2Pulse {
   void trigger(uint32_t nowMs);
   void cancel() { state_ = Idle; }
   bool active(uint32_t nowMs);
+  // True while scheduled but not yet active. Test-only observability (the timing
+  // tests assert the Waiting state through it); no production caller.
   bool pending(uint32_t nowMs) const;
   uint16_t peakPpm() const { return peakPpm_; }
 

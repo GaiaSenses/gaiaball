@@ -46,7 +46,7 @@ struct __attribute__((packed)) ImuPacket {
   uint16_t seq;
   uint32_t timestampUs;
   int16_t quatW, quatX, quatY, quatZ;
-  int16_t accX, accY, accZ;  // raw DMP counts
+  int16_t accX, accY, accZ;  // raw MPU-9250 counts (±4 g full scale, 8192 LSB/g)
   uint8_t flags;
 };
 

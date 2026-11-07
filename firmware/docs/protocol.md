@@ -61,6 +61,11 @@ Flags: bit0 `quatValid`, bit1 `nineAxis`, bit2 `moving`.
 
 Flags: bit0 `valid`, bit1 `stale`, bit2 `virtualActive`.
 
+`ppm` is the virtual pulse peak while a pulse is active; otherwise it is the real
+reading when `co2Enabled=1`, or the constant **600** when `co2Enabled=0` — the
+legacy firmware's `CO2_NORMAL_VALUE`, kept so a disabled sensor still feeds the
+site's Pd patch a plausible baseline. The fallback is never flagged `valid`.
+
 ## DiagPacket (23 bytes)
 
 | Offset | Size | Type | Field |
@@ -160,6 +165,10 @@ after the last failure. A successful unlock or a disconnect clears the streak.
 ## Config TLV (characteristic `...0004`)
 
 A sequence of records `id u8 | len u8 | value (len bytes, little-endian)`.
+
+Reading the TLV requires no PIN **by design**: any connected central may inspect
+thresholds, rates, pins and the BLE name (the PIN itself is write-only and never
+serialized). Only TLV writes and the sensitive commands are gated by the unlock.
 
 | id | type | default | field |
 |---|---|---|---|

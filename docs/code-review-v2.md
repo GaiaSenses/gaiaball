@@ -160,6 +160,8 @@ Em ordem aproximada de valor/custo:
 
 Nenhum achado invalida o plano atual: **merge dos branches → flash → roteiro de bancada** (`docs/bench-validation.md`) continua sendo o próximo passo; desta lista, só 4.2 merece entrar no roteiro de bancada (medir a taxa com 200 Hz configurados).
 
+**Atualização (2026-11-07, mesmo dia):** os achados de baixa severidade foram aplicados no commit seguinte deste branch — 2.1 e 2.2 removidos, 2.3 decidido como teste de contrato (`test_euler_legacy_contract`), 2.4 e 2.5 corrigidos/anotados/documentados, 3.4 resolvido (`Co2Service::lastFrameMs()/haveFrame()`), 4.3 registrado no `README.md` e 5.2 documentado no `protocol.md`. O 4.1 (polling × INT) ficou de fora de propósito: depende de conferir na placa se o pino INT do GY-91 está roteado e de validação em bancada.
+
 ---
 
 *Revisão produzida por Claude (Fable 5) a pedido, sem alterações de código. Evidências referem-se ao estado dos arquivos em `b7cff6e`.*

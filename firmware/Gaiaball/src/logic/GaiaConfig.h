@@ -12,8 +12,8 @@ struct GaiaConfig {
   float mountQuat[4] = {1.0f, 0.0f, 0.0f, 0.0f};
 
   uint8_t orientationMode = 0;  // 0=Quat6 relative, 1=Quat9
-  // Target output rate. Drives BOTH the notify throttle and the DMP sample rate
-  // (gyro/accel divisor picked so the DMP runs at or just above this rate).
+  // Target output rate. Drives BOTH the notify throttle and the MPU-9250 sample
+  // rate (SMPLRT_DIV picked so the chip samples at or just above this rate).
   uint8_t imuNotifyHz = 50;  // 10..200
   uint8_t slerpAmount = 0;   // 0..100, 0=off
   // EMA low-pass on the published accelerometer counts. 0 = off (raw passthrough);

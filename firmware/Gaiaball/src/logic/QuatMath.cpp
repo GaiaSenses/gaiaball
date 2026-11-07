@@ -5,27 +5,9 @@ namespace gaia {
 
 namespace {
 constexpr double kRadToDeg = 57.295779513082320876798;
-constexpr double kMinNorm = 1e-6;
-const Quat kIdentity{1.f, 0.f, 0.f, 0.f};
 
 float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 }  // namespace
-
-bool sanitizeQuat(double q1, double q2, double q3, Quat &out) {
-  if (!std::isfinite(q1) || !std::isfinite(q2) || !std::isfinite(q3)) {
-    out = kIdentity;
-    return false;
-  }
-  const double v2 = q1 * q1 + q2 * q2 + q3 * q3;
-  const double w = std::sqrt(v2 < 1.0 ? 1.0 - v2 : 0.0);
-  const double n = std::sqrt(w * w + v2);
-  if (!(n > kMinNorm)) {
-    out = kIdentity;
-    return false;
-  }
-  out = Quat{(float)(w / n), (float)(q1 / n), (float)(q2 / n), (float)(q3 / n)};
-  return true;
-}
 
 Quat quatMultiply(const Quat &a, const Quat &b) {
   return Quat{a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,

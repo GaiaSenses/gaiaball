@@ -204,14 +204,6 @@ void App::updateSoundLed(uint32_t nowMs) {
 }
 
 void App::maybeNotifyCo2(uint32_t nowMs) {
-  // Track frame arrivals to derive the reading's age (resolution = this 20 Hz tick).
-  const uint32_t frames = co2_.frameCount();
-  if (frames != co2LastFrameCount_) {
-    co2LastFrameCount_ = frames;
-    co2LastFrameMs_ = nowMs;
-    co2HaveFrame_ = true;
-  }
-
   const uint16_t ppm = co2_.reportedPpm(nowMs);
   const bool stale = co2_.stale(nowMs);
   uint8_t flags = 0;
@@ -224,8 +216,8 @@ void App::maybeNotifyCo2(uint32_t nowMs) {
   if (!changed && !elapsed(nowMs, lastCo2NotifyMs_, kCo2KeepaliveMs)) return;
 
   uint32_t ageS = 255;
-  if (co2HaveFrame_) {
-    ageS = (uint32_t)(nowMs - co2LastFrameMs_) / 1000;
+  if (co2_.haveFrame()) {
+    ageS = (uint32_t)(nowMs - co2_.lastFrameMs()) / 1000;
     if (ageS > 255) ageS = 255;
   }
 

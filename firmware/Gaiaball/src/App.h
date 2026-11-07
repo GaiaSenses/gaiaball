@@ -92,9 +92,6 @@ class App {
   uint16_t lastCo2Ppm_ = 0;
   uint8_t lastCo2Flags_ = 0;
   bool co2Sent_ = false;
-  uint32_t co2LastFrameCount_ = 0;
-  uint32_t co2LastFrameMs_ = 0;
-  bool co2HaveFrame_ = false;
 };
 
 }  // namespace gaia

@@ -22,7 +22,8 @@ namespace gaia {
 //
 // Threading:
 //  - A "co2" task (core 1, prio 1) drains the UART and owns the parser.
-//  - realPpm()/stale()/frameCount()/errorCount() are safe from any task.
+//  - realPpm()/stale()/haveFrame()/lastFrameMs()/frameCount()/errorCount() are safe
+//    from any task.
 //  - The virtual pulse is NOT thread-safe: triggerVirtualPulse(), virtualActive() and
 //    reportedPpm() must all be called from ONE task (the App task).
 //  - applyConfig() is safe from any task: pulse parameters are picked up lazily by
@@ -50,6 +51,11 @@ class Co2Service {
 
   uint32_t frameCount() const { return frames_.load(); }
   uint32_t errorCount() const { return errors_.load(); }
+  // Whether any valid frame ever arrived, and the millis() of the latest one
+  // (meaningful only when haveFrame() is true). Source of truth for the packet's
+  // ageS field — exact, not tick-resolution.
+  bool haveFrame() const { return haveFrame_.load(); }
+  uint32_t lastFrameMs() const { return lastFrameMs_.load(); }
 
  private:
   static void taskEntry(void *arg);

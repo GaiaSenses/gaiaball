@@ -39,7 +39,7 @@ pio run -d firmware -e esp32dev                       # build
 pio run -d firmware -e esp32dev -t upload             # build + flash (auto-detects the port)
 pio run -d firmware -e esp32dev -t upload --upload-port /dev/ttyUSB0
 pio device monitor -d firmware -e esp32dev            # serial log, 115200 baud
-pio test -d firmware -e native                        # host unit tests (66 cases)
+pio test -d firmware -e native                        # host unit tests (77 cases)
 ```
 
 `platformio.ini` pins `espressif32@6.12.0` (Arduino core 2.0.17) and
@@ -76,6 +76,11 @@ arduino-cli upload  --fqbn esp32:esp32:esp32 -p /dev/ttyUSB0 firmware/Gaiaball
 Known build warnings (pre-existing, harmless, from the legacy IDF drivers kept on
 purpose for core 2.0.17): `'I2S_COMM_FORMAT_I2S' is deprecated` (AudioService) and
 `'ADC_ATTEN_DB_11' is deprecated` (PotService).
+
+Maintenance note: `driver/i2s.h` (AudioService) and `driver/adc.h` (PotService) are
+IDF 4.x APIs, removed in IDF 5 / Arduino core 3.x. The `espressif32@6.12.0` pin
+freezes this safely; an eventual core upgrade requires porting to `esp_driver_i2s`
+(std mode) and `esp_adc` (oneshot) — nothing else in the firmware depends on IDF 4.
 
 ## Pinout
 

@@ -11,37 +11,17 @@ static float norm(const Quat &q) {
   return std::sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
 }
 
-void test_sanitize_overflow() {
-  // q1^2+q2^2+q3^2 = 1.02 > 1: w would be sqrt(negative) -> must clamp to 0.
-  const double s = std::sqrt(1.02 / 3.0);
-  Quat q{};
-  TEST_ASSERT_TRUE(sanitizeQuat(s, s, s, q));
-  TEST_ASSERT_TRUE(std::isfinite(q.w));
-  TEST_ASSERT_EQUAL_FLOAT(0.f, q.w);
-  TEST_ASSERT_FLOAT_WITHIN(1e-5f, 1.f, norm(q));
-}
-
-void test_sanitize_nan() {
-  Quat q{0.5f, 0.5f, 0.5f, 0.5f};
-  TEST_ASSERT_FALSE(sanitizeQuat(NAN, 0.1, 0.2, q));
-  TEST_ASSERT_EQUAL_FLOAT(1.f, q.w);
-  TEST_ASSERT_EQUAL_FLOAT(0.f, q.x);
-  TEST_ASSERT_EQUAL_FLOAT(0.f, q.y);
-  TEST_ASSERT_EQUAL_FLOAT(0.f, q.z);
-}
-
-void test_sanitize_normal() {
-  Quat q{};
-  TEST_ASSERT_TRUE(sanitizeQuat(0.0, 0.0, 0.0, q));
-  TEST_ASSERT_EQUAL_FLOAT(1.f, q.w);
-  TEST_ASSERT_TRUE(sanitizeQuat(0.5, 0.5, 0.5, q));
-  TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.5f, q.w);
-  TEST_ASSERT_FLOAT_WITHIN(1e-5f, 1.f, norm(q));
+// Builds a unit quaternion from a vector part (w derived as sqrt(1 - |v|^2)).
+// Test fixture helper only; callers must keep |v| <= 1.
+static Quat makeQuat(double q1, double q2, double q3) {
+  const double v2 = q1 * q1 + q2 * q2 + q3 * q3;
+  const double w = std::sqrt(v2 < 1.0 ? 1.0 - v2 : 0.0);
+  const double n = std::sqrt(w * w + v2);
+  return Quat{(float)(w / n), (float)(q1 / n), (float)(q2 / n), (float)(q3 / n)};
 }
 
 void test_zero_ref() {
-  Quat ref{};
-  sanitizeQuat(0.2, -0.3, 0.4, ref);
+  const Quat ref = makeQuat(0.2, -0.3, 0.4);
   Quat r = quatMultiply(quatConjugate(ref), ref);
   TEST_ASSERT_FLOAT_WITHIN(1e-5f, 1.f, r.w);
   TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.f, r.x);
@@ -50,9 +30,8 @@ void test_zero_ref() {
 }
 
 void test_slerp_endpoints() {
-  Quat a{}, b{};
-  sanitizeQuat(0.1, 0.2, 0.3, a);
-  sanitizeQuat(-0.4, 0.1, 0.5, b);
+  const Quat a = makeQuat(0.1, 0.2, 0.3);
+  const Quat b = makeQuat(-0.4, 0.1, 0.5);
   Quat s0 = quatSlerp(a, b, 0.f);
   Quat s1 = quatSlerp(a, b, 1.f);
   TEST_ASSERT_FLOAT_WITHIN(1e-5f, 0.f, quatAngleDeg(a, s0));
@@ -72,7 +51,10 @@ void test_angle_deg() {
   TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.f, quatAngleDeg(id, neg));
 }
 
-void test_euler_legacy_golden() {
+// CONTRACT TEST: quatToEulerLegacy is the executable spec of the legacy Euler
+// convention. The TS decoders (site ble-decode.ts, config-app euler.ts) must match
+// this output exactly — it is what the Pd patch has always received.
+void test_euler_legacy_contract() {
   // 90 deg about the sensor Z axis: (w,x,y,z) = (cos45, 0, 0, sin45).
   // Legacy remap: qw=w, qx=y=0, qy=x=0, qz=-z=-0.7071.
   // roll = atan2(0, 1) = 0; pitch = asin(0) = 0;
@@ -86,8 +68,7 @@ void test_euler_legacy_golden() {
   TEST_ASSERT_FLOAT_WITHIN(1e-3f, -90.f, y);
 
   // Non-trivial quat, expected computed independently with the legacy formula.
-  Quat g{};
-  sanitizeQuat(0.2, 0.3, 0.4, g);
+  const Quat g = makeQuat(0.2, 0.3, 0.4);
   const double qw = g.w, qx = g.y, qy = g.x, qz = -g.z;
   const double kRad = 180.0 / M_PI;
   const double er = std::atan2(2 * (qw * qx + qy * qz), 1 - 2 * (qx * qx + qy * qy)) * kRad;
@@ -101,12 +82,9 @@ void test_euler_legacy_golden() {
 
 int main(int, char **) {
   UNITY_BEGIN();
-  RUN_TEST(test_sanitize_overflow);
-  RUN_TEST(test_sanitize_nan);
-  RUN_TEST(test_sanitize_normal);
   RUN_TEST(test_zero_ref);
   RUN_TEST(test_slerp_endpoints);
   RUN_TEST(test_angle_deg);
-  RUN_TEST(test_euler_legacy_golden);
+  RUN_TEST(test_euler_legacy_contract);
   return UNITY_END();
 }
