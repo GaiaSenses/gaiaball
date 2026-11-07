@@ -9,16 +9,16 @@ void tearDown() {}
 
 static const size_t kLen = 16;
 
-// Builds a frame with header 42 4D, ppm big-endian at hiIdx, real checksum.
-static void makeFrame(uint8_t *f, uint16_t ppm, uint8_t variant, uint8_t hiIdx = 6) {
+// Builds a frame with header 42 4D, ppm big-endian at bytes 6/7 and the datasheet
+// checksum: BYTE15 = low byte of sum(BYTE0..BYTE14).
+static void makeFrame(uint8_t *f, uint16_t ppm) {
   for (size_t i = 0; i < kLen; i++) f[i] = 0;
   f[0] = 0x42;
   f[1] = 0x4D;
-  f[hiIdx] = ppm >> 8;
-  f[hiIdx + 1] = ppm & 0xFF;
+  f[6] = ppm >> 8;
+  f[7] = ppm & 0xFF;
   uint8_t sum = 0;
-  size_t last = variant == 0 ? kLen - 2 : kLen - 1;  // exclusive end
-  for (size_t i = 0; i < last; i++) sum += f[i];
+  for (size_t i = 0; i < kLen - 1; i++) sum += f[i];
   f[kLen - 1] = sum;
 }
 
@@ -36,7 +36,7 @@ static Counts feedAll(Co2FrameParser &p, const uint8_t *d, size_t n) {
 void test_aligned_frame() {
   Co2FrameParser p;
   uint8_t f[kLen];
-  makeFrame(f, 1234, 0);
+  makeFrame(f, 1234);
   for (size_t i = 0; i + 1 < kLen; i++)
     TEST_ASSERT_EQUAL(Co2FrameParser::Result::None, p.feed(f[i]));
   TEST_ASSERT_EQUAL(Co2FrameParser::Result::Frame, p.feed(f[kLen - 1]));
@@ -45,23 +45,22 @@ void test_aligned_frame() {
   TEST_ASSERT_EQUAL_UINT32(0, p.errorCount());
 }
 
-void test_legacy_checksum_variant() {
+// Golden vector straight from the SC8-CO2-5K V1.4 datasheet, section 8:
+// "For example: 424D0C5109A2072B01350581200800AD" -> 0x072B = 1835 ppm.
+void test_datasheet_golden_frame() {
+  const uint8_t f[kLen] = {0x42, 0x4D, 0x0C, 0x51, 0x09, 0xA2, 0x07, 0x2B,
+                           0x01, 0x35, 0x05, 0x81, 0x20, 0x08, 0x00, 0xAD};
   Co2FrameParser p;
-  Co2FrameSpec s;
-  s.checksumVariant = 1;
-  p.configure(s);
-  uint8_t f[kLen];
-  makeFrame(f, 777, 1);
   Counts c = feedAll(p, f, kLen);
   TEST_ASSERT_EQUAL(1, c.frames);
-  TEST_ASSERT_EQUAL_UINT16(777, p.ppm());
-  // A variant-0 frame must be rejected under variant 1 (unless sums coincide).
-  makeFrame(f, 777, 0);
-  f[14] = 0x01;  // byte 14 is covered only by variant 1, so the sums differ
-  uint8_t sum = 0;
-  for (size_t i = 0; i < kLen - 2; i++) sum += f[i];
-  f[kLen - 1] = sum;
-  c = feedAll(p, f, kLen);
+  TEST_ASSERT_EQUAL(0, c.errors);
+  TEST_ASSERT_EQUAL_UINT16(1835, p.ppm());
+  // The checksum must cover byte 14: flipping it alone invalidates the frame.
+  uint8_t g[kLen];
+  for (size_t i = 0; i < kLen; i++) g[i] = f[i];
+  g[14] = 0x01;
+  Co2FrameParser q;
+  c = feedAll(q, g, kLen);
   TEST_ASSERT_EQUAL(0, c.frames);
   TEST_ASSERT_EQUAL(1, c.errors);
 }
@@ -69,7 +68,7 @@ void test_legacy_checksum_variant() {
 void test_resync_after_garbage() {
   Co2FrameParser p;
   uint8_t f[kLen];
-  makeFrame(f, 555, 0);
+  makeFrame(f, 555);
   const uint8_t noise[] = {0x00, 0xFF, 0x42, 0x13, 0x4D, 0x42, 0x42, 0x07, 0x42};  // partial headers
   Counts c = feedAll(p, noise, sizeof noise);
   Counts d = feedAll(p, f, kLen);
@@ -84,12 +83,12 @@ void test_0x42_inside_payload() {
   Co2FrameParser p;
   // Frame A has 42 4D inside its payload (bytes 8,9) -- cannot lose frame B.
   uint8_t a[kLen], b[kLen];
-  makeFrame(a, 400, 0);
+  makeFrame(a, 400);
   a[8] = 0x42; a[9] = 0x4D;
   uint8_t sum = 0;
-  for (size_t i = 0; i < kLen - 2; i++) sum += a[i];
+  for (size_t i = 0; i < kLen - 1; i++) sum += a[i];
   a[kLen - 1] = sum;
-  makeFrame(b, 900, 0);
+  makeFrame(b, 900);
 
   // (1) Intact A then B: both parse.
   Counts c = feedAll(p, a, kLen);
@@ -115,7 +114,7 @@ void test_0x42_inside_payload() {
 void test_checksum_error_counts() {
   Co2FrameParser p;
   uint8_t f[kLen];
-  makeFrame(f, 300, 0);
+  makeFrame(f, 300);
   f[kLen - 1] ^= 0x55;
   Counts c = feedAll(p, f, kLen);
   TEST_ASSERT_EQUAL(0, c.frames);
@@ -123,22 +122,10 @@ void test_checksum_error_counts() {
   TEST_ASSERT_EQUAL_UINT32(1, p.errorCount());
   TEST_ASSERT_EQUAL_UINT32(0, p.frameCount());
   // Recovers on the next good frame.
-  makeFrame(f, 301, 0);
+  makeFrame(f, 301);
   c = feedAll(p, f, kLen);
   TEST_ASSERT_EQUAL(1, c.frames);
   TEST_ASSERT_EQUAL_UINT16(301, p.ppm());
-}
-
-void test_custom_spec() {
-  Co2FrameParser p;
-  Co2FrameSpec s;
-  s.ppmHiIndex = 4;
-  p.configure(s);
-  uint8_t f[kLen];
-  makeFrame(f, 0x1234, 0, 4);
-  Counts c = feedAll(p, f, kLen);
-  TEST_ASSERT_EQUAL(1, c.frames);
-  TEST_ASSERT_EQUAL_UINT16(0x1234, p.ppm());
 }
 
 void test_pulse_timing() {
@@ -185,11 +172,10 @@ void test_pulse_millis_wraparound() {
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_aligned_frame);
-  RUN_TEST(test_legacy_checksum_variant);
+  RUN_TEST(test_datasheet_golden_frame);
   RUN_TEST(test_resync_after_garbage);
   RUN_TEST(test_0x42_inside_payload);
   RUN_TEST(test_checksum_error_counts);
-  RUN_TEST(test_custom_spec);
   RUN_TEST(test_pulse_timing);
   RUN_TEST(test_pulse_retrigger_ignored_and_cancel);
   RUN_TEST(test_pulse_millis_wraparound);

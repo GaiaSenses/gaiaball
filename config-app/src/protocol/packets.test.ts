@@ -108,19 +108,17 @@ describe('invalid input returns null', () => {
 
 describe('TLV', () => {
   it('registry ids', () => {
-    expect(Object.keys(TLV)).toHaveLength(31);
+    expect(Object.keys(TLV)).toHaveLength(29);
     expect(TLV.orientationMode).toBe(0x01);
     expect(TLV.imuNotifyHz).toBe(0x02);
     expect(TLV.slerpAmount).toBe(0x03);
     expect(TLV.thresholdFixed).toBe(0x15);
     expect(TLV.co2AlertPpm).toBe(0x32);
-    expect(TLV.co2Protocol).toBe(0x27);
     expect(TLV.bleName).toBe(0x40);
     expect(TLV.pin).toBe(0x41);
   });
   it('encode layout little-endian', () => {
     expect(Array.from(encodeTlv([{ id: TLV.imuNotifyHz, value: 50 }]))).toEqual([0x02, 1, 50]);
-    expect(Array.from(encodeTlv([{ id: TLV.co2Protocol, value: 0 }]))).toEqual([0x27, 1, 0]);
     expect(Array.from(encodeTlv([{ id: TLV.audioFastAlphaX1000, value: 250 }]))).toEqual([0x11, 2, 0xfa, 0x00]);
     expect(Array.from(encodeTlv([{ id: TLV.thresholdFixed, value: 100000 }]))).toEqual([0x15, 4, 0xa0, 0x86, 0x01, 0x00]);
     expect(Array.from(encodeTlv([{ id: TLV.bleName, value: 'Globo_1' }]))).toEqual([0x40, 7, ...new TextEncoder().encode('Globo_1')]);

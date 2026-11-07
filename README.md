@@ -12,7 +12,7 @@ compositions (Pure Data).
  │                                                                            │
  │  GY-91 IMU ──┐                                                             │
  │  2× INMP441 ─┤   ESP32 firmware          BLE (binary protocol v1)          │
- │  Senseair S8─┼─▶ FreeRTOS + NimBLE  ───────────────┬──────────────▶ GaiaSenses site
+ │  SC8 CO2 ────┼─▶ FreeRTOS + NimBLE  ───────────────┬──────────────▶ GaiaSenses site
  │  Pot + LEDs ─┘   (firmware/)                       └──────────────▶ config-app
  │                                                             (bench tool, this repo)
  └────────────────────────────────────────────────────────────────────────────┘
@@ -24,7 +24,7 @@ compositions (Pure Data).
 |---|---|---|
 | Orientation | **GY-91 module** — MPU-9250 (accel + gyro) + AK8963 (mag) + BMP280 (barometer, unused) | I²C — SDA 21, SCL 22, addr 0x68 |
 | Microphones | 2× INMP441 (stereo, for blow detection) | I²S — WS 25, SCK 26, SD 33 |
-| CO₂ | Senseair S8 (NDIR, Modbus RTU slave) | UART1 — RX 16, TX 17, 9600 8N1 |
+| CO₂ | SC8-CO2-5K ("YYS SC8", NDIR, active 1 Hz stream) | UART1 — RX 16, 9600 8N1, listen-only |
 | Threshold knob | 50 kΩ potentiometer | ADC — GPIO 34 |
 | LEDs | Sound (D2) and CO₂ alert (D1) | GPIO 2 and GPIO 4 — one pin, one function |
 
@@ -43,8 +43,10 @@ The full netlist cross-check against the KiCAD board design lives in
   pulse that the site turns into a composition. The raw (unfiltered) audio is also
   streamed, decimated to 2 kHz, so the config-app can show a live spectrum for
   tuning the band.
-- **CO₂.** The Senseair S8 never transmits on its own: the firmware polls it over
-  Modbus every 2 s and validates each response with CRC-16.
+- **CO₂.** The SC8-CO2-5K streams one checksummed 16-byte frame per second on its
+  own. The firmware is strictly listen-only — per the SC8 datasheet, any query
+  halts the active stream until the next power cycle — and resynchronizes on the
+  frame header after any byte loss.
 - **Transport.** Everything leaves the ball as small, versioned, little-endian
   binary packets with sequence numbers and timestamps (23 B orientation packets at
   up to 200 Hz), over a NimBLE GATT server that accepts **two centrals at once** —
@@ -124,7 +126,7 @@ firmware).
 
 | Suite | Where | Command |
 |---|---|---|
-| Firmware logic (packets, TLV, fusion, filters, Modbus, DSP) | `firmware/test/` | `pio test -d firmware -e native` |
+| Firmware logic (packets, TLV, fusion, filters, SC8 framing, DSP) | `firmware/test/` | `pio test -d firmware -e native` |
 | Config-app (decoders, FFT, Euler convention, presets) | `config-app/src/**/*.test.ts` | `npm test` |
 | Site decoder (same golden vectors) | `Gaiasenses-web/tests/` | `npm test` in that repo |
 

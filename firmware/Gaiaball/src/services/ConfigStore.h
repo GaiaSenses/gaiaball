@@ -11,7 +11,7 @@
 namespace gaia {
 
 // Bump when GaiaConfig layout changes; mismatched stored data falls back to defaults.
-constexpr uint8_t kConfigSchemaVersion = 4;  // v4: per-sensor filters, imu rate, serial log switch
+constexpr uint8_t kConfigSchemaVersion = 5;  // v5: SC8-CO2-5K fixed frame (co2Protocol/checksumVariant removed)
 
 // Threading: internally locked for applyTlv/serializeTlv/save/factoryReset/setMountQuat
 // (callable from BLE and App tasks; the mutex is created in begin(), before which the

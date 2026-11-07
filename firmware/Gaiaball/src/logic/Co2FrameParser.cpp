@@ -4,17 +4,6 @@ namespace gaia {
 
 static const uint8_t kHdr0 = 0x42, kHdr1 = 0x4D;
 
-void Co2FrameParser::configure(const Co2FrameSpec &spec) {
-  spec_ = spec;
-  if (spec_.frameLen < 4) spec_.frameLen = 4;
-  if (spec_.frameLen > kMaxFrame) spec_.frameLen = kMaxFrame;
-  if (spec_.checksumVariant > 1) spec_.checksumVariant = 0;
-  // ppm (2 bytes) must lie after the header and before the checksum byte.
-  if (spec_.ppmHiIndex < 2) spec_.ppmHiIndex = 2;
-  if (spec_.ppmHiIndex > spec_.frameLen - 3) spec_.ppmHiIndex = spec_.frameLen - 3;
-  n_ = 0;
-}
-
 void Co2FrameParser::dropFront(size_t k) {
   for (size_t i = k; i < n_; i++) buf_[i - k] = buf_[i];
   n_ -= k;
@@ -30,21 +19,20 @@ void Co2FrameParser::alignToHeader() {
   }
 }
 
+// Datasheet formula: BYTE15 = low byte of sum(BYTE0..BYTE14).
 bool Co2FrameParser::checksumOk() const {
-  size_t last = spec_.frameLen - 1;           // checksum index
-  size_t end = spec_.checksumVariant == 0 ? last - 1 : last;  // inclusive-exclusive
   uint8_t sum = 0;
-  for (size_t i = 0; i < end; i++) sum += buf_[i];
-  return sum == buf_[last];
+  for (size_t i = 0; i < kFrameLen - 1; i++) sum += buf_[i];
+  return sum == buf_[kFrameLen - 1];
 }
 
 Co2FrameParser::Result Co2FrameParser::feed(uint8_t byte) {
   buf_[n_++] = byte;
   alignToHeader();
-  if (n_ < spec_.frameLen) return Result::None;
+  if (n_ < kFrameLen) return Result::None;
 
   if (checksumOk()) {
-    ppm_ = (uint16_t)((buf_[spec_.ppmHiIndex] << 8) | buf_[spec_.ppmHiIndex + 1]);
+    ppm_ = (uint16_t)((buf_[kPpmHiIndex] << 8) | buf_[kPpmHiIndex + 1]);
     frames_++;
     n_ = 0;
     return Result::Frame;

@@ -3,8 +3,8 @@
 Target: ESP32 (esp32dev), Arduino core 2.0.17, NimBLE-Arduino 1.4.3. All code lives in
 namespace `gaia` under `Gaiaball/src/`:
 
-- `logic/` — pure, host-testable code (packets, TLV codec, filters, CO2 parser, peak
-  detector, PIN gate, S8 Modbus client, notify throttle). Covered by `pio test -e native`.
+- `logic/` — pure, host-testable code (packets, TLV codec, filters, SC8 CO2 frame
+  parser, peak detector, PIN gate, notify throttle). Covered by `pio test -e native`.
   LEDs have NO arbitration layer: each LED pin has exactly one driver
   (sound events → GPIO2, CO2 alert → GPIO4).
 - `services/` — hardware/RTOS wrappers, one per peripheral.
@@ -32,7 +32,7 @@ After `setup()` returns, `loop()` blocks in `vTaskDelay(portMAX_DELAY)`.
 | `imu` | 1 | 3 | 6144 | `vTaskDelay(2 ms)` | MPU-9250 (I2C), Madgwick fusion, gyro-bias tracker, mounting/zero state |
 | `audio` | 1 | 2 | 4096 | `i2s_read` (256 frames @ 16 kHz = 16 ms) | I2S0, PeakDetector |
 | `app` | 1 | 2 | 6144 | IMU queue (`xQueueReceive`, 20 ms timeout) | LEDs, pot ADC, virtual pulse, NVS saves, WDT |
-| `co2` | 1 | 1 | 3072 | `vTaskDelay(20 ms)` | UART1, S8 Modbus poll (2 s) or Co2FrameParser |
+| `co2` | 1 | 1 | 3072 | `vTaskDelay(20 ms)` | UART1 RX (listen-only), SC8 Co2FrameParser |
 | NimBLE host | 0 | (lib) | (lib) | BLE events | GATT, CommandGate unlock, config TLV apply |
 | Arduino `loopTask` | 1 | 1 | — | never (parked) | — |
 
@@ -110,7 +110,7 @@ CORE 0 (PRO_CPU) - radio only              CORE 1 (APP_CPU) - acquisition + app 
 └───────────────────────────────┘          │  → HP/LP biquads → RMS L/R → peak detector  │
         ▲        │                         ├─────────────────────────────────────────────┤
         │ notify │ commands                │ co2 task · prio 1 · 20 ms tick              │
-        │        ▼                         │  every 2 s: Modbus poll → parse → EMA → ppm │
+        │        ▼                         │  drain RX → SC8 frame parse → EMA → ppm    │
 ┌───────┴───────────────┐                  ├─────────────────────────────────────────────┤
 │ Site GaiaSenses       │                  │ app task · prio 2 · paced by IMU queue      │
 │ config-app (bancada)  │                  │  1 queue → ImuPacket → notify (throttle)    │

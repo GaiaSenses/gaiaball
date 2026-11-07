@@ -89,8 +89,8 @@ cross-check lives in [docs/hardware-pinout.md](docs/hardware-pinout.md).
 | I2S WS (LRCLK) | 25 | two INMP441 (L/R), 16 kHz, 32-bit stereo (board M1/M2) |
 | I2S SCK (BCLK) | 26 | |
 | I2S SD (data in) | 33 | |
-| CO2 UART RX | 16 | UART1, 9600 8N1 (Senseair S8 TXD → 16) |
-| CO2 UART TX | 17 | (GPIO17 → S8 RXD; required — the S8 is polled over Modbus) |
+| CO2 UART RX | 16 | UART1, 9600 8N1, listen-only (SC8-CO2-5K TXD → 16) |
+| CO2 UART TX | 17 | routed on the board but NOT opened: any query halts the SC8's active output until power-up |
 | Threshold potentiometer | 34 | ADC1 channel 6, 11 dB (board RV1 via R3) |
 | Sound LED | 2 | board LED D2 ("LED mic"); config TLV `0x30` (reboot to apply). Strapping pin, held LOW at boot |
 | CO2 alert LED | 4 | board LED D1 ("LED co2"); config TLV `0x31` (reboot to apply) |
@@ -129,9 +129,10 @@ config write that lands both LED functions on the same GPIO is rejected atomical
   pulse is active. Nothing else drives it.
 - CO2 LED (GPIO4): on while the real (non-stale) reading exceeds `co2AlertPpm` (default 2000).
 - Subsystem failures are reported in the diagnostics packet (config-app), not on an LED.
-- CO2 sensor: **Senseair S8** (per the KiCAD board), polled over Modbus every 2 s
-  (`FE 04 00 03 00 01 D5 C5`); TLV `0x27` selects the legacy passive 0x42 0x4D frame
-  parser instead, for bench experiments with other sensors.
+- CO2 sensor: **SC8-CO2-5K** ("YYS SC8", per the board and the user-confirmed part).
+  It streams one 16-byte `42 4D` frame per second on its own; the firmware listens
+  only (never transmits — a query would halt the stream until power-up) and resyncs
+  on the header after any byte loss.
 - A sound peak triggers the virtual CO2 pulse: after `virtualDelayMs` (1 s) the reported
   ppm becomes `virtualPeakPpm` (2100) for `virtualHoldMs` (17 s).
 
@@ -174,14 +175,22 @@ persisted only by command `0x11`. Full table with types: [`docs/protocol.md`](do
 | id | field | default |
 |---|---|---|
 | `0x01` | orientationMode (0 Quat6 relative, 1 Quat9) | 0 |
-| `0x02` | imuNotifyHz (10–60) | 50 |
+| `0x02` | imuNotifyHz (10–200; drives the MPU-9250 sample rate live) | 50 |
 | `0x03` | slerpAmount (0–100, 0 off) | 0 |
+| `0x04` | accelLpAlphaX1000 (0 off) | 0 |
 | `0x10`–`0x15` | audio: enabled, fast/slow alpha ×1000, debounceMs, potControlsThreshold, thresholdFixed | 1, 250, 995, 300, 1, 100000 |
-| `0x20`–`0x26` | CO2: enabled, checksum variant, stale timeout, virtual peak/delay/hold, raw log | 1, 0, 5000, 2100, 1000, 17000, 0 |
-| `0x27` | CO2 protocol: 0 = Senseair S8 Modbus (poll), 1 = passive 0x42 0x4D frames | 0 |
+| `0x16`–`0x1A` | breath band-pass: enabled, HP Hz, HP Q×100, LP Hz, LP Q×100 (LP > HP enforced) | 1, 10, 500, 200, 500 |
+| `0x1B` | potEmaAlphaX1000 | 300 |
+| `0x20`, `0x22`–`0x26` | CO2: enabled, stale timeout, virtual peak/delay/hold, raw log | 1, 5000, 2100, 1000, 17000, 0 |
+| `0x28` | co2EmaAlphaX1000 (1000 = off) | 1000 |
 | `0x30`–`0x32` | sound LED pin, CO2 LED pin (pins distinct), co2AlertPpm | 2, 4, 2000 |
 | `0x40` | bleName (≤16 chars) | `Globo_1` |
 | `0x41` | PIN (4 ASCII digits, write-only) | `1234` |
+| `0x50` | serialLogEnabled | 0 |
+
+Reserved ids (removed, never reused): `0x21` (ex co2ChecksumVariant), `0x27`
+(ex co2Protocol) — gone since the SC8-CO2-5K datasheet fixed the frame format —
+and `0x33` (ex statusLedPin).
 
 ## Serial log
 

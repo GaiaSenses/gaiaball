@@ -374,9 +374,9 @@ footer .wrap { display: grid; gap: 6px; }
           </tr>
           <tr>
             <td>CO₂ (não relatado, descoberto na análise)</td>
-            <td>O site recebia <code>{}</code> e descartava amostras; o parser não ressincronizava; e a placa KiCAD revelou o motivo definitivo: o sensor é um Senseair S8, que só responde a consultas Modbus — o firmware legado apenas escutava, então o CO₂ real nunca foi lido.</td>
+            <td>O site recebia <code>{}</code> e descartava amostras; o parser não ressincronizava (um byte perdido o desalinhava até reiniciar) e não havia noção de leitura velha. O sensor é um <strong>SC8-CO2-5K</strong> (“YYS SC8”), que transmite sozinho 1 quadro/s — e <em>emudece até religar</em> se receber qualquer consulta.</td>
             <td><div class="links"><a href="#f15">F15</a><a href="#f03">F03</a><a href="#f07">F07</a><a href="#f08">F08</a></div></td>
-            <td><span class="state">Corrigido no v2 · sensor identificado pela placa</span></td>
+            <td><span class="state">Corrigido no v2 · sensor confirmado (datasheet SC8)</span></td>
           </tr>
         </tbody>
       </table>
@@ -384,8 +384,8 @@ footer .wrap { display: grid; gap: 6px; }
     <div class="counts" id="sevCounts">
       <span>15 achados:</span>
       <span class="sev sev-critico">3 críticos</span>
-      <span class="sev sev-alto">7 altos</span>
-      <span class="sev sev-medio">5 médios</span>
+      <span class="sev sev-alto">6 altos</span>
+      <span class="sev sev-medio">6 médios</span>
       <span style="color:var(--muted)">· 11 deles também apontados pelo relatório inicial (relatorio.md), um em parte</span>
     </div>
   </div>
@@ -698,10 +698,10 @@ if (buffer[0] == 0x42 &amp;&amp; buffer[1] == 0x4D) {</code></pre></figure>
 <pre><code>Co2FrameParser::Result Co2FrameParser::feed(uint8_t byte) {
   buf_[n_++] = byte;
   alignToHeader();
-  if (n_ &lt; spec_.frameLen) return Result::None;
+  if (n_ &lt; kFrameLen) return Result::None;
 
   if (checksumOk()) {
-    ppm_ = (uint16_t)((buf_[spec_.ppmHiIndex] &lt;&lt; 8) | buf_[spec_.ppmHiIndex + 1]);
+    ppm_ = (uint16_t)((buf_[kPpmHiIndex] &lt;&lt; 8) | buf_[kPpmHiIndex + 1]);
     frames_++;
     n_ = 0;
     return Result::Frame;
@@ -723,36 +723,35 @@ if (buffer[0] == 0x42 &amp;&amp; buffer[1] == 0x4D) {</code></pre></figure>
 </details>
 
 <!-- F08 -->
-<details class="finding" id="f08" data-sev="alto" data-sym="co2">
+<details class="finding" id="f08" data-sev="medio" data-sym="co2">
   <summary>
     <span class="fid">F08</span>
-    <span class="ftitle"><h3>Checksum do CO₂ provavelmente nunca validou</h3></span>
+    <span class="ftitle"><h3>Checksum do CO₂: hipótese de bug refutada pelo datasheet do SC8</h3></span>
     <span class="caret">▶</span>
-    <span class="fchips"><span class="sev sev-alto">Alto</span><span class="sym">CO₂</span><span class="discovery">descoberta desta análise · superada por F15</span></span>
+    <span class="fchips"><span class="sev sev-medio">Médio</span><span class="sym">CO₂</span><span class="discovery">hipótese desta análise · refutada pelo datasheet (07/11)</span></span>
   </summary>
   <div class="fbody">
-    <p>O código legado soma os bytes 0 a 14 e compara com o byte 15. A referência pública para frames <code>0x42 0x4D</code> de 16 bytes (engenharia reversa publicada em spezifisch.codeberg.page, 23/08/2022) define o checksum como a soma dos bytes 0 a 13. Se o byte 14 do frame não for zero, a conta legada nunca bate, nenhum frame é aceito e <code>co2_real</code> nunca é atualizado: o site receberia sempre o valor inicial de 600 ppm ou o pico virtual de 2100 ppm. O modelo informado (“SC8”) não tinha datasheet público confirmado, por isso o v2 tratou o layout do frame como configurável.</p>
-    <p><strong>Atualização (placa KiCAD):</strong> o desenho da placa identifica o sensor como um <strong>Senseair S8</strong> (<a href="#f15">F15</a>) — que <em>nunca transmite sozinho</em>. Para o sensor real da placa, portanto, a questão do checksum é secundária: nenhum frame jamais chegaria. O parser passivo e as duas variantes de checksum ficam no firmware como modo alternativo (TLV <code>0x27</code> = 1) para experimentos com outros sensores.</p>
+    <p>Esta análise levantou a hipótese de que o checksum do CO₂ legado nunca validava: o código soma os bytes 0 a 14 e compara com o byte 15, enquanto uma referência de engenharia reversa para frames <code>0x42 0x4D</code> (spezifisch.codeberg.page, 23/08/2022) define a soma sobre os bytes 0 a 13. Com o sensor identificado (<a href="#f15">F15</a>) e o datasheet oficial em mãos (SC8-CO2-5K V1.4, seção 8), a dúvida se resolve a favor do legado: <strong>BYTE15 = soma dos bytes 0..14 — exatamente a conta do firmware original</strong>. (As duas fórmulas coincidem no exemplo do fabricante porque o byte 14 ali é 0.) O quadro-exemplo do datasheet virou vetor de teste do v2: <code>42 4D 0C 51 09 A2 07 2B 01 35 05 81 20 08 00 AD</code> → 1835 ppm.</p>
+    <p>O que continua errado no legado é o que o <a href="#f03">F03</a> descreve: janela fixa de 16 bytes sem ressincronização (um único byte perdido desalinha o fluxo para sempre) e nenhuma marcação de leitura velha.</p>
     <div class="ba">
-      <figure class="before"><figcaption>Antes · firmware-original.ino L344–348</figcaption>
+      <figure class="before"><figcaption>Antes · firmware-original.ino L344–348 (conta certa, segundo o datasheet)</figcaption>
 <pre><code>uint8_t soma = 0;
 for (int i = 0; i &lt; 15; i++) soma += buffer[i];
 
 if (soma == buffer[15]) {
   co2_real = (buffer[6] &lt;&lt; 8) | buffer[7];</code></pre></figure>
-      <figure class="after"><figcaption>Depois · src/logic/Co2FrameParser.cpp (checksumOk)</figcaption>
-<pre><code>bool Co2FrameParser::checksumOk() const {
-  size_t last = spec_.frameLen - 1;           // checksum index
-  size_t end = spec_.checksumVariant == 0 ? last - 1 : last;  // inclusive-exclusive
+      <figure class="after"><figcaption>Depois · src/logic/Co2FrameParser.cpp (checksumOk, fórmula do datasheet)</figcaption>
+<pre><code>// Datasheet formula: BYTE15 = low byte of sum(BYTE0..BYTE14).
+bool Co2FrameParser::checksumOk() const {
   uint8_t sum = 0;
-  for (size_t i = 0; i &lt; end; i++) sum += buf_[i];
-  return sum == buf_[last];
+  for (size_t i = 0; i &lt; kFrameLen - 1; i++) sum += buf_[i];
+  return sum == buf_[kFrameLen - 1];
 }</code></pre></figure>
     </div>
     <dl class="facts">
-      <dt>Correção</dt><dd>Variante do checksum configurável (TLV <code>0x21</code>: 0 = bytes 0..13, padrão; 1 = bytes 0..14, legado). Novo modo de log de frames brutos (TLV <code>0x26</code>) imprime os bytes recebidos em hexadecimal no serial, para confirmar o protocolo real do sensor na bancada.</dd>
-      <dt>Impacto esperado</dt><dd>Se a hipótese se confirmar, o globo passa a reagir ao CO₂ real pela primeira vez. Se não, basta trocar a variante sem regravar o firmware.</dd>
-      <dt>Validar na bancada</dt><dd>Ligar o log bruto, capturar alguns frames, somar os bytes à mão e ver qual variante bate. Conferir também se o ppm está nos bytes 6–7 comparando com o valor que o próprio sensor indica, se houver display ou referência.</dd>
+      <dt>Correção</dt><dd>Formato do quadro <strong>fixado pelo datasheet</strong> — as variantes configuráveis saíram do firmware (registros TLV <code>0x21</code> e <code>0x27</code> removidos e reservados). O log de frames brutos (TLV <code>0x26</code>) permanece para capturas na bancada.</dd>
+      <dt>Impacto esperado</dt><dd>Nenhum no comportamento: a conta legada já estava certa. O ganho é de confiança — o parser v2 valida contra o vetor oficial do fabricante (teste nativo <code>test_datasheet_golden_frame</code>).</dd>
+      <dt>Validar na bancada</dt><dd>Com o log bruto ligado, somar os bytes 0..14 de um quadro real módulo 256 e conferir contra o byte 15; o ppm fica nos bytes 6–7 (big-endian).</dd>
     </dl>
   </div>
 </details>
@@ -995,32 +994,32 @@ if (!haveOutput_ || fabsf(mapped - output_) &gt;= 0.02f * output_) {</code></pre
 <details class="finding" id="f15" data-sev="critico" data-sym="co2">
   <summary>
     <span class="fid">F15</span>
-    <span class="ftitle"><h3>O sensor de CO₂ é um Senseair S8 — e ele nunca transmite sozinho</h3></span>
+    <span class="ftitle"><h3>O sensor de CO₂ é um SC8-CO2-5K — e o firmware jamais pode falar com ele</h3></span>
     <span class="caret">▶</span>
-    <span class="fchips"><span class="sev sev-critico">Crítico</span><span class="sym">CO₂</span><span class="discovery">descoberta desta análise · confirmada pela placa KiCAD</span></span>
+    <span class="fchips"><span class="sev sev-critico">Crítico</span><span class="sym">CO₂</span><span class="discovery">identificação corrigida em 07/11 · usuário + datasheet</span></span>
   </summary>
   <div class="fbody">
-    <p>O desenho da placa (<code>Globo_GaiaSenses_PCi.kicad_sch</code>) identifica o sensor: valor <code>Sensor_CO2_SC8</code> com footprint <code>Senseair_S8_Down</code> — um <strong>Senseair S8</strong> (alimentação 5 V, UART nos pads 6/7, exatamente como no netlist: S8 TXD → GPIO16, GPIO17 → S8 RXD). O S8 é um <em>escravo Modbus RTU</em>: ele <strong>só responde quando consultado</strong>. O firmware legado apenas escutava a UART esperando frames espontâneos <code>42 4D</code> — desse sensor, <strong>nunca chegaria um único byte</strong>. O CO₂ real nunca funcionou, independentemente do bug de checksum (<a href="#f08">F08</a>).</p>
+    <p>O sensor da placa é um <strong>SC8-CO2-5K</strong> (Shenzhen Shenchen Technology, vendido como “YYS SC8”) — confirmado pelo usuário e pelo datasheet oficial (SC8-CO2-5K V1.4). O valor <code>Sensor_CO2_SC8</code> do esquemático é <em>literal</em>; o nome do footprint, <code>Senseair_S8_Down</code>, induziu uma revisão anterior desta análise a identificar a peça como um Senseair S8 (o SC8 usa o mesmo padrão de pads do S8). A diferença não é cosmética: o SC8 <strong>transmite sozinho</strong> um quadro de 16 bytes <code>42 4D …</code> por segundo (NDIR, 400–5000 ppm, UART 9600 8N1, aquecimento de 8–25 s) e, segundo o datasheet, <strong>qualquer consulta recebida desliga a saída ativa até o próximo ciclo de energia</strong>. Ou seja: o firmware legado escutava os quadros certos (seus defeitos reais estão em <a href="#f03">F03</a> e <a href="#f08">F08</a>), e o cliente Modbus que o v2 havia adotado — além de inútil para este sensor — <em>emudeceria o SC8 a cada consulta</em>, até alguém religar a bola.</p>
     <div class="ba">
-      <figure class="before"><figcaption>Antes · firmware-original.ino L338–343 (escuta passiva)</figcaption>
-<pre><code>if (co2Serial.available() &lt; 16) return;   // espera frames espontâneos
-
-uint8_t buffer[16];
-co2Serial.readBytes(buffer, 16);
-
-if (buffer[0] == 0x42 &amp;&amp; buffer[1] == 0x4D) {   // que um S8 nunca envia</code></pre></figure>
-      <figure class="after"><figcaption>Depois · src/logic/S8Modbus.cpp + Co2Service (consulta ativa)</figcaption>
-<pre><code>// Poll every 2 s: "any sensor" addr 0xFE, fn 0x04, input register IR4 (CO2).
+      <figure class="before"><figcaption>Antes (v2 provisório) · consulta Modbus — removida: emudeceria o SC8</figcaption>
+<pre><code>// Poll every 2 s — WRONG for this hardware: the SC8 datasheet says any
+// received query stops the active output until the next power cycle.
 const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
                                       0x00, 0x01, 0xD5, 0xC5};
-// Response: FE 04 02 &lt;ppm hi&gt; &lt;ppm lo&gt; &lt;crc lo&gt; &lt;crc hi&gt;
-// CRC-16/Modbus verified against the Senseair SE-0119 doc example.</code></pre></figure>
+uart().write(kS8ReadCo2Request, kS8RequestLen);</code></pre></figure>
+      <figure class="after"><figcaption>Depois · src/services/Co2Service.cpp (UART somente-RX, escuta pura)</figcaption>
+<pre><code>// The board also routes GPIO17 to the sensor's RX pad, but the SC8 stops its
+// active output permanently (until power-up) after receiving any query, so the
+// UART is opened WITHOUT a TX pin: the firmware physically cannot talk back.
+constexpr int kPinTxNone = -1;
+...
+uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
     </div>
     <dl class="facts">
-      <dt>Evidência</dt><dd>Netlist do KiCAD (pads do footprint <code>Senseair_S8_Down</code>) + documento oficial Senseair “Modbus on Senseair S8” (SE-0119): função 0x04, registrador IR4 = ppm de CO₂, CRC-16 Modbus. O CRC da implementação foi validado contra o exemplo do documento (<code>FE 04 00 00 00 04 → E5 C6</code>) e virou vetor de teste.</dd>
-      <dt>Correção</dt><dd>Novo cliente Modbus (<code>S8Modbus</code>, 8 testes nativos): o firmware consulta o sensor a cada 2 s e valida a resposta por CRC. O modo passivo legado continua disponível (TLV <code>0x27</code> = 1) para outros sensores. O log bruto (TLV <code>0x26</code>) funciona nos dois modos.</dd>
-      <dt>Impacto esperado</dt><dd>O CO₂ real passa a existir de fato: leitura válida em até ~10 s após o boot, acompanhando o ambiente. O LED de CO₂ (D1) e o disparo de composição no site passam a responder ao sensor, não só ao pulso virtual.</dd>
-      <dt>Validar na bancada</dt><dd>Seção 5 do <code>docs/bench-validation.md</code>: leitura válida e plausível (~420 ppm ao ar livre; sobe ao respirar perto); com log bruto, respostas <code>FE 04 02 …</code> a cada 2 s.</dd>
+      <dt>Evidência</dt><dd>Confirmação do usuário (07/11) + datasheet oficial “SC8-CO2-5K” V1.4 (Shenzhen Shenchen Technology), seção 8: saída ativa 1 quadro/s, ppm nos bytes 6–7, checksum = soma dos bytes 0..14, e “after a query, the active output stops and needs to be powered up again before recovery”. O quadro-exemplo do fabricante (<code>42 4D 0C 51 09 A2 07 2B 01 35 05 81 20 08 00 AD</code> → 1835 ppm) virou vetor de teste nativo.</dd>
+      <dt>Correção</dt><dd>Cliente Modbus <strong>removido por inteiro</strong> (<code>S8Modbus</code> e seus 8 testes); o parser de quadros <code>42 4D</code> ficou fixo no formato do datasheet, com ressincronização byte a byte, e a UART1 abre <strong>sem pino TX</strong> — o firmware fisicamente não transmite. Registros TLV <code>0x21</code>/<code>0x27</code> removidos (reservados); schema NVS v5. O log bruto (TLV <code>0x26</code>) permanece.</dd>
+      <dt>Impacto esperado</dt><dd>O CO₂ real passa a existir de fato: leitura válida em ~30 s após o boot (aquecimento do SC8), acompanhando o ambiente — sem risco de emudecer o sensor. O LED de CO₂ (D1) e o disparo de composição no site passam a responder ao sensor, não só ao pulso virtual.</dd>
+      <dt>Validar na bancada</dt><dd>Seção 5 do <code>docs/bench-validation.md</code>: quadros <code>42 4D …</code> a ~1 quadro/s no log bruto, leitura plausível (~420 ppm ao ar livre; sobe ao respirar perto). Se o sensor estiver mudo (ex.: recebeu consulta de um firmware antigo), religar a alimentação.</dd>
     </dl>
   </div>
 </details>
@@ -1037,7 +1036,7 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
       <span class="eyebrow">3 · Arquitetura v2</span>
       <h2>Uma tarefa por subsistema, rádio isolado no outro núcleo</h2>
       <p>O ESP32 tem dois núcleos. No v2, o núcleo 0 fica só com a pilha BLE (NimBLE); aquisição e lógica rodam no núcleo 1, cada uma na sua tarefa. A IMU tem a maior prioridade e entrega amostras por fila; a tarefa <em>app</em> decide o que enviar e quando.</p>
-      <p><strong>Hardware confirmado (06/11):</strong> a IMU é um módulo <strong>GY-91 (MPU-9250 + magnetômetro AK8963 + barômetro BMP280)</strong> — confirmado pelo usuário e coerente com o símbolo <code>MPU-9250-IMU</code> do esquemático KiCAD. O firmware foi portado: driver MPU-9250 em nível de registrador + <strong>fusão Madgwick no ESP32</strong> (com rastreador de viés do giroscópio que só adapta em repouso), <em>sem DMP e sem FIFO</em>. Os cartões F02/F05/F09 descrevem o firmware legado da era ICM-20948; suas proteções de FIFO foram substituídas por leitura direta de registradores. O BMP280 do módulo (I²C 0x76) fica disponível para uso futuro. Observação de evidência: uma bola que se movia sob o firmware legado (driver ICM-20948) carregava um ICM-20948 — com um GY-91, aquele firmware jamais leu a IMU.</p>
+      <p><strong>Hardware confirmado (06/11):</strong> a IMU é um módulo <strong>GY-91 (MPU-9250 + magnetômetro AK8963 + barômetro BMP280)</strong> — confirmado pelo usuário e coerente com o símbolo <code>MPU-9250-IMU</code> do esquemático KiCAD. O firmware foi portado: driver MPU-9250 em nível de registrador + <strong>fusão Madgwick no ESP32</strong> (com rastreador de viés do giroscópio que só adapta em repouso), <em>sem DMP e sem FIFO</em>. Os cartões F02/F05/F09 descrevem o firmware legado da era ICM-20948; suas proteções de FIFO foram substituídas por leitura direta de registradores. O BMP280 do módulo (I²C 0x76) fica disponível para uso futuro. <strong>Confirmado também (07/11): o sensor de CO₂ é um SC8-CO2-5K</strong> (“YYS SC8”), que transmite sozinho — o firmware escuta a UART1 sem pino TX (<a href="#f15">F15</a>). Observação de evidência: uma bola que se movia sob o firmware legado (driver ICM-20948) carregava um ICM-20948 — com um GY-91, aquele firmware jamais leu a IMU.</p>
     </div>
 
     <div class="diagram" role="img" aria-label="Diagrama de tarefas do firmware v2: sensores alimentam as tarefas imu, audio e co2 no núcleo 1, que passam dados para a tarefa app; a app notifica a pilha NimBLE no núcleo 0, que fala com o site e o config-app.">
@@ -1062,7 +1061,7 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
         <text x="32" y="232" class="d-s">I²S 16 kHz estéreo</text>
         <rect x="20" y="320" width="130" height="56" rx="5" class="d-hw"/>
         <text x="32" y="344" class="d-t">Sensor CO₂</text>
-        <text x="32" y="362" class="d-s">UART1 9600 · Senseair S8 (Modbus)</text>
+        <text x="32" y="362" class="d-s">UART1 9600 · SC8-CO2-5K (1 quadro/s)</text>
 
         <!-- tasks -->
         <rect x="200" y="60" width="170" height="56" rx="5" class="d-task"/>
@@ -1165,8 +1164,8 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
         <!-- co2 task -->
         <rect x="40" y="406" width="300" height="110" rx="6" class="d-task"/>
         <text x="54" y="430" class="d-t">co2 · prio 1 · tick 20 ms</text>
-        <text x="54" y="452" class="d-m">1 a cada 2 s: envia FE 04 00 03 00 01 D5 C5</text>
-        <text x="54" y="470" class="d-m">2 parser da resposta (CRC-16 Modbus)</text>
+        <text x="54" y="452" class="d-m">1 drena RX (somente escuta; sem pino TX)</text>
+        <text x="54" y="470" class="d-m">2 parser 42 4D com ressincronização</text>
         <text x="54" y="488" class="d-m">3 EMA opcional → ppm atômico</text>
 
         <!-- app task -->
@@ -1225,7 +1224,7 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
           <tr><td><code>imu</code></td><td>1</td><td>3</td><td>a cada 2 ms</td><td>MPU-9250 (I²C), viés do gyro, fusão Madgwick, montagem e zero</td></tr>
           <tr><td><code>audio</code></td><td>1</td><td>2</td><td><code>i2s_read</code> (256 quadros = 16 ms)</td><td>I²S, decimador 2 kHz, biquads HP/LP, RMS, detector de pico</td></tr>
           <tr><td><code>app</code></td><td>1</td><td>2</td><td>fila da IMU (timeout 20 ms)</td><td>envio BLE (IMU/CO₂/sensores/áudio/diag), LEDs, potenciômetro, pulso de CO₂ virtual, NVS, watchdog</td></tr>
-          <tr><td><code>co2</code></td><td>1</td><td>1</td><td>a cada 20 ms</td><td>UART1, consulta Modbus do S8, parser, EMA</td></tr>
+          <tr><td><code>co2</code></td><td>1</td><td>1</td><td>a cada 20 ms</td><td>UART1 RX (somente escuta), parser de quadros do SC8, EMA</td></tr>
           <tr><td>NimBLE host</td><td>0</td><td>(biblioteca)</td><td>eventos BLE</td><td>GATT, desbloqueio por PIN, aplicação da config</td></tr>
         </tbody>
       </table>
@@ -1385,7 +1384,7 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
         <option value="LEDs">LEDs</option>
         <option value="Identidade">Identidade</option>
       </select>
-      <input id="paramSearch" type="search" placeholder="Buscar parâmetro (ex.: checksum, Hz, 0x21)" aria-label="Buscar parâmetro">
+      <input id="paramSearch" type="search" placeholder="Buscar parâmetro (ex.: EMA, Hz, 0x28)" aria-label="Buscar parâmetro">
     </div>
     <div class="scroll">
       <table class="param-table" id="paramTable">
@@ -1401,8 +1400,7 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
           <tr><td>Áudio</td><td>0x13</td><td><code>debounceMs</code></td><td>0–65535</td><td>300</td><td>Intervalo mínimo entre dois picos de som.</td></tr>
           <tr><td>Áudio</td><td>0x14</td><td><code>potControlsThreshold</code></td><td>0 / ≠0</td><td>1</td><td>1 = potenciômetro define o limiar; 0 = usa o limiar fixo (0x15).</td></tr>
           <tr><td>Áudio</td><td>0x15</td><td><code>thresholdFixed</code></td><td>u32</td><td>100000</td><td>Limiar de pico quando o potenciômetro está desligado.</td></tr>
-          <tr><td>CO₂</td><td>0x20</td><td><code>co2Enabled</code></td><td>0 / ≠0</td><td>1</td><td>Liga ou desliga a leitura do sensor.</td></tr>
-          <tr><td>CO₂</td><td>0x21</td><td><code>co2ChecksumVariant</code></td><td>0 ou 1</td><td>0</td><td>Só no modo passivo: 0 = soma dos bytes 0..13 (referência); 1 = 0..14 (legado). Ver <a href="#f08">F08</a>.</td></tr>
+          <tr><td>CO₂</td><td>0x20</td><td><code>co2Enabled</code></td><td>0 / ≠0</td><td>1</td><td>Liga ou desliga a leitura do sensor (SC8-CO2-5K, quadro fixo do datasheet; ids 0x21/0x27 reservados).</td></tr>
           <tr><td>CO₂</td><td>0x22</td><td><code>co2StaleTimeoutMs</code></td><td>0–65535</td><td>5000</td><td>Tempo sem frame válido até a leitura ser marcada como velha.</td></tr>
           <tr><td>CO₂</td><td>0x23</td><td><code>virtualPeakPpm</code></td><td>0–65535</td><td>2100</td><td>Valor de CO₂ virtual enviado após um pico de som.</td></tr>
           <tr><td>CO₂</td><td>0x24</td><td><code>virtualDelayMs</code></td><td>0–65535</td><td>1000</td><td>Atraso entre o pico de som e o início do CO₂ virtual.</td></tr>
@@ -1414,7 +1412,6 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
           <tr><td>Áudio</td><td>0x19</td><td><code>audioLpHz</code></td><td>1–7000</td><td>200</td><td>Corte do low-pass. Deve ficar acima do high-pass (validado no estado final).</td></tr>
           <tr><td>Áudio</td><td>0x1A</td><td><code>audioLpQX100</code></td><td>10–2000</td><td>500</td><td>Q ×100 do low-pass.</td></tr>
           <tr><td>Áudio</td><td>0x1B</td><td><code>potEmaAlphaX1000</code></td><td>1–1000</td><td>300</td><td>Suavização (EMA) do potenciômetro.</td></tr>
-          <tr><td>CO₂</td><td>0x27</td><td><code>co2Protocol</code></td><td>0 ou 1</td><td>0</td><td>0 = Senseair S8 via Modbus (consulta a cada 2 s — o sensor da placa, ver <a href="#f15">F15</a>); 1 = frames passivos <code>42 4D</code>.</td></tr>
           <tr><td>CO₂</td><td>0x28</td><td><code>co2EmaAlphaX1000</code></td><td>1–1000</td><td>1000</td><td>Suavização (EMA) das leituras aceitas (1000 = desligada).</td></tr>
           <tr><td>LEDs</td><td>0x30</td><td><code>soundLedPin</code></td><td>GPIO 0–33</td><td>2</td><td>Pino do LED de som (D2 na placa). Distinto do LED de CO₂. <span class="reboot">requer reinício</span></td></tr>
           <tr><td>LEDs</td><td>0x31</td><td><code>co2LedPin</code></td><td>GPIO 0–33</td><td>4</td><td>Pino do LED de alerta de CO₂ (D1 na placa). Distinto do LED de som. <span class="reboot">requer reinício</span></td></tr>
@@ -1491,7 +1488,7 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
       <li><label for="c06"><span class="n"></span><input type="checkbox" id="c06" data-key="mount"><span class="txt"><b>Calibrar montagem e zerar</b><span>Bola na posição de referência, comando <code>0x14</code> e depois <code>0x10</code> (<a href="#f10">F10</a>).</span></span></label></li>
       <li><label for="c07"><span class="n"></span><input type="checkbox" id="c07" data-key="flat"><span class="txt"><b>Giro em superfície plana × vista 3D</b><span>Uma volta física em cada eixo deve ser exatamente uma volta no modelo, no mesmo eixo. Comparar cru × filtrado.</span></span></label></li>
       <li><label for="c08"><span class="n"></span><input type="checkbox" id="c08" data-key="drift"><span class="txt"><b>Deriva em Quat6 e teste do ímã</b><span>Bola parada 5 min: anotar a deriva do yaw. Aproximar ímã ou celular: em Quat6 nada muda (<a href="#f11">F11</a>).</span></span></label></li>
-      <li><label for="c09"><span class="n"></span><input type="checkbox" id="c09" data-key="co2raw"><span class="txt"><b>Validar o Senseair S8 (Modbus)</b><span>Leitura de CO₂ válida em ~10 s após o boot e plausível (~420 ppm ao ar livre). Se ficar “stale”: ligar <code>co2RawLogMode</code> (0x26 = 1) e conferir respostas <code>FE 04 02 …</code> a cada 2 s; checar 5 V e o cruzamento TX/RX (<a href="#f15">F15</a>). Desligar o log ao final.</span></span></label></li>
+      <li><label for="c09"><span class="n"></span><input type="checkbox" id="c09" data-key="co2raw"><span class="txt"><b>Validar o SC8-CO2-5K (stream ativo)</b><span>Leitura de CO₂ válida em ~30 s após o boot (aquecimento) e plausível (~420 ppm ao ar livre). Se ficar “stale”: ligar <code>co2RawLogMode</code> (0x26 = 1) e conferir quadros <code>42 4D …</code> a ~1/s; checar 5 V e SC8 TXD → GPIO16; se o sensor emudeceu após alguma consulta, religar a alimentação (<a href="#f15">F15</a>). Desligar o log ao final.</span></span></label></li>
       <li><label for="c10"><span class="n"></span><input type="checkbox" id="c10" data-key="sound"><span class="txt"><b>Som e CO₂ virtual</b><span>Palma a ~1 m: LED pisca na hora; CO₂ virtual chega ~1 s depois e dura ~17 s. A taxa da IMU não cai durante o teste.</span></span></label></li>
       <li><label for="c11"><span class="n"></span><input type="checkbox" id="c11" data-key="dual"><span class="txt"><b>Site e config-app conectados ao mesmo tempo</b><span>O globo do site responde enquanto o config-app mede a perda; nenhum dos dois cai.</span></span></label></li>
       <li><label for="c12"><span class="n"></span><input type="checkbox" id="c12" data-key="pin"><span class="txt"><b>Bloqueio do PIN</b><span>5 PINs errados seguidos: o desbloqueio deve ser recusado por 30 s, mesmo com o PIN certo.</span></span></label></li>
@@ -1507,7 +1504,7 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
 
 <footer>
   <div class="wrap">
-    <p>Fontes: <code>firmware-original.ino</code> (legado, intocado), <code>docs/superpowers/specs/2026-11-06-gaiaball-v2-design.md</code>, <code>relatorio.md</code> (relatório inicial), <code>firmware/docs/protocol.md</code>, <code>firmware/docs/architecture.md</code>, código em <code>firmware/Gaiaball/src/</code>; projeto KiCAD da placa <code>Globo_GaiaSenses_PCi</code> (esquemático + 2 revisões de PCB, netlist extraído em 06/11/2026 — ver <code>firmware/docs/hardware-pinout.md</code>); documento Senseair “Modbus on Senseair S8” (SE-0119); confirmação do usuário (06/11): IMU = módulo GY-91 (MPU-9250 + BMP280).</p>
+    <p>Fontes: <code>firmware-original.ino</code> (legado, intocado), <code>docs/superpowers/specs/2026-11-06-gaiaball-v2-design.md</code>, <code>relatorio.md</code> (relatório inicial), <code>firmware/docs/protocol.md</code>, <code>firmware/docs/architecture.md</code>, código em <code>firmware/Gaiaball/src/</code>; projeto KiCAD da placa <code>Globo_GaiaSenses_PCi</code> (esquemático + 2 revisões de PCB, netlist extraído em 06/11/2026 — ver <code>firmware/docs/hardware-pinout.md</code>); datasheet oficial “SC8-CO2-5K” V1.4 (Shenzhen Shenchen Technology); confirmações do usuário: IMU = módulo GY-91 (MPU-9250 + BMP280) em 06/11 e CO₂ = SC8-CO2-5K (“YYS SC8”) em 07/11.</p>
     <p>Números de linha referem-se a <code>firmware-original.ino</code>. Nenhuma medição de hardware foi feita; os valores de desempenho são metas.</p>
   </div>
 </footer>

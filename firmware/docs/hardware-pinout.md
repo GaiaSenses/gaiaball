@@ -14,9 +14,9 @@ assignments on 2026-11-06.
 | U1 | IMU: **GY-91 module** (MPU-9250 + AK8963 + BMP280) on the 10-pin header (KiCAD symbol `Sensor_Motion:MPU-9250-IMU`) | SCL | `/GPIO22` | **22** |
 | U1 | | SDA | `/GPIO21` | **21** |
 | U1 | | EDA, ECL, AD0, INT, **NCS**, FSYNC | unconnected | — |
-| U2 | CO2 sensor — value `Sensor_CO2_SC8`, footprint `Senseair_S8_Down` (**Senseair S8**) | +5V / GND | `+5V` / `GND` | — |
-| U2 | | UART_RXD (pad 6) | `/GPIO17` | **17** (ESP TX → S8 RX) |
-| U2 | | UART_TXD (pad 7) | `/GPIO16` | **16** (S8 TX → ESP RX) |
+| U2 | CO2 sensor — **SC8-CO2-5K** (Shenzhen Shenchen Technology, "YYS SC8"; KiCAD value `Sensor_CO2_SC8`, drawn on an S8-style footprint `Senseair_S8_Down`) | +5V / GND | `+5V` / `GND` | — |
+| U2 | | UART_RXD (pad 6) | `/GPIO17` | **17** (wired, but UNUSED: the firmware never transmits — see finding 3) |
+| U2 | | UART_TXD (pad 7) | `/GPIO16` | **16** (SC8 TX → ESP RX) |
 | U2 | | PWM, NC pins | unconnected | — |
 | M1 | INMP441 microphone (L/R = 3V3 → right) | SD / WS / SCK | `/GPIO33` `/GPIO25` `/GPIO26` | **33 / 25 / 26** |
 | M2 | INMP441 microphone (L/R = GND → left) | same I2S bus as M1 | same nets | same |
@@ -50,11 +50,19 @@ not be used).
    GY-91, the legacy firmware never read its IMU at all. Wiring is I2C only (NCS
    unconnected, SCL/SDA on 22/21, AD0/SDO low → 0x68); the GY-91's BMP280 barometer
    sits at 0x76 and is not read by the firmware (available for future use).
-3. **The CO2 sensor is a Senseair S8** (the schematic's "SC8"). The S8 is a Modbus
-   RTU slave: it **never transmits unsolicited**, so the legacy firmware's passive
-   frame listener could never receive anything from it — real CO2 never updated,
-   independently of the checksum bug. The v2 firmware polls it every 2 s
-   (`co2Protocol = 0`, TLV 0x27); see `docs/protocol.md` for the frames.
+3. **The CO2 sensor is an SC8-CO2-5K** (Shenzhen Shenchen Technology, often listed
+   as "YYS SC8") — user-confirmed hardware. The schematic's `Sensor_CO2_SC8` value is
+   literal; the `Senseair_S8_Down` footprint name misled an earlier revision of this
+   document into identifying the part as a Senseair S8 (the SC8 shares the S8's
+   land pattern). The SC8 **actively streams** one 16-byte `42 4D` frame per second
+   (9600 8N1), and its datasheet (SC8-CO2-5K V1.4) states that receiving ANY query
+   stops the active output until the next power cycle — so the v2 firmware opens
+   UART1 **listen-only** (no TX pin, even though GPIO17 is routed on the board) and
+   parses the stream with a resyncing byte parser; see `docs/protocol.md`. The
+   legacy firmware's frame layout and checksum (sum of bytes 0..14 == byte 15)
+   match this datasheet; its real CO2 defects were the fixed-window read with no
+   resynchronization (one lost byte desynced it until reboot) and the absence of
+   staleness tracking.
 4. **GPIO34 is input-only** (fine for the potentiometer ADC; never assign it as an
    LED pin — the firmware's GPIO whitelist already excludes it).
 5. Both mics share one I2S bus in stereo (M1 right, M2 left), matching the firmware's

@@ -27,15 +27,17 @@ constexpr Reg kRegs[] = {
     {0x17, Kind::U16, 1, 7000},       {0x18, Kind::U16, 10, 2000},
     {0x19, Kind::U16, 1, 7000},       {0x1A, Kind::U16, 10, 2000},
     {0x1B, Kind::U16, 1, 1000},       {0x20, Kind::U8, 0, kAnyU8},
-    {0x21, Kind::U8, 0, kAnyU8},      {0x22, Kind::U16, 0, kAnyU16},
+    {0x22, Kind::U16, 0, kAnyU16},
     {0x23, Kind::U16, 0, kAnyU16},    {0x24, Kind::U16, 0, kAnyU16},
     {0x25, Kind::U16, 0, kAnyU16},    {0x26, Kind::U8, 0, kAnyU8},
-    {0x27, Kind::U8, 0, 1},           {0x28, Kind::U16, 1, 1000},
+    {0x28, Kind::U16, 1, 1000},
     {0x30, Kind::U8, 0, kMaxGpio},    {0x31, Kind::U8, 0, kMaxGpio},
     {0x32, Kind::U16, 0, kAnyU16},    {0x40, Kind::Str, 0, 0},
     {kTlvPin, Kind::Pin, 0, 0},       {0x50, Kind::U8, 0, 1},
 };
-// 0x33 is reserved (was statusLedPin; removed with the legacy LED command).
+// Reserved ids (never reuse): 0x21 (was co2ChecksumVariant) and 0x27 (was co2Protocol)
+// — both removed once the SC8-CO2-5K datasheet fixed the frame format; 0x33 (was
+// statusLedPin; removed with the legacy LED command).
 
 const Reg *findReg(uint8_t id) {
   for (const Reg &r : kRegs)
@@ -63,13 +65,11 @@ void *numField(GaiaConfig &c, uint8_t id) {
     case 0x1A: return &c.audioLpQX100;
     case 0x1B: return &c.potEmaAlphaX1000;
     case 0x20: return &c.co2Enabled;
-    case 0x21: return &c.co2ChecksumVariant;
     case 0x22: return &c.co2StaleTimeoutMs;
     case 0x23: return &c.virtualPeakPpm;
     case 0x24: return &c.virtualDelayMs;
     case 0x25: return &c.virtualHoldMs;
     case 0x26: return &c.co2RawLogMode;
-    case 0x27: return &c.co2Protocol;
     case 0x28: return &c.co2EmaAlphaX1000;
     case 0x30: return &c.soundLedPin;
     case 0x31: return &c.co2LedPin;

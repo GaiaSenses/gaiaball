@@ -37,11 +37,9 @@ struct GaiaConfig {
   // Potentiometer EMA alpha x1000 (300 = legacy 0.3).
   uint16_t potEmaAlphaX1000 = 300;
 
+  // Sensor: SC8-CO2-5K ("YYS SC8"), active 0x42 0x4D stream, 1 frame/s. The frame
+  // layout is fixed by the datasheet (see Co2FrameParser.h) — nothing to configure.
   uint8_t co2Enabled = 1;
-  // 0 = Senseair S8 Modbus polling (the sensor on the KiCAD board: it never transmits
-  //     unsolicited, so it MUST be polled); 1 = passive 0x42 0x4D frame stream (legacy).
-  uint8_t co2Protocol = 0;
-  uint8_t co2ChecksumVariant = 0;  // passive mode only: 0=sum bytes 0..13; 1=legacy sum 0..14
   uint16_t co2StaleTimeoutMs = 5000;
   uint16_t virtualPeakPpm = 2100;
   uint16_t virtualDelayMs = 1000;

@@ -7,26 +7,26 @@
 
 #include "../logic/Co2FrameParser.h"
 #include "../logic/GaiaConfig.h"
-#include "../logic/S8Modbus.h"
 #include "../logic/VirtualCo2Pulse.h"
 #include "ConfigStore.h"
 
 namespace gaia {
 
-// CO2 sensor reader (UART1: RX 16, TX 17, 9600 8N1, legacy pins) plus the virtual pulse.
+// CO2 sensor reader (UART1: RX 16, 9600 8N1) plus the virtual pulse.
 //
-// Protocols (TLV 0x27): 0 = Senseair S8 Modbus polling (default — the sensor on the
-// KiCAD board never transmits unsolicited; a read request is sent every poll period
-// and the 7-byte response is parsed); 1 = passive 0x42 0x4D frame stream (legacy).
+// Sensor: SC8-CO2-5K (Shenzhen Shenchen Technology / "YYS SC8"), NDIR, 400-5000 ppm.
+// It actively outputs one 16-byte 0x42 0x4D frame per second after power-on, and
+// sending it ANY query stops that output until the next power cycle — so this
+// service is strictly listen-only: the UART is opened without a TX pin and nothing
+// is ever written to the sensor.
 //
 // Threading:
-//  - A "co2" task (core 1, prio 1) drains the UART and owns both parsers.
+//  - A "co2" task (core 1, prio 1) drains the UART and owns the parser.
 //  - realPpm()/stale()/frameCount()/errorCount() are safe from any task.
 //  - The virtual pulse is NOT thread-safe: triggerVirtualPulse(), virtualActive() and
 //    reportedPpm() must all be called from ONE task (the App task).
-//  - applyConfig() is safe from any task: the parser spec is handed to the co2 task
-//    through atomics + a dirty flag; pulse parameters are picked up lazily by the
-//    pulse-owning (App) task on its next trigger/active/reported call.
+//  - applyConfig() is safe from any task: pulse parameters are picked up lazily by
+//    the pulse-owning (App) task on its next trigger/active/reported call.
 //  - begin() succeeds even if no sensor is attached; co2Ok() == !stale().
 class Co2Service {
  public:
@@ -60,16 +60,12 @@ class Co2Service {
   bool began_ = false;
 
   Co2FrameParser parser_;    // co2-task-only after startTask()
-  S8ResponseParser s8_;      // co2-task-only after startTask()
   float emaPpm_ = 0.0f;      // co2-task-only
   bool emaSeeded_ = false;   // co2-task-only
   VirtualCo2Pulse pulse_;    // App-task-only
 
   // Config handoff.
   std::atomic<uint16_t> emaAlphaX1000_{1000};  // 1000 = no smoothing
-  std::atomic<uint8_t> protocol_{0};
-  std::atomic<uint8_t> frameLen_{16}, ppmHiIndex_{6}, checksumVariant_{0};
-  std::atomic<bool> parserDirty_{true};
   std::atomic<uint16_t> peakPpm_{2100};
   std::atomic<uint32_t> delayMs_{1000}, holdMs_{17000};
   std::atomic<bool> pulseDirty_{true};

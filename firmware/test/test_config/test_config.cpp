@@ -28,7 +28,6 @@ void test_defaults_match_legacy() {
   TEST_ASSERT_EQUAL(17000, c.virtualHoldMs);
   TEST_ASSERT_EQUAL(2, c.soundLedPin);
   TEST_ASSERT_EQUAL(4, c.co2LedPin);
-  TEST_ASSERT_EQUAL(0, c.co2Protocol);  // S8 Modbus: the board's actual sensor
   TEST_ASSERT_EQUAL(0, c.accelLpAlphaX1000);   // accel filter off = legacy raw
   TEST_ASSERT_EQUAL(1, c.audioBpfEnabled);     // breath band-pass on by default
   TEST_ASSERT_EQUAL(10, c.audioHpHz);
@@ -148,16 +147,15 @@ void test_accept_valid_output_gpio() {
   TEST_ASSERT_EQUAL(13, c.soundLedPin);
 }
 
-void test_co2_protocol_register() {
-  GaiaConfig c;
-  const uint8_t buf[] = {0x27, 1, 1};
-  TEST_ASSERT_TRUE(tlvApply(c, buf, sizeof buf));
-  TEST_ASSERT_EQUAL(1, c.co2Protocol);
-  const uint8_t proto2[] = {0x27, 1, 2};
-  assertRejected(proto2, sizeof proto2);
-  // 0x33 (ex-statusLedPin) is reserved: unknown id, rejected.
-  const uint8_t reserved[] = {0x33, 1, 18};
-  assertRejected(reserved, sizeof reserved);
+void test_reserved_ids_rejected() {
+  // Reserved (removed) registers are unknown ids and must be rejected atomically:
+  // 0x21 (ex-co2ChecksumVariant), 0x27 (ex-co2Protocol), 0x33 (ex-statusLedPin).
+  const uint8_t exChecksum[] = {0x21, 1, 1};
+  assertRejected(exChecksum, sizeof exChecksum);
+  const uint8_t exProtocol[] = {0x27, 1, 0};
+  assertRejected(exProtocol, sizeof exProtocol);
+  const uint8_t exStatusLed[] = {0x33, 1, 18};
+  assertRejected(exStatusLed, sizeof exStatusLed);
 }
 
 void test_filter_registers_and_band_rule() {
@@ -255,7 +253,7 @@ int main(int, char **) {
   RUN_TEST(test_reject_out_of_range);
   RUN_TEST(test_accept_boundaries_and_pin_write);
   RUN_TEST(test_accept_valid_output_gpio);
-  RUN_TEST(test_co2_protocol_register);
+  RUN_TEST(test_reserved_ids_rejected);
   RUN_TEST(test_filter_registers_and_band_rule);
   RUN_TEST(test_reject_duplicate_led_pins);
   RUN_TEST(test_shorter_name_clears_old_tail);

@@ -7,7 +7,7 @@
 //  - Microphones (INMP441): dBFS per AES17 (0 dBFS = full-scale sine, FS = 2^23 for
 //    the 32-bit I2S config with >>8). Estimated dB SPL = dBFS + 120, from the
 //    INMP441 sensitivity spec (-26 dBFS @ 94 dB SPL, 1 kHz).
-//  - CO2 (Senseair S8): ppm.
+//  - CO2 (SC8-CO2-5K): ppm.
 //  - Potentiometer: % of full travel (raw 0..4095).
 import Plotly from 'plotly.js-dist-min';
 
@@ -59,7 +59,7 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
       <div class="sensor-card" data-el="card-acc"><h3>Aceleração (IMU)</h3><p data-el="v-acc">—</p><small>g · fundo de escala ±4 g (8192 LSB/g)</small></div>
       <div class="sensor-card" data-el="card-micl"><h3>Microfone esquerdo</h3><p data-el="v-micl">—</p><small>dBFS (AES17) · dB SPL estimado (INMP441: −26 dBFS @ 94 dB SPL)</small></div>
       <div class="sensor-card" data-el="card-micr"><h3>Microfone direito</h3><p data-el="v-micr">—</p><small>dBFS (AES17) · dB SPL estimado</small></div>
-      <div class="sensor-card" data-el="card-co2"><h3>CO₂ (Senseair S8)</h3><p data-el="v-co2">—</p><small>ppm · partes por milhão</small></div>
+      <div class="sensor-card" data-el="card-co2"><h3>CO₂ (SC8)</h3><p data-el="v-co2">—</p><small>ppm · partes por milhão</small></div>
       <div class="sensor-card" data-el="card-pot"><h3>Potenciômetro</h3><p data-el="v-pot">—</p><small>% do curso (ADC 0–4095) · limiar em contagens RMS</small></div>
     </div>
     <h3 class="spec-title">Espectro do áudio (cru) — ajuste do passa-banda</h3>

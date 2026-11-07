@@ -19,13 +19,13 @@ export const TLV = {
   audioLpQX100: 0x1a,
   potEmaAlphaX1000: 0x1b,
   co2Enabled: 0x20,
-  co2ChecksumVariant: 0x21,
+  // 0x21 is reserved (was co2ChecksumVariant; the SC8-CO2-5K frame format is fixed).
   co2StaleTimeoutMs: 0x22,
   virtualPeakPpm: 0x23,
   virtualDelayMs: 0x24,
   virtualHoldMs: 0x25,
   co2RawLogMode: 0x26,
-  co2Protocol: 0x27, // 0 = Senseair S8 Modbus polling (board default), 1 = passive 0x42 0x4D frames
+  // 0x27 is reserved (was co2Protocol; the SC8-CO2-5K streams actively, nothing to pick).
   co2EmaAlphaX1000: 0x28, // 1000 = no smoothing
   soundLedPin: 0x30,
   co2LedPin: 0x31,
@@ -72,13 +72,11 @@ const SPECS: Record<number, Spec> = {
   [TLV.potControlsThreshold]: U8,
   [TLV.thresholdFixed]: U32,
   [TLV.co2Enabled]: U8,
-  [TLV.co2ChecksumVariant]: U8,
   [TLV.co2StaleTimeoutMs]: U16,
   [TLV.virtualPeakPpm]: U16,
   [TLV.virtualDelayMs]: U16,
   [TLV.virtualHoldMs]: U16,
   [TLV.co2RawLogMode]: U8,
-  [TLV.co2Protocol]: U8,
   [TLV.soundLedPin]: U8,
   [TLV.co2LedPin]: U8,
   [TLV.co2AlertPpm]: U16,

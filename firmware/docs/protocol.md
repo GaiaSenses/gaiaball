@@ -180,13 +180,11 @@ A sequence of records `id u8 | len u8 | value (len bytes, little-endian)`.
 | 0x1A | u16 | 500 | audioLpQX100 (10–2000) |
 | 0x1B | u16 | 300 | potEmaAlphaX1000 — potentiometer EMA (300 = legacy 0.3) |
 | 0x20 | u8 | 1 | co2Enabled |
-| 0x21 | u8 | 0 | co2ChecksumVariant — passive mode only (0=sum bytes 0..13; 1=legacy sum 0..14) |
 | 0x22 | u16 | 5000 | co2StaleTimeoutMs |
 | 0x23 | u16 | 2100 | virtualPeakPpm |
 | 0x24 | u16 | 1000 | virtualDelayMs |
 | 0x25 | u16 | 17000 | virtualHoldMs |
 | 0x26 | u8 | 0 | co2RawLogMode |
-| 0x27 | u8 | 0 | co2Protocol (0=Senseair S8 Modbus polling — the board's sensor; 1=passive 0x42 0x4D frames) |
 | 0x28 | u16 | 1000 | co2EmaAlphaX1000 — EMA over accepted readings (1000 = off) |
 | 0x30 | u8 | 2 | soundLedPin (valid output GPIOs only; 6–11 (flash) and nonexistent pins rejected) |
 | 0x31 | u8 | 4 | co2LedPin (same validation as 0x30) |
@@ -197,25 +195,36 @@ A sequence of records `id u8 | len u8 | value (len bytes, little-endian)`.
 
 The two LED pins (0x30, 0x31) are additionally validated **as a set**: a write
 whose resulting configuration puts both LED functions on the same GPIO is rejected
-atomically (one pin = one function). Id 0x33 is reserved (was statusLedPin; removed
-with the legacy LED command).
+atomically (one pin = one function). Reserved ids, never to be reused: 0x21 (was
+co2ChecksumVariant) and 0x27 (was co2Protocol) — both removed when the SC8-CO2-5K
+datasheet fixed the frame format; 0x33 (was statusLedPin; removed with the legacy
+LED command).
 
-## CO2 sensor protocol (UART1, 9600 8N1)
+## CO2 sensor protocol (UART1, 9600 8N1, listen-only)
 
-The board's sensor is a **Senseair S8** (KiCAD value `Sensor_CO2_SC8`, footprint
-`Senseair_S8_Down`): a Modbus RTU slave that never transmits unsolicited. With
-`co2Protocol = 0` (default) the firmware polls it every 2 s:
+The board's sensor is an **SC8-CO2-5K** (Shenzhen Shenchen Technology, often listed
+as "YYS SC8"; KiCAD value `Sensor_CO2_SC8`): an NDIR sensor, 400–5000 ppm, that
+**actively outputs one frame per second** after power-on. Per its datasheet
+(SC8-CO2-5K V1.4, section 8), sending the sensor ANY query stops the active output
+until the next power cycle — so the firmware opens UART1 **without a TX pin** and
+never transmits.
 
-- Request (fixed): `FE 04 00 03 00 01 D5 C5` — "any sensor" address 0xFE, function
-  0x04 (read input registers), register IR4 (CO2 ppm), per Senseair document SE-0119.
-- Response: `FE 04 02 <ppm hi> <ppm lo> <crc lo> <crc hi>` — CRC-16/Modbus (poly
-  0xA001, init 0xFFFF) over the first 5 bytes, low byte first.
-- Golden vectors (CRC verified against the SE-0119 example `FE 04 00 00 00 04 E5 C6`):
-  400 ppm → `FE 04 02 01 90 AC D8`; 1226 ppm → `FE 04 02 04 CA 2F B3`.
+A copy of the datasheet is kept at
+[`datasheets/SC8-CO2-5K-v1.4.pdf`](datasheets/SC8-CO2-5K-v1.4.pdf) (source: the
+OpenEnergyMonitor community upload, mirrored here because the original link may rot).
 
-`co2Protocol = 1` restores the legacy passive parser (0x42 0x4D 16-byte frames,
-checksum per 0x21) for bench experiments with streaming sensors. `co2RawLogMode`
-hex-dumps every received byte in both modes.
+Active frame (16 bytes):
+
+- `BYTE0 BYTE1` = `0x42 0x4D` (header).
+- CO2 ppm = `BYTE6`·256 + `BYTE7` (big-endian).
+- `BYTE15` = low byte of (`BYTE0` + `BYTE1` + … + `BYTE14`) — checksum.
+- Golden vector (datasheet example): `42 4D 0C 51 09 A2 07 2B 01 35 05 81 20 08 00 AD`
+  → 0x072B = **1835 ppm**.
+
+The parser is byte-at-a-time and resyncs on the `42 4D` header after any corruption
+or byte loss (the legacy firmware's CO2 path died permanently after one lost byte,
+because it read fixed 16-byte windows with no realignment). `co2RawLogMode`
+hex-dumps every received byte for bench captures.
 
 ## Euler convention (decoder side only, never on the wire)
 
