@@ -6,7 +6,7 @@ import { mountConfigPanel } from './panels/config-panel.ts';
 import { mountMetricsPanel } from './panels/metrics-panel.ts';
 import { mountSensorsPanel } from './panels/sensors-panel.ts';
 import { OrientationScene, type ViewMode } from './viz/orientation-scene.ts';
-import type { Co2Sample, ImuSample, SensorsSample } from './protocol/packets.ts';
+import type { AudioChunkSample, Co2Sample, ImuSample, SensorsSample } from './protocol/packets.ts';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
@@ -115,13 +115,39 @@ if (new URLSearchParams(location.search).get('demo')) {
       rmsR: Math.max(0, Math.round(rms(18000, 1.1))),
       threshold: 100000,
       potRaw: Math.round(2048 + 1800 * Math.sin(t * 0.15)),
-      flags: 0b111,
+      flags: 0b1111,
       audioOk: true,
       audioEnabled: true,
       potControls: true,
+      audioFiltered: true,
     };
     emit('sensors', detail);
   }, 200);
+  // Raw 2 kHz audio chunks: low hum + breath-band noise bursts every ~6 s.
+  let audioSeq = 0;
+  let audioIdx = 0;
+  setInterval(() => {
+    const samples = new Int16Array(96);
+    for (let i = 0; i < 96; i++, audioIdx++) {
+      const ts = audioIdx / 2000;
+      const breath = Math.sin(ts * 1.05) > 0.85 ? 1 : 0; // periodic "blow"
+      let v = 600 * Math.sin(2 * Math.PI * 80 * ts); // 80 Hz hum
+      v += 300 * (Math.random() - 0.5); // noise floor
+      if (breath) v += 9000 * (Math.random() - 0.5) * (1 + Math.sin(2 * Math.PI * 3 * ts)); // turbulence < ~500 Hz after ring smoothing
+      samples[i] = Math.max(-32768, Math.min(32767, Math.round(v)));
+    }
+    const detail: AudioChunkSample = {
+      seq: audioSeq++ & 0xffff,
+      tMs: Math.round(performance.now()),
+      sampleRateHz: 2000,
+      samples,
+      flags: 1,
+      bpfEnabled: true,
+      hpHz: 10,
+      lpHz: 200,
+    };
+    emit('audio', detail);
+  }, 48);
   let co2Seq = 0;
   setInterval(() => {
     const t = performance.now() / 1000;

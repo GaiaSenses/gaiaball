@@ -14,7 +14,7 @@ Service `19b10000-e8f2-537e-4f6c-d104768a1214`.
 | `19b10002-e8f2-537e-4f6c-d104768a1214` | write | commands |
 | `19b10003-e8f2-537e-4f6c-d104768a1214` | notify | CO2 packets |
 | `19b10004-e8f2-537e-4f6c-d104768a1214` | read/write | config TLV |
-| `19b10005-e8f2-537e-4f6c-d104768a1214` | notify | diagnostics (0x03, 1 Hz) and live-sensor (0x04, 5 Hz) packets |
+| `19b10005-e8f2-537e-4f6c-d104768a1214` | notify | diagnostics (0x03, 1 Hz), live-sensor (0x04, 5 Hz) and raw-audio (0x05, ~21 Hz) packets |
 
 ## Scales
 
@@ -24,8 +24,9 @@ Service `19b10000-e8f2-537e-4f6c-d104768a1214`.
 
 ## Packet type ids
 
-`0x01` ImuSample, `0x02` Co2Sample, `0x03` Diagnostics, `0x04` Sensors. The diag
-characteristic carries both 0x03 and 0x04; receivers must dispatch on the type byte.
+`0x01` ImuSample, `0x02` Co2Sample, `0x03` Diagnostics, `0x04` Sensors, `0x05`
+AudioChunk. The diag characteristic carries 0x03, 0x04 and 0x05; receivers must
+dispatch on the type byte.
 
 ## ImuPacket (23 bytes)
 
@@ -95,7 +96,8 @@ Live audio/potentiometer levels for the config-app's real-time charts.
 | 20 | 2 | u16 | potRaw |
 | 22 | 1 | u8 | flags |
 
-Flags: bit0 `audioOk`, bit1 `audioEnabled`, bit2 `potControlsThreshold`.
+Flags: bit0 `audioOk`, bit1 `audioEnabled`, bit2 `potControlsThreshold`, bit3
+`audioFiltered` (the RMS values were computed AFTER the HP/LP band-pass).
 
 Units:
 - `audioRmsL/R` and `audioThreshold` are RMS values in 24-bit sample counts. The
@@ -107,7 +109,29 @@ Units:
 - `potRaw` is the EMA-filtered 12-bit ADC reading (0..4095) of the threshold
   potentiometer; percent of travel = potRaw / 4095 × 100.
 - IMU acceleration (ImuPacket) is in raw DMP counts at ±4 g full scale:
-  g = counts / 8192.
+  g = counts / 8192. With `accelLpAlphaX1000` > 0 the published counts are
+  EMA-filtered on-device (same scale).
+
+## AudioChunkPacket (208 bytes, type 0x05, ~21 Hz, diag characteristic)
+
+Decimated RAW audio for the config-app's spectrum analyzer — **the FFT runs in the
+frontend**, the firmware only ships band-limited samples. Mono mix (L+R)/2,
+DC-removed, decimated 16 kHz -> 2 kHz by average-of-8 (crude anti-alias, adequate
+for a tuning visualizer), int16 = top 16 bits of the 24-bit samples. ~4.4 kB/s.
+Requires MTU >= 211. Sent only while the diag characteristic has a subscriber.
+
+| Offset | Size | Type | Field |
+|---|---|---|---|
+| 0 | 1 | u8 | version (1) |
+| 1 | 1 | u8 | type (0x05) |
+| 2 | 2 | u16 | seq |
+| 4 | 4 | u32 | timestampMs |
+| 8 | 2 | u16 | sampleRateHz (2000) |
+| 10 | 1 | u8 | count (96) |
+| 11 | 1 | u8 | flags (bit0 = band-pass enabled; the samples are raw regardless) |
+| 12 | 2 | u16 | hpHz (configured high-pass, echoed for the UI) |
+| 14 | 2 | u16 | lpHz (configured low-pass, echoed for the UI) |
+| 16 | 192 | i16[96] | samples (little-endian) |
 
 ## Command opcodes (characteristic `...0002`, write)
 
@@ -132,14 +156,21 @@ A sequence of records `id u8 | len u8 | value (len bytes, little-endian)`.
 | id | type | default | field |
 |---|---|---|---|
 | 0x01 | u8 | 0 | orientationMode (0=Quat6 relative, 1=Quat9) |
-| 0x02 | u8 | 50 | imuNotifyHz (10–60) |
+| 0x02 | u8 | 50 | imuNotifyHz (10–200). Also reconfigures the DMP: the gyro/accel divisor is set so the DMP runs at or just above this rate (e.g. 200 -> 225 Hz internal); the notify throttle paces the exact rate |
 | 0x03 | u8 | 0 | slerpAmount 0–100 (0=off) |
+| 0x04 | u16 | 0 | accelLpAlphaX1000 — EMA on published accel counts (0=off/raw) |
 | 0x10 | u8 | 1 | audioEnabled |
 | 0x11 | u16 | 250 | audioFastAlphaX1000 |
 | 0x12 | u16 | 995 | audioSlowAlphaX1000 |
 | 0x13 | u16 | 300 | debounceMs |
 | 0x14 | u8 | 1 | potControlsThreshold |
 | 0x15 | u32 | 100000 | thresholdFixed (used when 0x14=0) |
+| 0x16 | u8 | 1 | audioBpfEnabled — breath band-pass (HP then LP) before the RMS/peak detector |
+| 0x17 | u16 | 10 | audioHpHz (1–7000) |
+| 0x18 | u16 | 500 | audioHpQX100 (10–2000; 500 = Q 5.00. Q > 0.707 peaks ~20·log10(Q) dB at the cutoff) |
+| 0x19 | u16 | 200 | audioLpHz (1–7000; must stay > audioHpHz — validated on the final state) |
+| 0x1A | u16 | 500 | audioLpQX100 (10–2000) |
+| 0x1B | u16 | 300 | potEmaAlphaX1000 — potentiometer EMA (300 = legacy 0.3) |
 | 0x20 | u8 | 1 | co2Enabled |
 | 0x21 | u8 | 0 | co2ChecksumVariant — passive mode only (0=sum bytes 0..13; 1=legacy sum 0..14) |
 | 0x22 | u16 | 5000 | co2StaleTimeoutMs |
@@ -148,11 +179,13 @@ A sequence of records `id u8 | len u8 | value (len bytes, little-endian)`.
 | 0x25 | u16 | 17000 | virtualHoldMs |
 | 0x26 | u8 | 0 | co2RawLogMode |
 | 0x27 | u8 | 0 | co2Protocol (0=Senseair S8 Modbus polling — the board's sensor; 1=passive 0x42 0x4D frames) |
+| 0x28 | u16 | 1000 | co2EmaAlphaX1000 — EMA over accepted readings (1000 = off) |
 | 0x30 | u8 | 2 | soundLedPin (valid output GPIOs only; 6–11 (flash) and nonexistent pins rejected) |
 | 0x31 | u8 | 4 | co2LedPin (same validation as 0x30) |
 | 0x32 | u16 | 2000 | co2AlertPpm |
 | 0x40 | char[≤16] | "Globo_1" | bleName |
 | 0x41 | char[4] | "1234" | pin (write-only: never serialized/readable) |
+| 0x50 | u8 | 0 | serialLogEnabled — USB serial logging master switch (default OFF: log formatting steals CPU) |
 
 The two LED pins (0x30, 0x31) are additionally validated **as a set**: a write
 whose resulting configuration puts both LED functions on the same GPIO is rejected

@@ -60,6 +60,13 @@ potenciômetro %) e gráficos de linha com eixo X (tempo) compartilhado — úti
 por exemplo, o pico de áudio cruzando o limiar quando se bate palma, e a leitura do S8
 mudando ao respirar perto do sensor.
 
+**Ajuste do passa-banda do sopro:** com a bola conectada, sopre sobre ela olhando o
+**Espectro do áudio (cru)** no painel Sensores. As frequências excitadas pelo sopro
+sobem no gráfico; mova o **High-pass** e o **Low-pass** (Configuração › Áudio) até a
+banda cobrir o que o sopro excita e cortar o que não interessa (voz, música ambiente).
+Aplicar já grava. Teste também taxas de orientação maiores (Configuração › Orientação ›
+Taxa, até 200 Hz) observando **Taxa** e **Perda** nas métricas.
+
 O roteiro básico do app está em [`config-app/README.md`](../config-app/README.md); aqui só
 os critérios e onde olhar cada número.
 

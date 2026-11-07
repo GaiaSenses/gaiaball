@@ -61,9 +61,12 @@ class Co2Service {
 
   Co2FrameParser parser_;    // co2-task-only after startTask()
   S8ResponseParser s8_;      // co2-task-only after startTask()
+  float emaPpm_ = 0.0f;      // co2-task-only
+  bool emaSeeded_ = false;   // co2-task-only
   VirtualCo2Pulse pulse_;    // App-task-only
 
   // Config handoff.
+  std::atomic<uint16_t> emaAlphaX1000_{1000};  // 1000 = no smoothing
   std::atomic<uint8_t> protocol_{0};
   std::atomic<uint8_t> frameLen_{16}, ppmHiIndex_{6}, checksumVariant_{0};
   std::atomic<bool> parserDirty_{true};

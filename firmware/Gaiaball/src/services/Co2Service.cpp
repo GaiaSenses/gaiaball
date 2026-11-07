@@ -32,6 +32,7 @@ bool Co2Service::begin(ConfigStore &store) {
 
 void Co2Service::applyConfig(const GaiaConfig &cfg) {
   protocol_.store(cfg.co2Protocol);
+  emaAlphaX1000_.store(cfg.co2EmaAlphaX1000 == 0 ? 1 : cfg.co2EmaAlphaX1000);
   checksumVariant_.store(cfg.co2ChecksumVariant);
   parserDirty_.store(true);
   peakPpm_.store(cfg.virtualPeakPpm);
@@ -97,6 +98,17 @@ void Co2Service::taskLoop() {
           ppm = parser_.ppm();
         }
         if (gotFrame) {
+          // Optional EMA (TLV 0x28; 1000 = off). Seeds on the first reading.
+          const uint16_t aX1000 = emaAlphaX1000_.load();
+          if (aX1000 >= 1000) {
+            emaPpm_ = (float)ppm;
+            emaSeeded_ = true;
+          } else {
+            if (!emaSeeded_) emaPpm_ = (float)ppm;
+            else emaPpm_ += (aX1000 / 1000.0f) * ((float)ppm - emaPpm_);
+            emaSeeded_ = true;
+            ppm = (uint16_t)lroundf(emaPpm_);
+          }
           realPpm_.store(ppm);
           lastFrameMs_.store(millis());
           haveFrame_.store(true);

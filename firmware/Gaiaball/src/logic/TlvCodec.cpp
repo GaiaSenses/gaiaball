@@ -18,17 +18,22 @@ constexpr size_t kNameMax = 16;
 constexpr size_t kPinLen = 4;
 
 constexpr Reg kRegs[] = {
-    {0x01, Kind::U8, 0, kAnyU8},      {0x02, Kind::U8, 10, 60},
-    {0x03, Kind::U8, 0, 100},         {0x10, Kind::U8, 0, kAnyU8},
+    {0x01, Kind::U8, 0, kAnyU8},      {0x02, Kind::U8, 10, 200},
+    {0x03, Kind::U8, 0, 100},         {0x04, Kind::U16, 0, 1000},
+    {0x10, Kind::U8, 0, kAnyU8},
     {0x11, Kind::U16, 1, 1000},       {0x12, Kind::U16, 1, 1000},
     {0x13, Kind::U16, 0, kAnyU16},    {0x14, Kind::U8, 0, kAnyU8},
-    {0x15, Kind::U32, 0, kAnyU32},    {0x20, Kind::U8, 0, kAnyU8},
+    {0x15, Kind::U32, 0, kAnyU32},    {0x16, Kind::U8, 0, 1},
+    {0x17, Kind::U16, 1, 7000},       {0x18, Kind::U16, 10, 2000},
+    {0x19, Kind::U16, 1, 7000},       {0x1A, Kind::U16, 10, 2000},
+    {0x1B, Kind::U16, 1, 1000},       {0x20, Kind::U8, 0, kAnyU8},
     {0x21, Kind::U8, 0, kAnyU8},      {0x22, Kind::U16, 0, kAnyU16},
     {0x23, Kind::U16, 0, kAnyU16},    {0x24, Kind::U16, 0, kAnyU16},
     {0x25, Kind::U16, 0, kAnyU16},    {0x26, Kind::U8, 0, kAnyU8},
-    {0x27, Kind::U8, 0, 1},           {0x30, Kind::U8, 0, kMaxGpio},
-    {0x31, Kind::U8, 0, kMaxGpio},    {0x32, Kind::U16, 0, kAnyU16},
-    {0x40, Kind::Str, 0, 0},          {kTlvPin, Kind::Pin, 0, 0},
+    {0x27, Kind::U8, 0, 1},           {0x28, Kind::U16, 1, 1000},
+    {0x30, Kind::U8, 0, kMaxGpio},    {0x31, Kind::U8, 0, kMaxGpio},
+    {0x32, Kind::U16, 0, kAnyU16},    {0x40, Kind::Str, 0, 0},
+    {kTlvPin, Kind::Pin, 0, 0},       {0x50, Kind::U8, 0, 1},
 };
 // 0x33 is reserved (was statusLedPin; removed with the legacy LED command).
 
@@ -44,12 +49,19 @@ void *numField(GaiaConfig &c, uint8_t id) {
     case 0x01: return &c.orientationMode;
     case 0x02: return &c.imuNotifyHz;
     case 0x03: return &c.slerpAmount;
+    case 0x04: return &c.accelLpAlphaX1000;
     case 0x10: return &c.audioEnabled;
     case 0x11: return &c.audioFastAlphaX1000;
     case 0x12: return &c.audioSlowAlphaX1000;
     case 0x13: return &c.debounceMs;
     case 0x14: return &c.potControlsThreshold;
     case 0x15: return &c.thresholdFixed;
+    case 0x16: return &c.audioBpfEnabled;
+    case 0x17: return &c.audioHpHz;
+    case 0x18: return &c.audioHpQX100;
+    case 0x19: return &c.audioLpHz;
+    case 0x1A: return &c.audioLpQX100;
+    case 0x1B: return &c.potEmaAlphaX1000;
     case 0x20: return &c.co2Enabled;
     case 0x21: return &c.co2ChecksumVariant;
     case 0x22: return &c.co2StaleTimeoutMs;
@@ -58,9 +70,11 @@ void *numField(GaiaConfig &c, uint8_t id) {
     case 0x25: return &c.virtualHoldMs;
     case 0x26: return &c.co2RawLogMode;
     case 0x27: return &c.co2Protocol;
+    case 0x28: return &c.co2EmaAlphaX1000;
     case 0x30: return &c.soundLedPin;
     case 0x31: return &c.co2LedPin;
     case 0x32: return &c.co2AlertPpm;
+    case 0x50: return &c.serialLogEnabled;
     default: return nullptr;
   }
 }
@@ -152,10 +166,11 @@ size_t tlvSerialize(const GaiaConfig &cfg, uint8_t *out, size_t cap) {
 
 bool tlvApply(GaiaConfig &cfg, const uint8_t *data, size_t len) {
   if (len != 0 && data == nullptr) return false;
-  // Pass 1: validate everything; cfg untouched. LED pins are also validated as a
-  // SET: the resulting config must keep the sound and CO2 LEDs on distinct GPIOs
-  // (one pin = one function; sharing is a board-level design error, not a feature).
+  // Pass 1: validate everything; cfg untouched. Two cross-field rules are checked on
+  // the RESULTING state: (a) the sound and CO2 LEDs must sit on distinct GPIOs (one
+  // pin = one function); (b) the audio band-pass must be a real band (lpHz > hpHz).
   uint8_t ledPins[2] = {cfg.soundLedPin, cfg.co2LedPin};
+  uint16_t hpHz = cfg.audioHpHz, lpHz = cfg.audioLpHz;
   for (size_t pos = 0; pos < len;) {
     if (len - pos < 2) return false;
     const Reg *r = findReg(data[pos]);
@@ -164,9 +179,12 @@ bool tlvApply(GaiaConfig &cfg, const uint8_t *data, size_t len) {
     if (!validValue(*r, data + pos + 2, vlen)) return false;
     if (r->id == 0x30) ledPins[0] = data[pos + 2];
     if (r->id == 0x31) ledPins[1] = data[pos + 2];
+    if (r->id == 0x17) hpHz = (uint16_t)readLe(data + pos + 2, 2);
+    if (r->id == 0x19) lpHz = (uint16_t)readLe(data + pos + 2, 2);
     pos += 2 + vlen;
   }
   if (ledPins[0] == ledPins[1]) return false;
+  if (lpHz <= hpHz) return false;
   // Pass 2: commit (cannot fail).
   for (size_t pos = 0; pos < len;) {
     const Reg *r = findReg(data[pos]);

@@ -13,6 +13,8 @@ declare module 'plotly.js-dist-min' {
       indices: number[],
       maxPoints?: number,
     ): Promise<unknown>;
+    restyle(el: HTMLElement, update: Record<string, unknown>, indices?: number[]): Promise<unknown>;
+    relayout(el: HTMLElement, update: Record<string, unknown>): Promise<unknown>;
     purge(el: HTMLElement): void;
   }
   const Plotly: PlotlyStatic;

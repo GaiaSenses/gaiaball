@@ -8,7 +8,8 @@ namespace gaia {
 
 // Threshold potentiometer on GPIO34 (ADC1_CHANNEL_6, 12-bit, 11 dB). No own task:
 // the App task calls poll() at ~10 Hz and reads threshold(); both on that one task,
-// so no locking. Raw is EMA-filtered (alpha 0.3) and mapped linearly to
+// so no locking. Raw is EMA-filtered (alpha = potEmaAlphaX1000/1000, TLV 0x1B,
+// default 0.3) and mapped linearly to
 // [kThresholdMin, kThresholdMax]; the output only moves when the new mapped value
 // differs from the current output by >= 2 %.
 // With potControlsThreshold == 0, threshold() returns config.thresholdFixed.

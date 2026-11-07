@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeCo2Packet, decodeDiagPacket, decodeImuPacket, decodeSensorsPacket, rmsToDbfs } from './packets';
+import { decodeAudioChunkPacket, decodeCo2Packet, decodeDiagPacket, decodeImuPacket, decodeSensorsPacket, rmsToDbfs } from './packets';
 import { TLV, VALID_OUTPUT_GPIOS, buildCommand, decodeTlv, encodeTlv } from './tlv';
 
 const hex = (s: string) => new DataView(new Uint8Array(s.trim().split(/\s+/).map((b) => parseInt(b, 16))).buffer);
@@ -43,6 +43,23 @@ describe('golden decode', () => {
     // A diag packet is NOT a sensors packet and vice versa (same characteristic).
     expect(decodeSensorsPacket(hex(DIAG))).toBeNull();
     expect(decodeDiagPacket(hex(SENSORS))).toBeNull();
+  });
+
+  it('AudioChunk', () => {
+    // 208-byte packet: header + hp/lp echo + 96 int16 samples (first = -2, second = 513).
+    const head = '01 05 2A 00 10 27 00 00 D0 07 60 01 0A 00 C8 00';
+    const body = 'FE FF 01 02 ' + '00 00 '.repeat(94);
+    const dv = hex(head + ' ' + body);
+    expect(dv.byteLength).toBe(208);
+    const s = decodeAudioChunkPacket(dv)!;
+    expect(s).toMatchObject({ seq: 42, tMs: 10000, sampleRateHz: 2000, hpHz: 10, lpHz: 200 });
+    expect(s.bpfEnabled).toBe(true);
+    expect(s.samples.length).toBe(96);
+    expect(s.samples[0]).toBe(-2);
+    expect(s.samples[1]).toBe(513);
+    expect(s.samples[95]).toBe(0);
+    // Wrong type on the same characteristic -> null.
+    expect(decodeAudioChunkPacket(hex(SENSORS))).toBeNull();
   });
 
   it('rmsToDbfs: AES17 reference points', () => {
@@ -91,7 +108,7 @@ describe('invalid input returns null', () => {
 
 describe('TLV', () => {
   it('registry ids', () => {
-    expect(Object.keys(TLV)).toHaveLength(22);
+    expect(Object.keys(TLV)).toHaveLength(31);
     expect(TLV.orientationMode).toBe(0x01);
     expect(TLV.imuNotifyHz).toBe(0x02);
     expect(TLV.slerpAmount).toBe(0x03);

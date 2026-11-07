@@ -9,7 +9,6 @@ namespace gaia {
 void PotService::begin(const GaiaConfig &cfg) {
   adc1_config_width(ADC_WIDTH_BIT_12);
   adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_DB_11);  // GPIO34
-  ema_.setAlpha(0.3f);
   applyConfig(cfg);
   poll(0);  // seed so threshold() is valid immediately
 }
@@ -17,6 +16,8 @@ void PotService::begin(const GaiaConfig &cfg) {
 void PotService::applyConfig(const GaiaConfig &cfg) {
   potControls_ = cfg.potControlsThreshold != 0;
   fixed_ = (float)cfg.thresholdFixed;
+  const uint16_t a = cfg.potEmaAlphaX1000 == 0 ? 1 : cfg.potEmaAlphaX1000;
+  ema_.setAlpha((a > 1000 ? 1000 : a) / 1000.0f);
 }
 
 void PotService::poll(uint32_t /*nowMs*/) {

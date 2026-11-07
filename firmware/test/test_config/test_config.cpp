@@ -29,6 +29,15 @@ void test_defaults_match_legacy() {
   TEST_ASSERT_EQUAL(2, c.soundLedPin);
   TEST_ASSERT_EQUAL(4, c.co2LedPin);
   TEST_ASSERT_EQUAL(0, c.co2Protocol);  // S8 Modbus: the board's actual sensor
+  TEST_ASSERT_EQUAL(0, c.accelLpAlphaX1000);   // accel filter off = legacy raw
+  TEST_ASSERT_EQUAL(1, c.audioBpfEnabled);     // breath band-pass on by default
+  TEST_ASSERT_EQUAL(10, c.audioHpHz);
+  TEST_ASSERT_EQUAL(500, c.audioHpQX100);      // Q = 5.00 (requested "high Q")
+  TEST_ASSERT_EQUAL(200, c.audioLpHz);
+  TEST_ASSERT_EQUAL(500, c.audioLpQX100);
+  TEST_ASSERT_EQUAL(300, c.potEmaAlphaX1000);  // legacy 0.3
+  TEST_ASSERT_EQUAL(1000, c.co2EmaAlphaX1000); // 1000 = no smoothing (legacy)
+  TEST_ASSERT_EQUAL(0, c.serialLogEnabled);    // serial log OFF by default
   TEST_ASSERT_EQUAL_STRING("Globo_1", c.bleName);
   TEST_ASSERT_EQUAL_STRING("1234", c.pin);
 }
@@ -96,8 +105,6 @@ void test_reject_truncated() {
 void test_reject_out_of_range() {
   const uint8_t hz9[] = {0x02, 1, 9};
   assertRejected(hz9, sizeof hz9);
-  const uint8_t hz61[] = {0x02, 1, 61};
-  assertRejected(hz61, sizeof hz61);
   const uint8_t slerp101[] = {0x03, 1, 101};
   assertRejected(slerp101, sizeof slerp101);
   const uint8_t fast0[] = {0x11, 2, 0, 0};
@@ -151,6 +158,39 @@ void test_co2_protocol_register() {
   // 0x33 (ex-statusLedPin) is reserved: unknown id, rejected.
   const uint8_t reserved[] = {0x33, 1, 18};
   assertRejected(reserved, sizeof reserved);
+}
+
+void test_filter_registers_and_band_rule() {
+  GaiaConfig c;
+  const uint8_t buf[] = {0x04, 2, 0x2C, 0x01,   // accelLpAlphaX1000 = 300
+                         0x16, 1, 0,            // band-pass off
+                         0x17, 2, 30, 0,        // hp 30 Hz
+                         0x18, 2, 0x47, 0x00,   // hp Q 0.71
+                         0x19, 2, 0xF4, 0x01,   // lp 500 Hz
+                         0x1A, 2, 0x47, 0x00,   // lp Q 0.71
+                         0x1B, 2, 0x64, 0x00,   // pot alpha 100
+                         0x28, 2, 0xF4, 0x01,   // co2 ema 500
+                         0x50, 1, 1,            // serial log on
+                         0x02, 1, 200};         // imu rate 200 Hz
+  TEST_ASSERT_TRUE(tlvApply(c, buf, sizeof buf));
+  TEST_ASSERT_EQUAL(300, c.accelLpAlphaX1000);
+  TEST_ASSERT_EQUAL(0, c.audioBpfEnabled);
+  TEST_ASSERT_EQUAL(30, c.audioHpHz);
+  TEST_ASSERT_EQUAL(500, c.audioLpHz);
+  TEST_ASSERT_EQUAL(100, c.potEmaAlphaX1000);
+  TEST_ASSERT_EQUAL(500, c.co2EmaAlphaX1000);
+  TEST_ASSERT_EQUAL(1, c.serialLogEnabled);
+  TEST_ASSERT_EQUAL(200, c.imuNotifyHz);
+  // Band rule on the FINAL state: lp must stay above hp, whether the collision
+  // comes in one write or against the stored value.
+  const uint8_t inverted[] = {0x17, 2, 0xF4, 0x01, 0x19, 2, 100, 0};  // hp 500 > lp 100
+  assertRejected(inverted, sizeof inverted);
+  const uint8_t hpOverStoredLp[] = {0x17, 2, 0xC8, 0};  // hp 200 == default lp 200
+  assertRejected(hpOverStoredLp, sizeof hpOverStoredLp);
+  const uint8_t rate201[] = {0x02, 1, 201};  // above the 200 Hz cap
+  assertRejected(rate201, sizeof rate201);
+  const uint8_t rate9[] = {0x02, 1, 9};
+  assertRejected(rate9, sizeof rate9);
 }
 
 void test_reject_duplicate_led_pins() {
@@ -216,6 +256,7 @@ int main(int, char **) {
   RUN_TEST(test_accept_boundaries_and_pin_write);
   RUN_TEST(test_accept_valid_output_gpio);
   RUN_TEST(test_co2_protocol_register);
+  RUN_TEST(test_filter_registers_and_band_rule);
   RUN_TEST(test_reject_duplicate_led_pins);
   RUN_TEST(test_shorter_name_clears_old_tail);
   RUN_TEST(test_serialize_cap_too_small);

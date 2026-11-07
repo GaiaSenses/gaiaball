@@ -12,16 +12,20 @@
 import Plotly from 'plotly.js-dist-min';
 
 import type { GaiaballClient } from '../ble/gaiaball-client.ts';
+import { computeSpectrum } from '../metrics/fft.ts';
 import { quatToEulerLegacy } from '../protocol/euler.ts';
 import {
   ACCEL_LSB_PER_G,
   rmsToDbfs,
+  type AudioChunkSample,
   type Co2Sample,
   type ImuSample,
   type SensorsSample,
 } from '../protocol/packets.ts';
 
 const TICK_MS = 100; // chart sampling period (10 Hz)
+const FFT_SIZE = 512; // 256 ms window at 2 kHz -> 3.9 Hz bins
+const FFT_MS = 250; // spectrum refresh period
 const WINDOW_S = 120; // visible history
 const MAX_POINTS = Math.ceil((WINDOW_S * 1000) / TICK_MS);
 /** INMP441 sensitivity: -26 dBFS @ 94 dB SPL -> SPL ~= dBFS + 120 (1 kHz, estimate). */
@@ -58,6 +62,9 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
       <div class="sensor-card" data-el="card-co2"><h3>CO₂ (Senseair S8)</h3><p data-el="v-co2">—</p><small>ppm · partes por milhão</small></div>
       <div class="sensor-card" data-el="card-pot"><h3>Potenciômetro</h3><p data-el="v-pot">—</p><small>% do curso (ADC 0–4095) · limiar em contagens RMS</small></div>
     </div>
+    <h3 class="spec-title">Espectro do áudio (cru) — ajuste do passa-banda</h3>
+    <p class="msg">FFT de 512 pontos calculado aqui no navegador sobre o fluxo bruto de 2 kHz vindo da bola (janela de 256 ms, bins de ~3,9 Hz). Sopre na bola e observe quais frequências sobem; as linhas tracejadas marcam os cortes HP/LP configurados.</p>
+    <div data-el="spectrum" class="sensor-chart sensor-spectrum" role="img" aria-label="Espectro de frequências do áudio"></div>
     <div data-el="chart" class="sensor-chart" role="img" aria-label="Gráficos de linha dos sensores no tempo"></div>
     <p class="msg">Janela de ${WINDOW_S} s, amostrada a ${1000 / TICK_MS} Hz. Todos os gráficos compartilham o eixo X (tempo, s). Arraste para dar zoom; duplo clique restaura.</p>`;
 
@@ -66,6 +73,66 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
 
   const latest: Latest = { imu: null, sensors: null, co2: null };
   const t0 = performance.now();
+
+  // --- spectrum (frontend FFT over the raw 2 kHz stream) ----------------------
+  const specEl = q<HTMLDivElement>('[data-el=spectrum]');
+  const audioRing: number[] = [];
+  let lastChunk: AudioChunkSample | null = null;
+  let specShapesKey = '';
+  client.addEventListener('audio', (ev) => {
+    const c = (ev as CustomEvent<AudioChunkSample>).detail;
+    lastChunk = c;
+    for (const v of c.samples) audioRing.push(v);
+    if (audioRing.length > FFT_SIZE * 2) audioRing.splice(0, audioRing.length - FFT_SIZE * 2);
+  });
+  void Plotly.newPlot(
+    specEl,
+    [{
+      name: 'espectro (dBFS)',
+      x: [] as number[],
+      y: [] as number[],
+      mode: 'lines',
+      line: { color: '#facc15', width: 1.5 },
+      hovertemplate: '%{x:.0f} Hz · %{y:.1f} dBFS<extra></extra>',
+    }],
+    {
+      height: 260,
+      margin: { l: 56, r: 8, t: 8, b: 40 },
+      paper_bgcolor: 'rgba(0,0,0,0)',
+      plot_bgcolor: 'rgba(0,0,0,0)',
+      font: { color: '#aab2bf', size: 11 },
+      showlegend: false,
+      xaxis: { ...{ gridcolor: '#2a2e35', zerolinecolor: '#2a2e35', color: '#aab2bf' }, title: { text: 'frequência (Hz)' }, range: [0, 1000] },
+      yaxis: { ...{ gridcolor: '#2a2e35', zerolinecolor: '#2a2e35', color: '#aab2bf' }, title: { text: 'nível (dBFS)' }, range: [-120, 0] },
+    },
+    { responsive: true, displaylogo: false },
+  );
+  const refreshSpectrum = (): void => {
+    if (!lastChunk || audioRing.length < FFT_SIZE) return;
+    const sp = computeSpectrum(audioRing.slice(-FFT_SIZE), FFT_SIZE, lastChunk.sampleRateHz || 2000);
+    void Plotly.restyle(specEl, { x: [Array.from(sp.freqsHz)], y: [Array.from(sp.dbfs)] }, [0]);
+    // Dashed cutoff markers follow the configured band (echoed in every chunk).
+    const key = `${lastChunk.hpHz}|${lastChunk.lpHz}|${lastChunk.bpfEnabled}`;
+    if (key !== specShapesKey) {
+      specShapesKey = key;
+      const mark = (hz: number) => ({
+        type: 'line', x0: hz, x1: hz, y0: -120, y1: 0,
+        line: { color: '#9ca3af', width: 1, dash: 'dot' },
+      });
+      void Plotly.relayout(specEl, {
+        shapes: lastChunk.bpfEnabled ? [mark(lastChunk.hpHz), mark(lastChunk.lpHz)] : [],
+        annotations: lastChunk.bpfEnabled
+          ? [
+              { x: lastChunk.hpHz, y: -4, text: `HP ${lastChunk.hpHz} Hz`, showarrow: false, font: { size: 10, color: '#9ca3af' }, xanchor: 'left' },
+              { x: lastChunk.lpHz, y: -12, text: `LP ${lastChunk.lpHz} Hz`, showarrow: false, font: { size: 10, color: '#9ca3af' }, xanchor: 'left' },
+            ]
+          : [],
+      });
+    }
+  };
+  const specTimer = setInterval(() => {
+    if (!document.hidden) refreshSpectrum();
+  }, FFT_MS);
 
   // --- chart ----------------------------------------------------------------
   const line = (name: string, color: string, axis: number, dash?: string) => ({
@@ -146,7 +213,9 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
     if (sensors) {
       const dbL = rmsToDbfs(sensors.rmsL);
       const dbR = rmsToDbfs(sensors.rmsR);
-      const audioNote = !sensors.audioOk ? ' · falha de I²S' : !sensors.audioEnabled ? ' · desativado' : '';
+      const audioNote =
+        (!sensors.audioOk ? ' · falha de I²S' : !sensors.audioEnabled ? ' · desativado' : '') +
+        (sensors.audioFiltered ? ' · RMS filtrado (HP/LP)' : ' · RMS cru');
       q('[data-el=v-micl]').textContent = `${fmt(dbL)} dBFS ≈ ${fmt(dbL + DBFS_TO_SPL, 0)} dB SPL${audioNote}`;
       q('[data-el=v-micr]').textContent = `${fmt(dbR)} dBFS ≈ ${fmt(dbR + DBFS_TO_SPL, 0)} dB SPL${audioNote}`;
       const potPct = (sensors.potRaw / 4095) * 100;
@@ -195,6 +264,8 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
   }, TICK_MS);
   window.addEventListener('pagehide', () => {
     clearInterval(timer);
+    clearInterval(specTimer);
     Plotly.purge(chartEl);
+    Plotly.purge(specEl);
   });
 }

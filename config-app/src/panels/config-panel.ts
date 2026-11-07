@@ -19,8 +19,10 @@ interface Group { title: string; fields: Field[] }
 const GROUPS: Group[] = [
   { title: 'Orientação', fields: [
     { id: TLV.orientationMode, label: 'Modo', kind: 'select', options: [[0, 'Quat6 (relativo)'], [1, 'Quat9 (absoluto)']] },
-    { id: TLV.imuNotifyHz, label: 'Taxa (Hz)', kind: 'number', min: 10, max: 60 },
-    { id: TLV.slerpAmount, label: 'Suavização', kind: 'range', min: 0, max: 100 },
+    { id: TLV.imuNotifyHz, label: 'Taxa (Hz)', kind: 'number', min: 10, max: 200,
+      hint: 'Também reconfigura o DMP da IMU para rodar nessa taxa (até 200 Hz).' },
+    { id: TLV.slerpAmount, label: 'Suavização do quaternion (slerp)', kind: 'range', min: 0, max: 100 },
+    { id: TLV.accelLpAlphaX1000, label: 'Filtro da aceleração (EMA ×1000, 0 = desligado)', kind: 'number', min: 0, max: 1000 },
   ] },
   { title: 'Áudio', fields: [
     { id: TLV.audioEnabled, label: 'Habilitado', kind: 'checkbox' },
@@ -29,6 +31,14 @@ const GROUPS: Group[] = [
     { id: TLV.debounceMs, label: 'Debounce (ms)', kind: 'number', min: 0, max: 65535 },
     { id: TLV.potControlsThreshold, label: 'Pot controla limiar', kind: 'checkbox' },
     { id: TLV.thresholdFixed, label: 'Limiar fixo', kind: 'number', min: 0, max: 4294967295 },
+    { id: TLV.potEmaAlphaX1000, label: 'Suavização do potenciômetro (EMA ×1000)', kind: 'number', min: 1, max: 1000 },
+    { id: TLV.audioBpfEnabled, label: 'Filtro passa-banda (sopro)', kind: 'checkbox',
+      hint: 'HP e LP aplicados antes do detector de pico. Ajuste os cortes olhando o espectro no painel Sensores.' },
+    { id: TLV.audioHpHz, label: 'High-pass (Hz)', kind: 'number', min: 1, max: 7000 },
+    { id: TLV.audioHpQX100, label: 'Q do high-pass (×100)', kind: 'number', min: 10, max: 2000,
+      hint: 'Q > 71 (0,71) cria pico ressonante no corte (~20·log₁₀(Q) dB); a inclinação vem da ordem do filtro, não do Q.' },
+    { id: TLV.audioLpHz, label: 'Low-pass (Hz)', kind: 'number', min: 1, max: 7000 },
+    { id: TLV.audioLpQX100, label: 'Q do low-pass (×100)', kind: 'number', min: 10, max: 2000 },
   ] },
   { title: 'CO₂', fields: [
     { id: TLV.co2Enabled, label: 'Habilitado', kind: 'checkbox' },
@@ -40,6 +50,7 @@ const GROUPS: Group[] = [
       options: [[0, 'Senseair S8 (Modbus, placa atual)'], [1, 'Frames 0x42 0x4D (passivo)']],
       hint: 'A placa KiCAD usa um Senseair S8, que só responde quando consultado (Modbus).' },
     { id: TLV.co2ChecksumVariant, label: 'Variante de checksum (modo passivo)', kind: 'select', options: [[0, 'Variante 0'], [1, 'Variante 1']] },
+    { id: TLV.co2EmaAlphaX1000, label: 'Suavização (EMA ×1000, 1000 = desligada)', kind: 'number', min: 1, max: 1000 },
     { id: TLV.co2RawLogMode, label: 'Log bruto', kind: 'checkbox' },
   ] },
   { title: 'LEDs (1 pino = 1 função; pinos distintos)', fields: [
@@ -48,6 +59,8 @@ const GROUPS: Group[] = [
     { id: TLV.co2AlertPpm, label: 'Alerta CO₂ (ppm)', kind: 'number', min: 0, max: 65535 },
   ] },
   { title: 'Sistema', fields: [
+    { id: TLV.serialLogEnabled, label: 'Log serial (USB)', kind: 'checkbox',
+      hint: 'Desligado por padrão: a formatação do log rouba CPU do caminho crítico.' },
     { id: TLV.bleName, label: 'Nome BLE (≤16)', kind: 'text' },
     { id: TLV.pin, label: 'Novo PIN (4 dígitos)', kind: 'pin', hint: 'Somente escrita; nunca é lido do dispositivo.' },
   ] },
@@ -72,7 +85,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       <button type="button" data-act="read">Ler do dispositivo</button>
       <button type="button" data-act="apply">Aplicar</button>
     </div>
-    <p class="msg" data-el="hint">Aplicar vale até reiniciar. Para gravar de forma permanente, use "Salvar no dispositivo" no painel Conexão.</p>
+    <p class="msg" data-el="hint">Aplicar envia só o que mudou, confere a aceitação e já grava de forma permanente (sobrevive a desligar/reiniciar).</p>
     <p class="msg" data-el="msg" role="status"></p>
     <form data-el="form" onsubmit="return false"></form>
     <h3>Presets</h3>
@@ -192,6 +205,18 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
     return null;
   };
 
+  /** Mirror of the firmware rule: the band-pass must be a real band (LP > HP). */
+  const BAND_DEFAULTS: ReadonlyMap<number, number> = new Map([[TLV.audioHpHz, 10], [TLV.audioLpHz, 200]]);
+  const bandError = (regs: TlvWrite[]): string | null => {
+    const ids = [...BAND_DEFAULTS.keys()];
+    if (!regs.some((r) => ids.includes(r.id))) return null;
+    const finalV = (id: number): number =>
+      Number(regs.find((r) => r.id === id)?.value ?? snapshot.get(id) ?? BAND_DEFAULTS.get(id));
+    if (finalV(TLV.audioLpHz) <= finalV(TLV.audioHpHz))
+      return 'Banda inválida: o low-pass precisa ficar acima do high-pass (LP > HP).';
+    return null;
+  };
+
   /** Collect only fields that differ from the snapshot (PIN: only when typed). */
   const collectChanged = (): { regs: TlvWrite[]; error: string | null } => {
     const regs: TlvWrite[] = [];
@@ -206,7 +231,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       if (err) return { regs: [], error: err };
       regs.push({ id: f.id, value: v as number | string });
     }
-    const dupErr = ledPinsError(regs);
+    const dupErr = ledPinsError(regs) ?? bandError(regs);
     if (dupErr) return { regs: [], error: dupErr };
     return { regs, error: null };
   };
@@ -238,9 +263,13 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       }
       populate(back);
       const pinNote = regs.some((r) => r.id === TLV.pin) ? ' Novo PIN enviado (não verificável).' : '';
-      say(rejected.length > 0
-        ? `⚠ alguns valores não foram aceitos (desbloqueou com o PIN?): ${rejected.join(', ')}.${pinNote}`
-        : `Aplicado e verificado (${regs.length} registro(s)).${pinNote}`);
+      if (rejected.length > 0) {
+        say(`⚠ alguns valores não foram aceitos (desbloqueou com o PIN?): ${rejected.join(', ')}.${pinNote}`);
+        return;
+      }
+      // Changes made through this UI are meant to survive power cycles: persist now.
+      await client.sendCommand(0x11);
+      say(`Aplicado, verificado e salvo no dispositivo (${regs.length} registro(s)).${pinNote}`);
     })().catch(fail);
   });
 

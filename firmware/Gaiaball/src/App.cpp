@@ -1,5 +1,7 @@
 #include "App.h"
 
+#include <esp_wifi.h>
+
 #include <Arduino.h>
 #include <esp_system.h>
 
@@ -41,6 +43,17 @@ void App::begin() {
   Logger::begin(LogLevel::Info);
   GB_LOGI(kTag, "Gaiaball v2 booting");
 
+  // Guarantee the Wi-Fi radio is off: nothing here initializes it, and BLE/Wi-Fi
+  // coexistence would wreck the notify pacing. ESP_ERR_WIFI_NOT_INIT is the
+  // expected (already-off) result; anything else gets stopped and torn down.
+  {
+    const esp_err_t werr = esp_wifi_stop();
+    if (werr != ESP_ERR_WIFI_NOT_INIT) {
+      esp_wifi_deinit();
+      GB_LOGW(kTag, "Wi-Fi was initialized (stop=%d); deinitialized", (int)werr);
+    }
+  }
+
   if (!store_.begin()) GB_LOGW(kTag, "NVS unavailable: running on volatile defaults");
   const GaiaConfig &cfg = store_.get();
   gate_.setPin(cfg.pin);
@@ -48,6 +61,10 @@ void App::begin() {
   co2AlertPpm_ = cfg.co2AlertPpm;
   audioEnabled_ = cfg.audioEnabled != 0;
   potControls_ = cfg.potControlsThreshold != 0;
+  audioBpf_ = cfg.audioBpfEnabled != 0;
+  audioHpHz_ = cfg.audioHpHz;
+  audioLpHz_ = cfg.audioLpHz;
+  Logger::setEnabled(cfg.serialLogEnabled != 0);  // default OFF: CPU over chatter
   imuThrottle_.setRateHz(imuNotifyHz_);
   // Runs on the caller's task (NimBLE host for BLE config writes): flag only.
   store_.setOnChange([this](const GaiaConfig &) { configDirty_.store(true); });
@@ -136,6 +153,8 @@ void App::taskLoop() {
       sendSensors(nowMs);
     }
 
+    maybeSendAudioChunk(nowMs);
+
     drainCommands();
     persistCapturedMounting();
     diag_.feed();
@@ -164,6 +183,10 @@ void App::applyConfigIfDirty() {
   co2AlertPpm_ = cfg.co2AlertPpm;
   audioEnabled_ = cfg.audioEnabled != 0;
   potControls_ = cfg.potControlsThreshold != 0;
+  audioBpf_ = cfg.audioBpfEnabled != 0;
+  audioHpHz_ = cfg.audioHpHz;
+  audioLpHz_ = cfg.audioLpHz;
+  Logger::setEnabled(cfg.serialLogEnabled != 0);
   // setRateHz() restarts the schedule: only call it on an actual change.
   if (cfg.imuNotifyHz != imuNotifyHz_) {
     imuNotifyHz_ = cfg.imuNotifyHz;
@@ -238,10 +261,30 @@ void App::sendSensors(uint32_t nowMs) {
   if (audio_.ok()) flags |= kSensAudioOk;
   if (audioEnabled_) flags |= kSensAudioEnabled;
   if (potControls_) flags |= kSensPotControls;
+  if (audioBpf_) flags |= kSensAudioFiltered;
   const SensorsPacket p =
       makeSensorsPacket(sensorsSeq_++, nowMs, audio_.lastRmsLeft(), audio_.lastRmsRight(),
                         pot_.threshold(), pot_.filteredRaw(), flags);
   ble_.notifySensors(p);
+}
+
+// Raw 2 kHz audio stream for the frontend spectrum analyzer. Chunks arrive from the
+// audio task every 48 ms; this runs every App loop (<= 20 ms), so none are missed
+// while a diag subscriber is listening. Without subscribers the chunk is discarded.
+void App::maybeSendAudioChunk(uint32_t nowMs) {
+  AudioChunkPacket p;
+  if (!audio_.takeAudioChunk(p.samples)) return;
+  if (!ble_.anySubscriber(5)) return;
+  p.version = kProtocolVersion;
+  p.type = (uint8_t)PacketType::AudioChunk;
+  p.seq = audioChunkSeq_++;
+  p.timestampMs = nowMs;
+  p.sampleRateHz = AudioDecimator::kOutputRateHz;
+  p.count = (uint8_t)AudioDecimator::kChunkSamples;
+  p.flags = audioBpf_ ? kAudioBpfEnabled : 0;
+  p.hpHz = audioHpHz_;
+  p.lpHz = audioLpHz_;
+  ble_.notifyAudioChunk(p);
 }
 
 void App::drainCommands() {

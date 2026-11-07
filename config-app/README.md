@@ -14,12 +14,29 @@ com uma cor própria. Arraste para dar zoom; duplo clique restaura.
 | Orientação (IMU ICM-20948) | graus (°) | quaternion → Euler na convenção legada (mesma saída que o site entrega ao patch Pd) |
 | Aceleração (IMU) | g | contagens do DMP ÷ 8192 (fundo de escala ±4 g) |
 | Microfones esq./dir. (INMP441) | dBFS (AES17) + dB SPL estimado | RMS em contagens de 24 bits (I²S 32 bits, `>>8`; fundo de escala 2²³); 0 dBFS = seno de fundo de escala; SPL ≈ dBFS + 120 (sensibilidade do INMP441: −26 dBFS @ 94 dB SPL, 1 kHz) |
-| CO₂ (Senseair S8) | ppm | leitura Modbus do firmware |
+| CO₂ (Senseair S8) | ppm | leitura Modbus do firmware (EMA opcional, TLV `0x28`) |
 | Potenciômetro | % do curso | ADC filtrado 0–4095 → 0–100 % (o limiar mapeado aparece no cartão e como linha pontilhada nos gráficos dos microfones) |
 
 Os dados de áudio/potenciômetro chegam num pacote próprio (`SensorsPacket`, 5 Hz, na
 característica de diagnóstico — ver `firmware/docs/protocol.md`); IMU e CO₂ usam os
 pacotes já existentes. No modo demo o painel roda com dados sintéticos.
+
+### Analisador de espectro (ajuste do passa-banda do sopro)
+
+A bola transmite o **áudio bruto decimado** (mono, 2 kHz, int16, ~4,4 kB/s) e o
+**FFT roda aqui no navegador** (512 pontos, janela Hann de 256 ms, bins de ~3,9 Hz,
+0–1000 Hz). Sopre na bola e observe quais frequências sobem; as linhas tracejadas
+mostram os cortes HP/LP configurados (ecoados pelo firmware em cada pacote). Os
+filtros (HP 10 Hz / LP 200 Hz, Q 5,00 por padrão) são aplicados **no firmware**,
+antes do detector de pico — o espectro mostra o sinal **cru**, justamente para
+escolher os cortes. Atenção: Q > 0,71 cria um pico ressonante de ~20·log₁₀(Q) dB
+exatamente no corte; a inclinação da atenuação vem da ordem do filtro, não do Q.
+
+### Persistência
+
+**Aplicar** envia só os campos alterados, confere a aceitação relendo o dispositivo
+e, se tudo foi aceito, **já grava na NVS** (comando `0x11`): as configurações feitas
+pela UI sobrevivem a desligar/reiniciar a bola.
 
 ## Requisitos
 

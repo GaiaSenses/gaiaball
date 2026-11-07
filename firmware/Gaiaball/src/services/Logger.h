@@ -14,6 +14,10 @@ class Logger {
   static void begin(LogLevel level = LogLevel::Info);  // Serial must already be started
   static void setLevel(LogLevel level);
   static LogLevel level();
+  // Master switch (config TLV 0x50, default OFF after boot config load). While
+  // disabled, log() returns before formatting: zero cost on the hot path.
+  static void setEnabled(bool on);
+  static bool enabled();
   static void log(LogLevel level, const char *tag, const char *fmt, ...)
       __attribute__((format(printf, 3, 4)));
 };

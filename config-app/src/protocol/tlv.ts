@@ -3,14 +3,21 @@
 
 export const TLV = {
   orientationMode: 0x01,
-  imuNotifyHz: 0x02,
+  imuNotifyHz: 0x02, // 10..200; also drives the DMP sample rate
   slerpAmount: 0x03,
+  accelLpAlphaX1000: 0x04, // 0 = off (raw)
   audioEnabled: 0x10,
   audioFastAlphaX1000: 0x11,
   audioSlowAlphaX1000: 0x12,
   debounceMs: 0x13,
   potControlsThreshold: 0x14,
   thresholdFixed: 0x15,
+  audioBpfEnabled: 0x16,
+  audioHpHz: 0x17,
+  audioHpQX100: 0x18,
+  audioLpHz: 0x19,
+  audioLpQX100: 0x1a,
+  potEmaAlphaX1000: 0x1b,
   co2Enabled: 0x20,
   co2ChecksumVariant: 0x21,
   co2StaleTimeoutMs: 0x22,
@@ -19,12 +26,14 @@ export const TLV = {
   virtualHoldMs: 0x25,
   co2RawLogMode: 0x26,
   co2Protocol: 0x27, // 0 = Senseair S8 Modbus polling (board default), 1 = passive 0x42 0x4D frames
+  co2EmaAlphaX1000: 0x28, // 1000 = no smoothing
   soundLedPin: 0x30,
   co2LedPin: 0x31,
   co2AlertPpm: 0x32,
   // 0x33 is reserved (was statusLedPin; removed with the legacy LED command).
   bleName: 0x40,
   pin: 0x41,
+  serialLogEnabled: 0x50, // default 0: serial formatting steals CPU
 } as const;
 
 /** Output-capable ESP32 GPIOs (excludes SPI-flash 6–11 and nonexistent pins). Mirrors firmware isValidOutputGpio. */
@@ -47,6 +56,15 @@ const SPECS: Record<number, Spec> = {
   [TLV.orientationMode]: U8,
   [TLV.imuNotifyHz]: U8,
   [TLV.slerpAmount]: U8,
+  [TLV.accelLpAlphaX1000]: U16,
+  [TLV.audioBpfEnabled]: U8,
+  [TLV.audioHpHz]: U16,
+  [TLV.audioHpQX100]: U16,
+  [TLV.audioLpHz]: U16,
+  [TLV.audioLpQX100]: U16,
+  [TLV.potEmaAlphaX1000]: U16,
+  [TLV.co2EmaAlphaX1000]: U16,
+  [TLV.serialLogEnabled]: U8,
   [TLV.audioEnabled]: U8,
   [TLV.audioFastAlphaX1000]: U16,
   [TLV.audioSlowAlphaX1000]: U16,

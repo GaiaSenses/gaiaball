@@ -55,8 +55,10 @@ class ImuService {
   // (ConfigStore::setMountQuat + save()). Returns true once per capture; the IMU task
   // never touches ConfigStore after begin(). Safe from any task.
   bool takeCapturedMounting(float out[4]);
-  // Picks up orientationMode / slerpAmount. Safe from the App task; a mode change
-  // re-enables the DMP sensors on the IMU task's next cycle.
+  // Picks up orientationMode / slerpAmount / imuNotifyHz / accel filter. Safe from
+  // the App task; mode and rate changes are applied by the IMU task on its next
+  // cycle (the DMP sample-rate divisor is chosen so the DMP runs at or just above
+  // the requested rate; the notify throttle then paces the exact output rate).
   void applyConfig(const GaiaConfig &cfg);
 
   // FIFO recoveries (resetFIFO) since boot, saturating: hardware overflow
@@ -70,6 +72,7 @@ class ImuService {
   void taskLoop();
   bool initDmp(uint8_t mode);    // full legacy-like DMP init sequence
   bool switchMode(uint8_t mode); // DMP sensor re-enable on Quat6<->Quat9 change
+  bool applySampleRate(uint8_t rateHz);  // gyro/accel divisor from the target rate
   void drainFifo();
   bool checkOverflow();  // true = FIFO was reset, skip this burst
   void resyncFifo();
@@ -87,6 +90,9 @@ class ImuService {
   std::atomic<bool> mountRequested_{false};
   std::atomic<uint8_t> desiredMode_{0};
   std::atomic<uint8_t> slerpAmount_{0};
+  std::atomic<uint8_t> desiredRateHz_{50};
+  // Accel EMA alpha x1000 (0 = off / raw passthrough).
+  std::atomic<uint16_t> accelAlphaX1000_{0};
 
   // Mounting capture handoff (IMU task -> App task). Short critical section, taken
   // only on a capture or a take, never per packet.
@@ -100,6 +106,9 @@ class ImuService {
 
   // IMU-task-only state.
   uint8_t activeMode_ = 0;
+  uint8_t activeRateHz_ = 50;
+  float accFilt_[3] = {0, 0, 0};
+  bool accSeeded_ = false;
   bool overflowStatusUsable_ = true;  // INT_STATUS_2 FIFO_OVERFLOW check enabled
   uint8_t overflowStatusStreak_ = 0;
   Quat qMount_{1, 0, 0, 0};

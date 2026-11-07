@@ -43,6 +43,7 @@ class App {
   void maybeNotifyCo2(uint32_t nowMs);
   void sendDiag(uint32_t nowMs);
   void sendSensors(uint32_t nowMs);
+  void maybeSendAudioChunk(uint32_t nowMs);
   void drainCommands();
   void dispatch(const BleCommand &cmd);
   void persistCapturedMounting();
@@ -71,12 +72,16 @@ class App {
   uint16_t co2AlertPpm_ = 2000;
   bool audioEnabled_ = true;
   bool potControls_ = true;
+  bool audioBpf_ = true;
+  uint16_t audioHpHz_ = 10;
+  uint16_t audioLpHz_ = 200;
   bool peakSeen_ = false;
   uint32_t peakMs_ = 0;
   uint16_t imuSeq_ = 0;
   uint16_t co2Seq_ = 0;
   uint16_t diagSeq_ = 0;
   uint16_t sensorsSeq_ = 0;
+  uint16_t audioChunkSeq_ = 0;
   uint32_t imuNotifiesInWindow_ = 0;
   uint32_t diagWindowStartMs_ = 0;
   uint32_t lastPotMs_ = 0;

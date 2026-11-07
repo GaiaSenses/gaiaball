@@ -185,6 +185,7 @@ void BleService::notifyImu(const ImuPacket &p) { notify(kIdxImu, &p, sizeof(p));
 void BleService::notifyCo2(const Co2Packet &p) { notify(kIdxCo2, &p, sizeof(p)); }
 void BleService::notifyDiag(const DiagPacket &p) { notify(kIdxDiag, &p, sizeof(p)); }
 void BleService::notifySensors(const SensorsPacket &p) { notify(kIdxDiag, &p, sizeof(p)); }
+void BleService::notifyAudioChunk(const AudioChunkPacket &p) { notify(kIdxDiag, &p, sizeof(p)); }
 
 void BleService::notify(uint8_t idx, const void *data, size_t len) {
   NimBLECharacteristic *chr = notifyChars_[idx];

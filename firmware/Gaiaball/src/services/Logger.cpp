@@ -6,6 +6,8 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+#include <atomic>
+
 namespace gaia {
 
 namespace {
@@ -35,8 +37,12 @@ void Logger::begin(LogLevel level) {
 void Logger::setLevel(LogLevel level) { g_level = level; }
 LogLevel Logger::level() { return g_level; }
 
+static std::atomic<bool> g_enabled{true};  // boot logs stay on until config loads
+void Logger::setEnabled(bool on) { g_enabled.store(on); }
+bool Logger::enabled() { return g_enabled.load(); }
+
 void Logger::log(LogLevel level, const char *tag, const char *fmt, ...) {
-  if (!g_started || level > g_level) return;
+  if (!g_started || !g_enabled.load(std::memory_order_relaxed) || level > g_level) return;
 
   // Format outside the lock; only the limiter and the Serial write are serialized.
   char buf[kLineMax];

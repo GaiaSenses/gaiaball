@@ -1224,7 +1224,24 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
         <div class="fld k-data">pot<small>u16</small></div>
         <div class="fld k-flag">flags<small>u8</small></div>
       </div></div>
-      <p class="result-line">Níveis dos microfones e potenciômetro para os gráficos em tempo real do config-app. Divide a característica <code>…0005</code> com o diagnóstico (o receptor despacha pelo byte de tipo). RMS em contagens de 24 bits (I²S 32 bits com <code>&gt;&gt;8</code>; 0 dBFS = seno de fundo de escala 2²³); pot = ADC filtrado 0–4095. Flags: bit0 áudio ok, bit1 áudio habilitado, bit2 pot controla o limiar.</p>
+      <p class="result-line">Níveis dos microfones e potenciômetro para os gráficos em tempo real do config-app. Divide a característica <code>…0005</code> com o diagnóstico (o receptor despacha pelo byte de tipo). RMS em contagens de 24 bits (I²S 32 bits com <code>&gt;&gt;8</code>; 0 dBFS = seno de fundo de escala 2²³); pot = ADC filtrado 0–4095. Flags: bit0 áudio ok, bit1 áudio habilitado, bit2 pot controla o limiar, bit3 RMS calculado após o passa-banda.</p>
+    </div>
+
+    <div class="packet">
+      <h3>Áudio bruto <small>característica …0005 · notify · 208 bytes · ~21 Hz</small></h3>
+      <div class="strip-wrap"><div class="strip" style="grid-template-columns: 1fr 1fr 2fr 4fr 2fr 1fr 1fr 2fr 2fr 8fr; grid-auto-flow: row;">
+        <div class="fld k-hdr">ver<small>u8</small></div>
+        <div class="fld k-hdr">tipo<small>u8</small></div>
+        <div class="fld k-time">seq<small>u16</small></div>
+        <div class="fld k-time">t (ms)<small>u32</small></div>
+        <div class="fld k-data">fs (Hz)<small>u16</small></div>
+        <div class="fld k-data">n<small>u8</small></div>
+        <div class="fld k-flag">flags<small>u8</small></div>
+        <div class="fld k-data">HP (Hz)<small>u16</small></div>
+        <div class="fld k-data">LP (Hz)<small>u16</small></div>
+        <div class="fld k-data">amostras ×96<small>i16</small></div>
+      </div></div>
+      <p class="result-line">Áudio <b>cru</b> decimado (mix mono, 16 kHz → 2 kHz por média de 8, int16) para o analisador de espectro do config-app — <b>o FFT roda no navegador</b>, não no ESP32. Os cortes HP/LP configurados viajam no pacote para a UI desenhar as marcações. Enviado só quando a característica tem assinante (~4,4 kB/s). Exige MTU ≥ 211.</p>
     </div>
 
     <div class="two-col">
@@ -1287,7 +1304,8 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
         <thead><tr><th>Grupo</th><th>ID</th><th>Campo</th><th>Faixa aceita</th><th>Padrão</th><th>Efeito</th></tr></thead>
         <tbody>
           <tr><td>Orientação</td><td>0x01</td><td><code>orientationMode</code></td><td>0 ou 1</td><td>0</td><td>0 = Quat6 relativo (sem magnetômetro); 1 = Quat9 com norte magnético. Ver <a href="#f11">F11</a>.</td></tr>
-          <tr><td>Orientação</td><td>0x02</td><td><code>imuNotifyHz</code></td><td>10–60</td><td>50</td><td>Taxa de envio de orientação para as centrais.</td></tr>
+          <tr><td>Orientação</td><td>0x02</td><td><code>imuNotifyHz</code></td><td>10–200</td><td>50</td><td>Taxa de saída da orientação. Também reconfigura o DMP da IMU para rodar nessa taxa (ou logo acima), a quente.</td></tr>
+          <tr><td>Orientação</td><td>0x04</td><td><code>accelLpAlphaX1000</code></td><td>0–1000</td><td>0</td><td>EMA da aceleração publicada (0 = desligado, dado cru).</td></tr>
           <tr><td>Orientação</td><td>0x03</td><td><code>slerpAmount</code></td><td>0–100</td><td>0</td><td>Suavização no firmware; 0 = desligada. O site já suaviza (mediana + EMA); ligar aqui soma latência.</td></tr>
           <tr><td>Áudio</td><td>0x10</td><td><code>audioEnabled</code></td><td>0 / ≠0</td><td>1</td><td>Liga ou desliga a detecção de som.</td></tr>
           <tr><td>Áudio</td><td>0x11</td><td><code>audioFastAlphaX1000</code></td><td>1–1000</td><td>250</td><td>Velocidade do filtro rápido (α × 1000). Maior = reage mais rápido a picos.</td></tr>
@@ -1302,10 +1320,18 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
           <tr><td>CO₂</td><td>0x24</td><td><code>virtualDelayMs</code></td><td>0–65535</td><td>1000</td><td>Atraso entre o pico de som e o início do CO₂ virtual.</td></tr>
           <tr><td>CO₂</td><td>0x25</td><td><code>virtualHoldMs</code></td><td>0–65535</td><td>17000</td><td>Duração do CO₂ virtual.</td></tr>
           <tr><td>CO₂</td><td>0x26</td><td><code>co2RawLogMode</code></td><td>0 / ≠0</td><td>0</td><td>Imprime os bytes brutos da UART em hexadecimal no serial (diagnóstico do protocolo do sensor).</td></tr>
+          <tr><td>Áudio</td><td>0x16</td><td><code>audioBpfEnabled</code></td><td>0 ou 1</td><td>1</td><td>Passa-banda do sopro (HP + LP) antes do RMS/detector de pico.</td></tr>
+          <tr><td>Áudio</td><td>0x17</td><td><code>audioHpHz</code></td><td>1–7000</td><td>10</td><td>Corte do high-pass.</td></tr>
+          <tr><td>Áudio</td><td>0x18</td><td><code>audioHpQX100</code></td><td>10–2000</td><td>500</td><td>Q ×100 (500 = 5,00). Q &gt; 0,71 cria pico ressonante de ~20·log₁₀(Q) dB no corte.</td></tr>
+          <tr><td>Áudio</td><td>0x19</td><td><code>audioLpHz</code></td><td>1–7000</td><td>200</td><td>Corte do low-pass. Deve ficar acima do high-pass (validado no estado final).</td></tr>
+          <tr><td>Áudio</td><td>0x1A</td><td><code>audioLpQX100</code></td><td>10–2000</td><td>500</td><td>Q ×100 do low-pass.</td></tr>
+          <tr><td>Áudio</td><td>0x1B</td><td><code>potEmaAlphaX1000</code></td><td>1–1000</td><td>300</td><td>Suavização (EMA) do potenciômetro.</td></tr>
           <tr><td>CO₂</td><td>0x27</td><td><code>co2Protocol</code></td><td>0 ou 1</td><td>0</td><td>0 = Senseair S8 via Modbus (consulta a cada 2 s — o sensor da placa, ver <a href="#f15">F15</a>); 1 = frames passivos <code>42 4D</code>.</td></tr>
+          <tr><td>CO₂</td><td>0x28</td><td><code>co2EmaAlphaX1000</code></td><td>1–1000</td><td>1000</td><td>Suavização (EMA) das leituras aceitas (1000 = desligada).</td></tr>
           <tr><td>LEDs</td><td>0x30</td><td><code>soundLedPin</code></td><td>GPIO 0–33</td><td>2</td><td>Pino do LED de som (D2 na placa). Distinto do LED de CO₂. <span class="reboot">requer reinício</span></td></tr>
           <tr><td>LEDs</td><td>0x31</td><td><code>co2LedPin</code></td><td>GPIO 0–33</td><td>4</td><td>Pino do LED de alerta de CO₂ (D1 na placa). Distinto do LED de som. <span class="reboot">requer reinício</span></td></tr>
           <tr><td>LEDs</td><td>0x32</td><td><code>co2AlertPpm</code></td><td>0–65535</td><td>2000</td><td>Acima disso (leitura real, não velha) o LED de CO₂ acende.</td></tr>
+          <tr><td>Sistema</td><td>0x50</td><td><code>serialLogEnabled</code></td><td>0 ou 1</td><td>0</td><td>Log serial (USB). Desligado por padrão: a formatação rouba CPU do caminho crítico.</td></tr>
           <tr><td>Identidade</td><td>0x40</td><td><code>bleName</code></td><td>1–16 caracteres ASCII</td><td>Globo_1</td><td>Nome anunciado no Bluetooth. O site filtra por UUID, não por nome. <span class="reboot">requer reinício</span></td></tr>
           <tr><td>Identidade</td><td>0x41</td><td><code>pin</code></td><td>4 dígitos</td><td>1234</td><td>PIN de desbloqueio. Só escrita: nunca aparece numa leitura nem nos presets.</td></tr>
         </tbody>
@@ -1330,6 +1356,8 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
           <li>Vista 3D da orientação, alternando entre cru e filtrado.</li>
           <li>Métricas do fluxo: taxa (Hz), perda por <code>seq</code> e jitter.</li>
           <li><b>Sensores em tempo real</b>: valor atual de cada sensor com a unidade correta (orientação em °, aceleração em g, microfones em dBFS + dB SPL estimado, CO₂ em ppm, potenciômetro em %) e gráficos de linha (Plotly.js) empilhados verticalmente, um por sensor, cada um com sua cor, todos <b>compartilhando o mesmo eixo X (tempo)</b> — janela de 120 s a 10 Hz, com zoom.</li>
+          <li><b>Analisador de espectro do sopro</b>: a bola transmite o áudio bruto decimado (2 kHz, int16) e o <b>FFT roda no navegador</b> (512 pontos, bins de ~3,9 Hz, 0–1000 Hz), com as linhas dos cortes HP/LP sobrepostas — sopre na bola e ajuste o passa-banda vendo quais frequências sobem.</li>
+          <li><b>Filtros por sensor, ajustáveis a quente e persistentes</b>: passa-banda do sopro (HP/LP + Q), EMA da aceleração, slerp do quaternion, EMA do potenciômetro e do CO₂, e a taxa da IMU (10–200 Hz, reconfigura o DMP). "Aplicar" confere a aceitação e já grava na NVS: as configurações sobrevivem a desligar/reiniciar.</li>
           <li>Formulário com todos os parâmetros; “Aplicar” envia só o que mudou e relê para conferir.</li>
           <li>Presets com nome, exportação e importação em JSON. O PIN nunca entra num preset.</li>
         </ul>
@@ -1379,8 +1407,9 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
       <li><label for="c10"><span class="n"></span><input type="checkbox" id="c10" data-key="sound"><span class="txt"><b>Som e CO₂ virtual</b><span>Palma a ~1 m: LED pisca na hora; CO₂ virtual chega ~1 s depois e dura ~17 s. A taxa da IMU não cai durante o teste.</span></span></label></li>
       <li><label for="c11"><span class="n"></span><input type="checkbox" id="c11" data-key="dual"><span class="txt"><b>Site e config-app conectados ao mesmo tempo</b><span>O globo do site responde enquanto o config-app mede a perda; nenhum dos dois cai.</span></span></label></li>
       <li><label for="c12"><span class="n"></span><input type="checkbox" id="c12" data-key="pin"><span class="txt"><b>Bloqueio do PIN</b><span>5 PINs errados seguidos: o desbloqueio deve ser recusado por 30 s, mesmo com o PIN certo.</span></span></label></li>
-      <li><label for="c13"><span class="n"></span><input type="checkbox" id="c13" data-key="noimu"><span class="txt"><b>Ligar sem a IMU</b><span>BLE sobe, LED de erro acende, diagnóstico mostra <code>imuOk = 0</code> (<a href="#f09">F09</a>).</span></span></label></li>
+      <li><label for="c13"><span class="n"></span><input type="checkbox" id="c13" data-key="noimu"><span class="txt"><b>Ligar sem a IMU</b><span>BLE sobe e o diagnóstico mostra <code>imuOk = 0</code> no config-app (<a href="#f09">F09</a>).</span></span></label></li>
       <li><label for="c14"><span class="n"></span><input type="checkbox" id="c14" data-key="soak"><span class="txt"><b>24 h ligado</b><span><code>uptimeS</code> contínuo (sem reinício), <code>minFreeHeapKb</code> estável, <code>fifoOverflows</code> e erros de UART sem crescer.</span></span></label></li>
+      <li><label for="c16"><span class="n"></span><input type="checkbox" id="c16" data-key="sopro"><span class="txt"><b>Calibrar o passa-banda do sopro</b><span>Soprar na bola olhando o espectro (painel Sensores), ajustar HP/LP até a banda cobrir o sopro e cortar voz/ambiente; Aplicar (já grava). Conferir que o pulso virtual dispara com sopro e não com conversa.</span></span></label></li>
       <li><label for="c15"><span class="n"></span><input type="checkbox" id="c15" data-key="newpin"><span class="txt"><b>Trocar o PIN padrão antes da exposição</b><span>TLV 0x41 com 4 dígitos novos e comando <code>0x11</code> para gravar.</span></span></label></li>
     </ol>
   </div>

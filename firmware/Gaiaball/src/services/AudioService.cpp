@@ -3,7 +3,9 @@
 #include <Arduino.h>
 #include <driver/i2s.h>
 
-#include "../logic/AudioBlock.h"
+#include <math.h>
+#include <string.h>
+
 #include "Logger.h"
 
 namespace gaia {
@@ -61,7 +63,21 @@ void AudioService::applyConfig(const GaiaConfig &cfg) {
   slowX1000_.store(cfg.audioSlowAlphaX1000);
   debounceMs_.store(cfg.debounceMs);
   enabled_.store(cfg.audioEnabled != 0);
+  bpfEnabled_.store(cfg.audioBpfEnabled != 0);
+  hpHz_.store(cfg.audioHpHz);
+  hpQX100_.store(cfg.audioHpQX100);
+  lpHz_.store(cfg.audioLpHz);
+  lpQX100_.store(cfg.audioLpQX100);
   cfgDirty_.store(true);
+}
+
+bool AudioService::takeAudioChunk(int16_t out[AudioDecimator::kChunkSamples]) {
+  if (!chunkReady_.load()) return false;
+  portENTER_CRITICAL(&chunkMux_);
+  memcpy(out, chunkBuf_, sizeof(chunkBuf_));
+  chunkReady_.store(false);
+  portEXIT_CRITICAL(&chunkMux_);
+  return true;
 }
 
 void AudioService::startTask() {
@@ -92,14 +108,51 @@ void AudioService::taskLoop() {
     if (cfgDirty_.exchange(false)) {
       detector_.configure(fastX1000_.load() / 1000.0f, slowX1000_.load() / 1000.0f,
                           debounceMs_.load());
+      bpfActive_ = bpfEnabled_.load();
+      const float fs = (float)kSampleRate;
+      hpL_.configure(Biquad::Type::HighPass, (float)hpHz_.load(), hpQX100_.load() / 100.0f, fs);
+      hpR_.configure(Biquad::Type::HighPass, (float)hpHz_.load(), hpQX100_.load() / 100.0f, fs);
+      lpL_.configure(Biquad::Type::LowPass, (float)lpHz_.load(), lpQX100_.load() / 100.0f, fs);
+      lpR_.configure(Biquad::Type::LowPass, (float)lpHz_.load(), lpQX100_.load() / 100.0f, fs);
     }
-    const StereoRms r = computeStereoRms(buf, bytes / sizeof(int32_t));
-    rmsL_.store(r.left);
-    rmsR_.store(r.right);
+
+    // Per-block DC removal (same math as the reference computeStereoRms), fused with
+    // the raw-audio decimator feed and the optional band-pass before the RMS.
+    const size_t frames = (bytes / sizeof(int32_t)) / 2;
+    if (frames == 0) continue;
+    int64_t sumL = 0, sumR = 0;
+    for (size_t i = 0; i < frames; i++) {
+      sumL += buf[2 * i] >> 8;
+      sumR += buf[2 * i + 1] >> 8;
+    }
+    const float meanL = (float)((double)sumL / (double)frames);
+    const float meanR = (float)((double)sumR / (double)frames);
+    double accL = 0.0, accR = 0.0;
+    for (size_t i = 0; i < frames; i++) {
+      float l = (float)(buf[2 * i] >> 8) - meanL;
+      float r = (float)(buf[2 * i + 1] >> 8) - meanR;
+      // Raw (unfiltered) mono mix feeds the 2 kHz stream for the frontend FFT.
+      if (decim_.feed(0.5f * (l + r))) {
+        portENTER_CRITICAL(&chunkMux_);
+        memcpy(chunkBuf_, decim_.chunk(), sizeof(chunkBuf_));
+        chunkReady_.store(true);
+        portEXIT_CRITICAL(&chunkMux_);
+      }
+      if (bpfActive_) {
+        l = lpL_.process(hpL_.process(l));
+        r = lpR_.process(hpR_.process(r));
+      }
+      accL += (double)l * l;
+      accR += (double)r * r;
+    }
+    const float rl = sqrtf((float)(accL / (double)frames));
+    const float rr = sqrtf((float)(accR / (double)frames));
+    rmsL_.store(rl);
+    rmsR_.store(rr);
     if (!enabled_.load()) continue;
     const float thr = thresholdProvider_ ? thresholdProvider_() : fixedThreshold_;
     const uint32_t now = millis();
-    if (detector_.update(r.left > r.right ? r.left : r.right, thr, now) && onPeak_) onPeak_(now);
+    if (detector_.update(rl > rr ? rl : rr, thr, now) && onPeak_) onPeak_(now);
   }
 }
 

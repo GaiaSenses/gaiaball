@@ -6,11 +6,14 @@ export const PKT_IMU = 0x01;
 export const PKT_CO2 = 0x02;
 export const PKT_DIAG = 0x03;
 export const PKT_SENSORS = 0x04;
+export const PKT_AUDIO = 0x05;
 
 export const IMU_PACKET_SIZE = 23;
 export const CO2_PACKET_SIZE = 12;
 export const DIAG_PACKET_SIZE = 23;
 export const SENSORS_PACKET_SIZE = 23;
+export const AUDIO_PACKET_SIZE = 208;
+export const AUDIO_CHUNK_SAMPLES = 96;
 
 export const QUAT_SCALE = 16384; // Q14
 /** DMP accel full scale is ±4 g (SparkFun initializeDMP) -> 8192 LSB/g. */
@@ -35,6 +38,8 @@ export const DIAG_FLAG_CO2_OK = 1 << 2;
 export const SENS_FLAG_AUDIO_OK = 1 << 0;
 export const SENS_FLAG_AUDIO_ENABLED = 1 << 1;
 export const SENS_FLAG_POT_CONTROLS = 1 << 2;
+export const SENS_FLAG_AUDIO_FILTERED = 1 << 3;
+export const AUDIO_FLAG_BPF_ENABLED = 1 << 0;
 
 export interface ImuSample {
   seq: number;
@@ -88,6 +93,21 @@ export interface SensorsSample {
   audioOk: boolean;
   audioEnabled: boolean;
   potControls: boolean;
+  /** RMS computed after the firmware HP/LP band-pass. */
+  audioFiltered: boolean;
+}
+
+export interface AudioChunkSample {
+  seq: number;
+  tMs: number;
+  sampleRateHz: number;
+  /** RAW (unfiltered) mono samples, int16 (top 16 bits of the 24-bit audio). */
+  samples: Int16Array;
+  flags: number;
+  bpfEnabled: boolean;
+  /** Configured band-pass cutoffs, echoed by the firmware. */
+  hpHz: number;
+  lpHz: number;
 }
 
 function header(dv: DataView, size: number, type: number): boolean {
@@ -139,6 +159,26 @@ export function decodeSensorsPacket(dv: DataView): SensorsSample | null {
     audioOk: (flags & SENS_FLAG_AUDIO_OK) !== 0,
     audioEnabled: (flags & SENS_FLAG_AUDIO_ENABLED) !== 0,
     potControls: (flags & SENS_FLAG_POT_CONTROLS) !== 0,
+    audioFiltered: (flags & SENS_FLAG_AUDIO_FILTERED) !== 0,
+  };
+}
+
+export function decodeAudioChunkPacket(dv: DataView): AudioChunkSample | null {
+  if (!header(dv, AUDIO_PACKET_SIZE, PKT_AUDIO)) return null;
+  const count = dv.getUint8(10);
+  if (count !== AUDIO_CHUNK_SAMPLES) return null;
+  const flags = dv.getUint8(11);
+  const samples = new Int16Array(count);
+  for (let i = 0; i < count; i++) samples[i] = dv.getInt16(16 + 2 * i, true);
+  return {
+    seq: dv.getUint16(2, true),
+    tMs: dv.getUint32(4, true),
+    sampleRateHz: dv.getUint16(8, true),
+    samples,
+    flags,
+    bpfEnabled: (flags & AUDIO_FLAG_BPF_ENABLED) !== 0,
+    hpHz: dv.getUint16(12, true),
+    lpHz: dv.getUint16(14, true),
   };
 }
 

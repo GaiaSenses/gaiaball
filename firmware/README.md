@@ -109,10 +109,17 @@ config write that lands both LED functions on the same GPIO is rejected atomical
 
 - Advertises as **`Globo_1`** (config TLV `0x40`, applied after reboot); accepts two
   simultaneous centrals.
-- IMU packets at `imuNotifyHz` (default 50 Hz), CO2 packets on every ppm/flag change plus
-  a 1 Hz keepalive, diagnostics at 1 Hz and live sensor levels (audio RMS + potentiometer,
-  SensorsPacket) at 5 Hz on the diag characteristic. Notifications are only sent to
-  subscribers.
+- IMU packets at `imuNotifyHz` (default 50 Hz, configurable 10–200 Hz — the DMP sample
+  rate follows), CO2 packets on every ppm/flag change plus a 1 Hz keepalive, diagnostics
+  at 1 Hz, live sensor levels (SensorsPacket) at 5 Hz and raw decimated audio (2 kHz
+  int16, for the config-app's frontend FFT) at ~21 pkt/s on the diag characteristic.
+  Notifications are only sent to subscribers.
+- Per-sensor filters, all configurable from the config-app and persisted: quaternion
+  slerp, accel EMA, breath band-pass on the mics (HP 10 Hz / LP 200 Hz, Q 5.00 default
+  — tune against the live spectrum), potentiometer EMA, CO2 EMA.
+- Wi-Fi is explicitly stopped at boot (BLE/Wi-Fi coexistence would wreck notify pacing).
+- USB serial logging is OFF by default (TLV `0x50`); boot messages still print until the
+  stored config loads.
 - Sound LED (GPIO2): 100 ms flash per detected sound peak, held on while the virtual CO2
   pulse is active. Nothing else drives it.
 - CO2 LED (GPIO4): on while the real (non-stale) reading exceeds `co2AlertPpm` (default 2000).

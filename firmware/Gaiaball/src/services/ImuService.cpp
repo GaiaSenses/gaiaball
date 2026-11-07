@@ -33,6 +33,7 @@ DMP_ODR_Registers quatOdrRegFor(uint8_t mode) {
   return mode == 1 ? DMP_ODR_Reg_Quat9 : DMP_ODR_Reg_Quat6;
 }
 uint8_t clampMode(uint8_t mode) { return mode == 1 ? 1 : 0; }
+uint8_t clampRate(uint8_t hz) { return hz < 10 ? 10 : (hz > 200 ? 200 : hz); }
 
 // Loads the persisted mounting quaternion; falls back to identity if unusable.
 Quat loadMount(const GaiaConfig &cfg) {
@@ -50,6 +51,9 @@ bool ImuService::begin(ConfigStore &store) {
   activeMode_ = clampMode(cfg.orientationMode);
   desiredMode_.store(activeMode_);
   slerpAmount_.store(cfg.slerpAmount > 100 ? 100 : cfg.slerpAmount);
+  activeRateHz_ = clampRate(cfg.imuNotifyHz);
+  desiredRateHz_.store(activeRateHz_);
+  accelAlphaX1000_.store(cfg.accelLpAlphaX1000 > 1000 ? 1000 : cfg.accelLpAlphaX1000);
 
   if (queue_ == nullptr) queue_ = xQueueCreate(kQueueDepth, sizeof(ImuSample));
   if (queue_ == nullptr) GB_LOGE(kTag, "sample queue allocation failed");
@@ -91,6 +95,9 @@ bool ImuService::initDmp(uint8_t mode) {
     overflowStatusUsable_ = false;
     GB_LOGW(kTag, "FIFO overflow status unavailable; backlog check only");
   }
+  // initializeDMP() leaves the gyro/accel divisor at 19 (56.25 Hz); override it so
+  // the DMP runs at (or just above) the configured output rate.
+  ok &= applySampleRate(activeRateHz_);
   ok &= icm_.enableDMPSensor(quatSensorFor(mode)) == ICM_20948_Stat_Ok;
   ok &= icm_.enableDMPSensor(INV_ICM20948_SENSOR_ACCELEROMETER) == ICM_20948_Stat_Ok;
   ok &= icm_.setDMPODRrate(quatOdrRegFor(mode), 0) == ICM_20948_Stat_Ok;  // 0 = max rate
@@ -128,6 +135,25 @@ bool ImuService::switchMode(uint8_t mode) {
 void ImuService::applyConfig(const GaiaConfig &cfg) {
   desiredMode_.store(clampMode(cfg.orientationMode));
   slerpAmount_.store(cfg.slerpAmount > 100 ? 100 : cfg.slerpAmount);
+  desiredRateHz_.store(clampRate(cfg.imuNotifyHz));
+  accelAlphaX1000_.store(cfg.accelLpAlphaX1000 > 1000 ? 1000 : cfg.accelLpAlphaX1000);
+}
+
+// Divisor so the DMP runs at or just above the target: actual = 1125/(1+div).
+// E.g. 200 Hz -> div 4 (225 Hz actual); 100 -> div 10 (102.3 Hz); 50 -> div 21
+// (51.1 Hz); 10 -> div 111 (10.04 Hz). The NotifyThrottle paces the exact rate.
+bool ImuService::applySampleRate(uint8_t rateHz) {
+  uint16_t div = (uint16_t)(1125 / clampRate(rateHz));
+  if (div > 0) div -= 1;
+  if (div > 111) div = 111;
+  ICM_20948_smplrt_t s;
+  s.a = div;
+  s.g = (uint8_t)div;
+  const bool ok =
+      icm_.setSampleRate((ICM_20948_Internal_Acc | ICM_20948_Internal_Gyr), s) ==
+      ICM_20948_Stat_Ok;
+  if (!ok) GB_LOGE(kTag, "setSampleRate(div %u) failed", (unsigned)div);
+  return ok;
 }
 
 void ImuService::startTask() {
@@ -149,6 +175,20 @@ void ImuService::taskLoop() {
   for (;;) {
     const uint8_t wanted = desiredMode_.load();
     if (wanted != activeMode_) switchMode(wanted);
+    const uint8_t wantedRate = desiredRateHz_.load();
+    if (wantedRate != activeRateHz_) {
+      bool ok = true;
+      ok &= icm_.enableDMP(false) == ICM_20948_Stat_Ok;
+      ok &= applySampleRate(wantedRate);
+      ok &= icm_.enableDMP(true) == ICM_20948_Stat_Ok;
+      ok &= icm_.resetDMP() == ICM_20948_Stat_Ok;
+      ok &= icm_.resetFIFO() == ICM_20948_Stat_Ok;
+      activeRateHz_ = wantedRate;
+      if (ok)
+        GB_LOGI(kTag, "DMP rate -> %u Hz target", (unsigned)wantedRate);
+      else
+        GB_LOGE(kTag, "DMP rate change to %u Hz reported errors", (unsigned)wantedRate);
+    }
     drainFifo();
     updateRate(micros());
     vTaskDelay(kPollTicks);
@@ -213,9 +253,22 @@ void ImuService::drainFifo() {
 
 void ImuService::processPacket(const icm_20948_DMP_data_t &d, uint32_t tUs) {
   if ((d.header & DMP_header_bitmap_Accel) != 0) {
-    lastAcc_[0] = d.Raw_Accel.Data.X;
-    lastAcc_[1] = d.Raw_Accel.Data.Y;
-    lastAcc_[2] = d.Raw_Accel.Data.Z;
+    const int16_t raw[3] = {d.Raw_Accel.Data.X, d.Raw_Accel.Data.Y, d.Raw_Accel.Data.Z};
+    const uint16_t aX1000 = accelAlphaX1000_.load();
+    if (aX1000 == 0) {  // filter off: raw passthrough (legacy behavior)
+      lastAcc_[0] = raw[0];
+      lastAcc_[1] = raw[1];
+      lastAcc_[2] = raw[2];
+      accSeeded_ = false;
+    } else {
+      const float a = (float)aX1000 / 1000.0f;
+      for (int i = 0; i < 3; i++) {
+        if (!accSeeded_) accFilt_[i] = (float)raw[i];
+        else accFilt_[i] += a * ((float)raw[i] - accFilt_[i]);
+        lastAcc_[i] = (int16_t)lroundf(accFilt_[i]);
+      }
+      accSeeded_ = true;
+    }
   }
 
   const bool nine = activeMode_ == 1;
