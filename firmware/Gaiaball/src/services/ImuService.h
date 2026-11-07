@@ -26,7 +26,9 @@ struct ImuSample {
 };
 
 // GY-91 (MPU-9250) orientation service. A dedicated task (core 1, prio 3) polls the
-// data-ready flag every 2 ms, reads the raw registers (no DMP, no FIFO), corrects the
+// data-ready flag over I2C — the module's INT pin is not routed on the board — at a
+// period adapted to the configured rate (sample period / 4, clamped to 2..5 ms),
+// reads the raw registers (no DMP, no FIFO), corrects the
 // gyro bias (GyroBiasTracker: adapts only at rest, killing stand-still yaw drift),
 // runs Madgwick fusion (6-axis Quat6, or 9-axis Quat9 with the AK8963 mag) and
 // publishes ImuSample to a depth-8 queue (drop-oldest when full).

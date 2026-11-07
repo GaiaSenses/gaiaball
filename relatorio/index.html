@@ -902,7 +902,7 @@ void Diagnostics::feed() { esp_task_wdt_reset(); }
 constexpr uint8_t kMaxLinesPerWindow = 20;</code></pre></figure>
     </div>
     <dl class="facts">
-      <dt>Correção</dt><dd>Logger com níveis (E/W/I/D) e limite de 20 linhas/s. Watchdog de 10 s na tarefa principal (trava → reinício). Pacote de diagnóstico a 1 Hz com taxa real da IMU, taxa de notificação, overflows da FIFO, erros de I²S e UART, heap livre e mínimo, e saúde de cada periférico. Todo pacote leva <code>seq</code> e carimbo de tempo.</dd>
+      <dt>Correção</dt><dd>Logger com níveis (E/W/I/D) e limite de 20 linhas/s. Watchdog de 10 s em todas as tarefas de longa duração — app, imu, áudio e CO₂ (trava → reinício). Pacote de diagnóstico a 1 Hz com taxa real da IMU, taxa de notificação, overflows da FIFO, erros de I²S e UART, heap livre e mínimo, e saúde de cada periférico. Todo pacote leva <code>seq</code> e carimbo de tempo.</dd>
       <dt>Impacto esperado</dt><dd>Problemas passam a ser medidos, não adivinhados. Um travamento real reinicia o globo em 10 s em vez de exigir alguém para desligar e ligar.</dd>
       <dt>Validar na bancada</dt><dd>Conferir no config-app que o diagnóstico chega a cada segundo e que <code>uptimeS</code> só cresce durante o teste de 24 h.</dd>
     </dl>
@@ -1066,7 +1066,7 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
         <!-- tasks -->
         <rect x="200" y="60" width="170" height="56" rx="5" class="d-task"/>
         <text x="212" y="84" class="d-t">imu · prio 3</text>
-        <text x="212" y="102" class="d-s">fusão Madgwick · 2 ms</text>
+        <text x="212" y="102" class="d-s">fusão Madgwick · 2–5 ms</text>
         <rect x="200" y="190" width="170" height="56" rx="5" class="d-task"/>
         <text x="212" y="214" class="d-t">audio · prio 2</text>
         <text x="212" y="232" class="d-s">RMS + detector de pico</text>
@@ -1143,7 +1143,7 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
 
         <!-- imu task -->
         <rect x="40" y="56" width="300" height="160" rx="6" class="d-task"/>
-        <text x="54" y="80" class="d-t">imu · prio 3 · tick 2 ms</text>
+        <text x="54" y="80" class="d-t">imu · prio 3 · tick 2–5 ms</text>
         <text x="54" y="102" class="d-m">1 INT_STATUS pronto? lê accel/gyro (+mag)</text>
         <text x="54" y="120" class="d-m">2 rastreador de viés do gyro (só em repouso)</text>
         <text x="54" y="138" class="d-m">3 fusão Madgwick (Quat6 / Quat9)</text>
@@ -1221,9 +1221,9 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
       <table class="task-table">
         <thead><tr><th>Tarefa</th><th>Núcleo</th><th>Prioridade</th><th>Acorda com</th><th>Responsável por</th></tr></thead>
         <tbody>
-          <tr><td><code>imu</code></td><td>1</td><td>3</td><td>a cada 2 ms</td><td>MPU-9250 (I²C), viés do gyro, fusão Madgwick, montagem e zero</td></tr>
+          <tr><td><code>imu</code></td><td>1</td><td>3</td><td>a cada 2–5 ms (¼ do período de amostragem — o pino INT do GY-91 não é roteado na placa)</td><td>MPU-9250 (I²C), viés do gyro, fusão Madgwick, montagem e zero</td></tr>
           <tr><td><code>audio</code></td><td>1</td><td>2</td><td><code>i2s_read</code> (256 quadros = 16 ms)</td><td>I²S, decimador 2 kHz, biquads HP/LP, RMS, detector de pico</td></tr>
-          <tr><td><code>app</code></td><td>1</td><td>2</td><td>fila da IMU (timeout 20 ms)</td><td>envio BLE (IMU/CO₂/sensores/áudio/diag), LEDs, potenciômetro, pulso de CO₂ virtual, NVS, watchdog</td></tr>
+          <tr><td><code>app</code></td><td>1</td><td>2</td><td>fila da IMU (timeout 20 ms)</td><td>envio BLE (IMU/CO₂/sensores/áudio/diag), LEDs, potenciômetro, pulso de CO₂ virtual, NVS</td></tr>
           <tr><td><code>co2</code></td><td>1</td><td>1</td><td>a cada 20 ms</td><td>UART1 RX (somente escuta), parser de quadros do SC8, EMA</td></tr>
           <tr><td>NimBLE host</td><td>0</td><td>(biblioteca)</td><td>eventos BLE</td><td>GATT, desbloqueio por PIN, aplicação da config</td></tr>
         </tbody>
@@ -1232,7 +1232,7 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
 
     <div class="prose">
       <p>A fila da IMU tem 8 posições e descarta a amostra mais antiga quando enche, então um atraso momentâneo na tarefa <em>app</em> nunca gera backlog. A tarefa de áudio só marca “houve pico” numa variável atômica; quem acende LED e dispara o CO₂ virtual é a <em>app</em>. Comandos que chegam pelo BLE vão para uma fila e são executados pela <em>app</em>, nunca dentro do callback do rádio.</p>
-      <p>Só a tarefa <em>app</em> é vigiada pelo watchdog: se a IMU travar, a <em>app</em> continua rodando (a espera pela fila tem timeout de 20 ms); se a própria <em>app</em> travar, o ESP32 reinicia em 10 s. O código fica separado em <code>logic/</code> (lógica pura, testada no computador) e <code>services/</code> (hardware e FreeRTOS), e compila tanto no Arduino IDE quanto no PlatformIO, com versões fixadas (core ESP32 2.0.17, NimBLE-Arduino 1.4.3).</p>
+      <p><strong>Todas</strong> as tarefas de longa duração (<em>app</em>, <em>imu</em>, <em>audio</em>, <em>co2</em>) são vigiadas pelo watchdog de 10 s, e toda chamada bloqueante nesses laços tem timeout finito (<code>i2s_read</code>: 100 ms): se qualquer uma travar — inclusive por um periférico parado —, o ESP32 reinicia sozinho em até 10 s, em vez de degradar em silêncio (a bola é lacrada: auto-recuperação vale mais que um travamento quieto). O código fica separado em <code>logic/</code> (lógica pura, testada no computador) e <code>services/</code> (hardware e FreeRTOS), e compila tanto no Arduino IDE quanto no PlatformIO, com versões fixadas (core ESP32 2.0.17, NimBLE-Arduino 1.4.3).</p>
     </div>
   </div>
 </section>
@@ -1443,7 +1443,7 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
           <li>Métricas do fluxo: taxa (Hz), perda por <code>seq</code> e jitter.</li>
           <li><b>Sensores em tempo real</b>: valor atual de cada sensor com a unidade correta (orientação em °, aceleração em g, microfones em dBFS + dB SPL estimado, CO₂ em ppm, potenciômetro em %) e gráficos de linha (Plotly.js) empilhados verticalmente, um por sensor, cada um com sua cor, todos <b>compartilhando o mesmo eixo X (tempo)</b> — janela de 120 s a 10 Hz, com zoom.</li>
           <li><b>Analisador de espectro do sopro</b>: a bola transmite o áudio bruto decimado (2 kHz, int16) e o <b>FFT roda no navegador</b> (512 pontos, bins de ~3,9 Hz, 0–1000 Hz), com as linhas dos cortes HP/LP sobrepostas — sopre na bola e ajuste o passa-banda vendo quais frequências sobem.</li>
-          <li><b>Filtros por sensor, ajustáveis a quente e persistentes</b>: passa-banda do sopro (HP/LP + Q), EMA da aceleração, slerp do quaternion, EMA do potenciômetro e do CO₂, e a taxa da IMU (10–200 Hz, reconfigura o DMP). "Aplicar" confere a aceitação e já grava na NVS: as configurações sobrevivem a desligar/reiniciar.</li>
+          <li><b>Filtros por sensor, ajustáveis a quente e persistentes</b>: passa-banda do sopro (HP/LP + Q), EMA da aceleração, slerp do quaternion, EMA do potenciômetro e do CO₂, e a taxa da IMU (10–200 Hz, reconfigura o divisor de amostragem do MPU-9250). "Aplicar" confere a aceitação e já grava na NVS <em>como TLV</em> (ids estáveis): as configurações sobrevivem a desligar/reiniciar e a atualizações de firmware.</li>
           <li>Formulário com todos os parâmetros; “Aplicar” envia só o que mudou e relê para conferir.</li>
           <li>Presets com nome, exportação e importação em JSON. O PIN nunca entra num preset.</li>
         </ul>

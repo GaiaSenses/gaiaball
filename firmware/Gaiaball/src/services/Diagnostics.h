@@ -10,10 +10,13 @@ namespace gaia {
 
 // Health counters + task watchdog.
 //
-// Watchdog policy: only the App task registers (watchTask()) and feeds (feed()) the
-// 10 s task WDT. The App loop waits on the IMU sample queue with a 20 ms timeout, so
-// a stalled IMU task does NOT trip the WDT; it shows up as imuHzX10 dropping to 0 in
-// the diag packet. Not a task; call from App.
+// Watchdog policy: EVERY long-running task registers with the 10 s task WDT
+// (panic=true -> auto-reboot) and feeds it once per loop cycle — the App task via
+// watchTask()/feed(), the imu/audio/co2 tasks via esp_task_wdt_add/reset directly in
+// their taskLoop() (they cannot depend on this class: it includes their headers).
+// Every blocking call in those loops has a finite timeout (i2s_read: 100 ms) so a
+// stalled peripheral trips the WDT instead of degrading silently. Not a task; begin()
+// is called once from App::begin() BEFORE the tasks start.
 class Diagnostics {
  public:
   // esp_task_wdt_init(10 s, panic=true). Call once at boot.

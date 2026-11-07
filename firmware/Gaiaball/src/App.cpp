@@ -25,6 +25,9 @@ constexpr uint32_t kDiagPeriodMs = 1000;                 // 1 Hz
 constexpr uint32_t kSensorsPeriodMs = 200;               // 5 Hz (audio/pot levels)
 constexpr uint32_t kCo2KeepaliveMs = 1000;               // 1 Hz
 constexpr uint32_t kSoundLedHoldMs = 100;                // legacy peak flash
+// Legacy CO2_NORMAL_VALUE: reported when the sensor is disabled so the site's Pd
+// patch still receives a plausible baseline (documented in docs/protocol.md).
+constexpr uint16_t kCo2FallbackPpm = 600;
 
 // Gated command opcodes (see docs/protocol.md).
 constexpr uint8_t kCmdZero = 0x10;
@@ -56,15 +59,7 @@ void App::begin() {
 
   if (!store_.begin()) GB_LOGW(kTag, "NVS unavailable: running on volatile defaults");
   const GaiaConfig &cfg = store_.get();
-  gate_.setPin(cfg.pin);
-  imuNotifyHz_ = cfg.imuNotifyHz;
-  co2AlertPpm_ = cfg.co2AlertPpm;
-  audioEnabled_ = cfg.audioEnabled != 0;
-  potControls_ = cfg.potControlsThreshold != 0;
-  audioBpf_ = cfg.audioBpfEnabled != 0;
-  audioHpHz_ = cfg.audioHpHz;
-  audioLpHz_ = cfg.audioLpHz;
-  imuThrottle_.setRateHz(imuNotifyHz_);
+  applySnapshot(cfg);
   // Runs on the caller's task (NimBLE host for BLE config writes): flag only.
   store_.setOnChange([this](const GaiaConfig &) { configDirty_.store(true); });
 
@@ -127,7 +122,7 @@ void App::taskLoop() {
     if (peakPending_.exchange(false)) {
       peakMs_ = lastPeakMs_.load();
       peakSeen_ = true;
-      co2_.triggerVirtualPulse(nowMs);
+      virtualPulse_.trigger(nowMs);
     }
 
     if (elapsed(nowMs, lastPotMs_, kPotPeriodMs)) {
@@ -172,45 +167,58 @@ void App::handleImuSample(const ImuSample &s) {
   imuNotifiesInWindow_++;
 }
 
-void App::applyConfigIfDirty() {
-  if (!configDirty_.exchange(false)) return;
-  // Scalar reads of the live config on the App task (allowed by ConfigStore).
-  const GaiaConfig &cfg = store_.get();
+void App::applySnapshot(const GaiaConfig &cfg) {
   gate_.setPin(cfg.pin);
-  imu_.applyConfig(cfg);
-  audio_.applyConfig(cfg);
-  co2_.applyConfig(cfg);
-  pot_.applyConfig(cfg);
-  threshold_.store(pot_.threshold());
   co2AlertPpm_ = cfg.co2AlertPpm;
+  co2Enabled_ = cfg.co2Enabled != 0;
   audioEnabled_ = cfg.audioEnabled != 0;
   potControls_ = cfg.potControlsThreshold != 0;
   audioBpf_ = cfg.audioBpfEnabled != 0;
   audioHpHz_ = cfg.audioHpHz;
   audioLpHz_ = cfg.audioLpHz;
-  Logger::setEnabled(cfg.serialLogEnabled != 0);
+  virtualPulse_.configure(cfg.virtualPeakPpm, cfg.virtualDelayMs, cfg.virtualHoldMs);
   // setRateHz() restarts the schedule: only call it on an actual change.
   if (cfg.imuNotifyHz != imuNotifyHz_) {
     imuNotifyHz_ = cfg.imuNotifyHz;
     imuThrottle_.setRateHz(imuNotifyHz_);
   }
+  // Logger::setEnabled is intentionally NOT here: begin() applies it only after the
+  // whole boot sequence has printed (see end of begin()).
+}
+
+void App::applyConfigIfDirty() {
+  if (!configDirty_.exchange(false)) return;
+  // Scalar reads of the live config on the App task (allowed by ConfigStore).
+  const GaiaConfig &cfg = store_.get();
+  imu_.applyConfig(cfg);
+  audio_.applyConfig(cfg);
+  co2_.applyConfig(cfg);
+  pot_.applyConfig(cfg);
+  threshold_.store(pot_.threshold());
+  applySnapshot(cfg);
+  Logger::setEnabled(cfg.serialLogEnabled != 0);
   GB_LOGI(kTag, "config applied");
 }
 
 void App::updateSoundLed(uint32_t nowMs) {
   // Legacy: LED flashes 100 ms on a peak and stays on while the virtual pulse is active.
   const bool recentPeak = peakSeen_ && (uint32_t)(nowMs - peakMs_) < kSoundLedHoldMs;
-  led_.setSoundLed(recentPeak || co2_.virtualActive(nowMs));
+  led_.setSoundLed(recentPeak || virtualPulse_.active(nowMs));
+}
+
+uint16_t App::reportedCo2Ppm(uint32_t nowMs) {
+  if (virtualPulse_.active(nowMs)) return virtualPulse_.peakPpm();
+  return co2Enabled_ ? co2_.realPpm() : kCo2FallbackPpm;
 }
 
 void App::maybeNotifyCo2(uint32_t nowMs) {
-  const uint16_t ppm = co2_.reportedPpm(nowMs);
+  const uint16_t ppm = reportedCo2Ppm(nowMs);
   const bool stale = co2_.stale(nowMs);
   uint8_t flags = 0;
   // valid = ppm is backed by a fresh real reading (co2Enabled and not stale).
-  if (store_.get().co2Enabled && !stale) flags |= kCo2Valid;
+  if (co2Enabled_ && !stale) flags |= kCo2Valid;
   if (stale) flags |= kCo2Stale;
-  if (co2_.virtualActive(nowMs)) flags |= kCo2VirtualActive;
+  if (virtualPulse_.active(nowMs)) flags |= kCo2VirtualActive;
 
   const bool changed = !co2Sent_ || ppm != lastCo2Ppm_ || flags != lastCo2Flags_;
   if (!changed && !elapsed(nowMs, lastCo2NotifyMs_, kCo2KeepaliveMs)) return;

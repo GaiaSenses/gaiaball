@@ -204,4 +204,36 @@ bool tlvApply(GaiaConfig &cfg, const uint8_t *data, size_t len) {
   return true;
 }
 
+size_t tlvApplyLenient(GaiaConfig &cfg, const uint8_t *data, size_t len) {
+  if (len != 0 && data == nullptr) return 0;
+  size_t applied = 0;
+  for (size_t pos = 0; pos + 2 <= len;) {
+    const Reg *r = findReg(data[pos]);
+    const size_t vlen = data[pos + 1];
+    if (vlen > len - pos - 2) break;  // truncated record: nothing usable follows
+    const uint8_t *v = data + pos + 2;
+    pos += 2 + vlen;
+    if (r == nullptr || r->kind == Kind::Pin) continue;
+    if (!validValue(*r, v, vlen)) continue;
+    if (r->kind == Kind::Str) {
+      memset(cfg.bleName, 0, sizeof cfg.bleName);
+      memcpy(cfg.bleName, v, vlen);
+    } else {
+      storeNum(numField(cfg, r->id), r->kind, readLe(v, vlen));
+    }
+    applied++;
+  }
+  // Re-establish the cross-field invariants a partial apply may have broken.
+  const GaiaConfig defaults;
+  if (cfg.soundLedPin == cfg.co2LedPin) {
+    cfg.soundLedPin = defaults.soundLedPin;
+    cfg.co2LedPin = defaults.co2LedPin;
+  }
+  if (cfg.audioLpHz <= cfg.audioHpHz) {
+    cfg.audioHpHz = defaults.audioHpHz;
+    cfg.audioLpHz = defaults.audioLpHz;
+  }
+  return applied;
+}
+
 }  // namespace gaia

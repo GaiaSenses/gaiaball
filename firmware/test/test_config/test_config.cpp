@@ -243,6 +243,68 @@ void test_pin_not_serialized() {
     TEST_ASSERT_TRUE(std::memcmp(buf + k, "5678", 4) != 0);
 }
 
+// --- tlvApplyLenient: the NVS persistence path (unknown ids skipped, invariants
+// --- restored) so a config saved by one firmware version loads on another.
+
+void test_lenient_roundtrip_from_serialize() {
+  GaiaConfig a;
+  a.orientationMode = 1;
+  a.imuNotifyHz = 30;
+  a.virtualHoldMs = 60000;
+  a.soundLedPin = 5;
+  std::strcpy(a.bleName, "MyBall");
+  std::strcpy(a.pin, "9876");
+  uint8_t buf[256];
+  const size_t n = tlvSerialize(a, buf, sizeof buf);
+  TEST_ASSERT_GREATER_THAN(0, n);
+  GaiaConfig b;
+  TEST_ASSERT_GREATER_THAN(0, tlvApplyLenient(b, buf, n));
+  TEST_ASSERT_EQUAL(1, b.orientationMode);
+  TEST_ASSERT_EQUAL(30, b.imuNotifyHz);
+  TEST_ASSERT_EQUAL(60000, b.virtualHoldMs);
+  TEST_ASSERT_EQUAL(5, b.soundLedPin);
+  TEST_ASSERT_EQUAL_STRING("MyBall", b.bleName);
+  TEST_ASSERT_EQUAL_STRING("1234", b.pin);  // PIN never applied by the lenient path
+}
+
+void test_lenient_skips_unknown_and_invalid() {
+  GaiaConfig c;
+  const uint8_t buf[] = {0x77, 1, 9,          // unknown id: skipped (future register)
+                         0x02, 1, 30,         // valid: applied
+                         0x03, 1, 101,        // out of range: skipped
+                         0x41, 4, '0', '0', '0', '0',  // PIN record: never applied
+                         0x32, 2, 0xB8, 0x0B};         // valid: applied (3000)
+  TEST_ASSERT_EQUAL(2, tlvApplyLenient(c, buf, sizeof buf));
+  TEST_ASSERT_EQUAL(30, c.imuNotifyHz);
+  TEST_ASSERT_EQUAL(0, c.slerpAmount);  // untouched default
+  TEST_ASSERT_EQUAL(3000, c.co2AlertPpm);
+  TEST_ASSERT_EQUAL_STRING("1234", c.pin);
+}
+
+void test_lenient_stops_at_truncation() {
+  GaiaConfig c;
+  const uint8_t buf[] = {0x02, 1, 30, 0x15, 4, 1, 2};  // u32 cut short
+  TEST_ASSERT_EQUAL(1, tlvApplyLenient(c, buf, sizeof buf));
+  TEST_ASSERT_EQUAL(30, c.imuNotifyHz);
+  TEST_ASSERT_EQUAL_UINT32(100000, c.thresholdFixed);  // untouched default
+  TEST_ASSERT_EQUAL(0, tlvApplyLenient(c, nullptr, 0));  // empty is a no-op
+}
+
+void test_lenient_restores_cross_field_invariants() {
+  // Individually valid records that break the invariants together: the lenient load
+  // must end on a sane state (defaults restored for the broken pair).
+  GaiaConfig c;
+  const uint8_t samePin[] = {0x30, 1, 18, 0x31, 1, 18};
+  tlvApplyLenient(c, samePin, sizeof samePin);
+  TEST_ASSERT_EQUAL(2, c.soundLedPin);
+  TEST_ASSERT_EQUAL(4, c.co2LedPin);
+  GaiaConfig d;
+  const uint8_t inverted[] = {0x17, 2, 0xF4, 0x01, 0x19, 2, 100, 0};  // hp 500, lp 100
+  tlvApplyLenient(d, inverted, sizeof inverted);
+  TEST_ASSERT_EQUAL(10, d.audioHpHz);
+  TEST_ASSERT_EQUAL(200, d.audioLpHz);
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_defaults_match_legacy);
@@ -259,5 +321,9 @@ int main(int, char **) {
   RUN_TEST(test_shorter_name_clears_old_tail);
   RUN_TEST(test_serialize_cap_too_small);
   RUN_TEST(test_pin_not_serialized);
+  RUN_TEST(test_lenient_roundtrip_from_serialize);
+  RUN_TEST(test_lenient_skips_unknown_and_invalid);
+  RUN_TEST(test_lenient_stops_at_truncation);
+  RUN_TEST(test_lenient_restores_cross_field_invariants);
   return UNITY_END();
 }

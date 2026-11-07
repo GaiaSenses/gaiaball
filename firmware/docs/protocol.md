@@ -170,6 +170,12 @@ Reading the TLV requires no PIN **by design**: any connected central may inspect
 thresholds, rates, pins and the BLE name (the PIN itself is write-only and never
 serialized). Only TLV writes and the sensitive commands are gated by the unlock.
 
+Persistence (command `0x11`) stores this same TLV serialization in NVS — not a struct
+dump — and loads it leniently (unknown ids and invalid values are skipped; the
+cross-field rules are re-established on defaults), so a config saved by one firmware
+version survives schema changes. The PIN and the mounting quaternion have no readable
+TLV register and are persisted under their own NVS keys.
+
 | id | type | default | field |
 |---|---|---|---|
 | 0x01 | u8 | 0 | orientationMode (0=Quat6 relative, 1=Quat9) |

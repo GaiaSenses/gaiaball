@@ -1,6 +1,7 @@
 #include "ImuService.h"
 
 #include <Wire.h>
+#include <esp_task_wdt.h>
 #include <math.h>
 
 #include "../logic/Packets.h"
@@ -17,7 +18,6 @@ constexpr uint32_t kI2cHz = 400000;
 constexpr bool kAd0Val = false;  // AD0/SDO low -> 0x68, as the legacy firmware
 constexpr int kBeginAttempts = 10;
 constexpr uint32_t kBeginRetryMs = 500;
-constexpr TickType_t kPollTicks = pdMS_TO_TICKS(2);  // >= 2x the fastest sample rate
 constexpr TickType_t kIdleTicks = pdMS_TO_TICKS(1000);
 constexpr float kMovingThresholdDeg = 0.25f;
 constexpr uint32_t kRateWindowUs = 1000000;
@@ -29,6 +29,18 @@ constexpr float kDtMaxS = 0.05f;
 
 uint8_t clampMode(uint8_t mode) { return mode == 1 ? 1 : 0; }
 uint8_t clampRate(uint8_t hz) { return hz < 10 ? 10 : (hz > 200 ? 200 : hz); }
+
+// Data-ready poll period for a given sample rate. The GY-91's INT pin is not routed
+// on the board (docs/hardware-pinout.md: INT unconnected), so INT_STATUS is polled
+// over I2C; a quarter of the sample period guarantees every sample is read (the
+// ready bit latches until read) while cutting idle polling traffic vs a fixed 2 ms.
+// Clamped to [2, 5] ms: 50 Hz -> 5 ms, 100 Hz -> 2 ms, 200 Hz -> 2 ms.
+TickType_t pollTicksForRate(uint8_t hz) {
+  uint32_t ms = 250u / (hz ? hz : 1);  // = (1000 / hz) / 4
+  if (ms < 2) ms = 2;
+  if (ms > 5) ms = 5;
+  return pdMS_TO_TICKS(ms);
+}
 
 // Loads the persisted mounting quaternion; falls back to identity if unusable.
 Quat loadMount(const GaiaConfig &cfg) {
@@ -100,13 +112,21 @@ void ImuService::startTask() {
 void ImuService::taskEntry(void *arg) { static_cast<ImuService *>(arg)->taskLoop(); }
 
 void ImuService::taskLoop() {
+  // Task WDT: registered and fed once per cycle, idle path included (see the
+  // watchdog policy in Diagnostics.h).
+  esp_task_wdt_add(nullptr);
   if (!imuOk_ || queue_ == nullptr) {
     // IMU unavailable: idle forever so the rest of the system keeps running.
-    for (;;) vTaskDelay(kIdleTicks);
+    for (;;) {
+      esp_task_wdt_reset();
+      vTaskDelay(kIdleTicks);
+    }
   }
   rateWindowStartUs_ = micros();
   lastSampleUs_ = micros();
+  TickType_t pollTicks = pollTicksForRate(activeRateHz_);
   for (;;) {
+    esp_task_wdt_reset();
     const uint8_t wantedMode = desiredMode_.load();
     if (wantedMode != activeMode_) {
       activeMode_ = wantedMode;
@@ -124,10 +144,11 @@ void ImuService::taskLoop() {
       else
         GB_LOGE(kTag, "sample rate change to %u Hz failed", (unsigned)wantedRate);
       activeRateHz_ = wantedRate;
+      pollTicks = pollTicksForRate(activeRateHz_);
     }
     if (mpu_.dataReady()) processSample(micros());
     updateRate(micros());
-    vTaskDelay(kPollTicks);
+    vTaskDelay(pollTicks);
   }
 }
 

@@ -11,9 +11,14 @@ namespace gaia {
 
 namespace {
 constexpr const char *kNs = "gaia";
-constexpr const char *kKeyCfg = "cfg";
+constexpr const char *kKeyLegacyBlob = "cfg";  // pre-v6 whole-struct blob, discarded
+constexpr const char *kKeyTlv = "tlv";
+constexpr const char *kKeyPin = "pin";
+constexpr const char *kKeyMount = "mount";
 constexpr const char *kKeyVer = "ver";
 constexpr const char *kTag = "cfg";
+// Worst-case tlvSerialize output is ~120 B (29 registers); headroom for new ids.
+constexpr size_t kTlvBufCap = 256;
 Preferences g_prefs;
 
 // Scoped lock on the ConfigStore mutex; no-op when begin() never created it.
@@ -42,18 +47,32 @@ bool ConfigStore::begin() {
     GB_LOGE(kTag, "NVS open failed; using defaults");
     return false;
   }
-  if (g_prefs.getUChar(kKeyVer, 0) == kConfigSchemaVersion &&
-      g_prefs.getBytesLength(kKeyCfg) == sizeof(GaiaConfig)) {
-    GaiaConfig loaded;
-    g_prefs.getBytes(kKeyCfg, &loaded, sizeof(loaded));
-    // Guard against a non-terminated string from corrupted storage.
-    loaded.bleName[sizeof(loaded.bleName) - 1] = 0;
-    loaded.pin[sizeof(loaded.pin) - 1] = 0;
-    cfg_ = loaded;
-    GB_LOGI(kTag, "loaded from NVS");
-  } else {
-    GB_LOGI(kTag, "no valid stored config; using defaults");
+  // Pre-v6 schema stored the whole struct as one blob; its layout is not portable
+  // across versions, so it is discarded rather than migrated (no deployed devices).
+  if (g_prefs.isKey(kKeyLegacyBlob)) {
+    g_prefs.remove(kKeyLegacyBlob);
+    GB_LOGW(kTag, "legacy blob config discarded (pre-TLV schema)");
   }
+  const size_t tlvLen = g_prefs.getBytesLength(kKeyTlv);
+  if (tlvLen > 0 && tlvLen <= kTlvBufCap) {
+    uint8_t buf[kTlvBufCap];
+    g_prefs.getBytes(kKeyTlv, buf, tlvLen);
+    const size_t applied = tlvApplyLenient(cfg_, buf, tlvLen);
+    GB_LOGI(kTag, "loaded from NVS (%u TLV records)", (unsigned)applied);
+  } else {
+    GB_LOGI(kTag, "no stored config; using defaults");
+  }
+  // PIN and mounting quaternion have no readable TLV register: own keys.
+  if (g_prefs.getBytesLength(kKeyPin) == sizeof(cfg_.pin) - 1) {
+    char pin[sizeof(cfg_.pin)] = {};
+    g_prefs.getBytes(kKeyPin, pin, sizeof(cfg_.pin) - 1);
+    bool digits = true;
+    for (size_t i = 0; i < sizeof(cfg_.pin) - 1; i++)
+      if (pin[i] < '0' || pin[i] > '9') digits = false;
+    if (digits) memcpy(cfg_.pin, pin, sizeof(cfg_.pin));
+  }
+  if (g_prefs.getBytesLength(kKeyMount) == sizeof(cfg_.mountQuat))
+    g_prefs.getBytes(kKeyMount, cfg_.mountQuat, sizeof(cfg_.mountQuat));
   return true;
 }
 
@@ -62,7 +81,12 @@ bool ConfigStore::save() {
   {
     Lock lock(mutex_);
     if (!open_) return false;
-    ok = g_prefs.putBytes(kKeyCfg, &cfg_, sizeof(cfg_)) == sizeof(cfg_) &&
+    uint8_t buf[kTlvBufCap];
+    const size_t n = tlvSerialize(cfg_, buf, sizeof buf);
+    ok = n > 0 && g_prefs.putBytes(kKeyTlv, buf, n) == n &&
+         g_prefs.putBytes(kKeyPin, cfg_.pin, sizeof(cfg_.pin) - 1) == sizeof(cfg_.pin) - 1 &&
+         g_prefs.putBytes(kKeyMount, cfg_.mountQuat, sizeof(cfg_.mountQuat)) ==
+             sizeof(cfg_.mountQuat) &&
          g_prefs.putUChar(kKeyVer, kConfigSchemaVersion) == sizeof(uint8_t);
   }
   if (!ok) GB_LOGE(kTag, "save failed");

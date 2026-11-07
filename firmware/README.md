@@ -39,7 +39,7 @@ pio run -d firmware -e esp32dev                       # build
 pio run -d firmware -e esp32dev -t upload             # build + flash (auto-detects the port)
 pio run -d firmware -e esp32dev -t upload --upload-port /dev/ttyUSB0
 pio device monitor -d firmware -e esp32dev            # serial log, 115200 baud
-pio test -d firmware -e native                        # host unit tests (77 cases)
+pio test -d firmware -e native                        # host unit tests (81 cases)
 ```
 
 `platformio.ini` pins `espressif32@6.12.0` (Arduino core 2.0.17) and
@@ -66,12 +66,12 @@ arduino-cli compile --fqbn esp32:esp32:esp32 firmware/Gaiaball
 arduino-cli upload  --fqbn esp32:esp32:esp32 -p /dev/ttyUSB0 firmware/Gaiaball
 ```
 
-### Resource usage (final build, 2026-11-06)
+### Resource usage (build of 2026-11-07)
 
 | Toolchain | Flash (of 1 310 720 B) | Static RAM (of 327 680 B) |
 |---|---|---|
-| PlatformIO `esp32dev` | 695 625 B (53.1 %) | 39 028 B (11.9 %) |
-| arduino-cli `esp32:esp32:esp32` | 684 709 B (52 %) | 38 916 B (11 %) |
+| PlatformIO `esp32dev` | 805 693 B (61.5 %) | 52 116 B (15.9 %) |
+| arduino-cli `esp32:esp32:esp32` | 795 437 B (60 %) | 52 012 B (15 %) |
 
 Known build warnings (pre-existing, harmless, from the legacy IDF drivers kept on
 purpose for core 2.0.17): `'I2S_COMM_FORMAT_I2S' is deprecated` (AudioService) and

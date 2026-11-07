@@ -29,16 +29,18 @@ After `setup()` returns, `loop()` blocks in `vTaskDelay(portMAX_DELAY)`.
 
 | Task | Core | Prio | Stack | Wakes on | Owns |
 |---|---|---|---|---|---|
-| `imu` | 1 | 3 | 6144 | `vTaskDelay(2 ms)` | MPU-9250 (I2C), Madgwick fusion, gyro-bias tracker, mounting/zero state |
-| `audio` | 1 | 2 | 4096 | `i2s_read` (256 frames @ 16 kHz = 16 ms) | I2S0, PeakDetector |
-| `app` | 1 | 2 | 6144 | IMU queue (`xQueueReceive`, 20 ms timeout) | LEDs, pot ADC, virtual pulse, NVS saves, WDT |
+| `imu` | 1 | 3 | 6144 | `vTaskDelay` (adaptive: sample period / 4, clamped 2–5 ms — the GY-91 INT pin is not routed on the board) | MPU-9250 (I2C), Madgwick fusion, gyro-bias tracker, mounting/zero state |
+| `audio` | 1 | 2 | 4096 | `i2s_read` (256 frames @ 16 kHz = 16 ms; 100 ms timeout) | I2S0, PeakDetector |
+| `app` | 1 | 2 | 6144 | IMU queue (`xQueueReceive`, 20 ms timeout) | LEDs, pot ADC, virtual pulse (`VirtualCo2Pulse` member), NVS saves |
 | `co2` | 1 | 1 | 3072 | `vTaskDelay(20 ms)` | UART1 RX (listen-only), SC8 Co2FrameParser |
 | NimBLE host | 0 | (lib) | (lib) | BLE events | GATT, CommandGate unlock, config TLV apply |
 | Arduino `loopTask` | 1 | 1 | — | never (parked) | — |
 
-Only the App task is registered with the task watchdog. A stalled IMU task starves the
-App task's queue only down to its 20 ms timeout, so the App keeps feeding; a stalled App
-task trips the WDT (10 s → panic → reboot).
+Every long-running task (`app`, `imu`, `audio`, `co2`) is registered with the 10 s task
+watchdog (panic=true) and feeds it once per loop cycle; every blocking call in those
+loops has a finite timeout (`i2s_read`: 100 ms). A stalled task — including a stalled
+peripheral behind it — trips the WDT and reboots the ball instead of degrading
+silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen ball).
 
 ## Data flow
 
@@ -64,8 +66,9 @@ task trips the WDT (10 s → panic → reboot).
 ### Cross-task rules
 
 - **Audio → App**: the peak callback runs on the audio task and only stores
-  `lastPeakMs_` + sets `peakPending_`. The App task consumes the flag, calls
-  `Co2Service::triggerVirtualPulse` (App-task-only) and drives the sound LED.
+  `lastPeakMs_` + sets `peakPending_`. The App task consumes the flag, triggers its own
+  `VirtualCo2Pulse` (pure logic, App-task-only member) and drives the sound LED. The
+  `Co2Service` is real-sensor-only and has no pulse state.
 - **App → Audio**: `PotService` is single-task (App). After each `poll()` the App stores
   `threshold()` in an `std::atomic<float>`; the audio task's threshold provider reads it.
 - **BLE → App (commands)**: every command except `0x20` (unlock, inline on the host task)
@@ -73,9 +76,12 @@ task trips the WDT (10 s → panic → reboot).
   `BleCommand::unlockedAtEnqueue`, never by re-querying the gate.
 - **BLE → App (config)**: `ConfigStore::applyTlv` runs on the host task and fires onChange
   there; the handler only sets `configDirty_`. The App task then re-applies the config:
-  `CommandGate::setPin`, `applyConfig` on IMU/audio/CO2/pot, `NotifyThrottle::setRateHz`
-  (only if `imuNotifyHz` actually changed, since it restarts the schedule), cached
-  `co2AlertPpm`. Config writes are not persisted until command `0x11`.
+  `applyConfig` on IMU/audio/CO2/pot plus `App::applySnapshot` — the ONE place that
+  copies config scalars into the App-task mirrors and derived settings (gate PIN,
+  throttle rate only on an actual `imuNotifyHz` change, virtual-pulse parameters).
+  Config writes are not persisted until command `0x11`; persistence is the TLV
+  serialization (stable ids, lenient load), not a struct blob, so schema bumps keep
+  the user's stored config.
 - **IMU → App (mounting)**: `0x14` sets a request flag; the IMU task captures the mounting
   quaternion and hands it over; the App task calls `ConfigStore::setMountQuat` + `save()`.
 
@@ -99,7 +105,7 @@ for (;;) {
 ```
 CORE 0 (PRO_CPU) - radio only              CORE 1 (APP_CPU) - acquisition + app logic
 ┌───────────────────────────────┐          ┌─────────────────────────────────────────────┐
-│ NimBLE host task              │          │ imu task · prio 3 · 2 ms tick               │
+│ NimBLE host task              │          │ imu task · prio 3 · adaptive 2-5 ms tick    │
 │  GATT server, 5 chars         │          │  INT_STATUS ready? → read accel/gyro(+mag)  │
 │  notify → up to 2 centrals    │          │  → gyro-bias tracker → Madgwick (6/9 axis)  │
 │  RX cmd write ────────────────┼─queue──▶ │  → mount⁻¹·q → zero⁻¹ → slerp → queue(8)    │

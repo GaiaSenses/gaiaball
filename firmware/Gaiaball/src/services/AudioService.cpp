@@ -2,6 +2,7 @@
 
 #include <Arduino.h>
 #include <driver/i2s.h>
+#include <esp_task_wdt.h>
 
 #include <math.h>
 #include <string.h>
@@ -18,6 +19,9 @@ constexpr int kPinSck = 26;
 constexpr int kPinSd = 33;
 constexpr int kSampleRate = 16000;
 constexpr size_t kFrames = 256;
+// A DMA buffer is ready every 16 ms; a finite read timeout keeps the task feeding
+// the WDT even if the I2S DMA stalls (a timeout counts as an i2sError).
+constexpr TickType_t kReadTimeout = pdMS_TO_TICKS(100);
 }  // namespace
 
 bool AudioService::begin(const GaiaConfig &cfg) {
@@ -96,10 +100,13 @@ void AudioService::taskEntry(void *arg) {
 
 void AudioService::taskLoop() {
   static int32_t buf[kFrames * 2];  // 2 KB, kept off the 4 KB task stack
+  // Task WDT: registered and fed once per cycle (see the watchdog policy in
+  // Diagnostics.h); the finite i2s_read timeout is what makes the feed reachable.
+  esp_task_wdt_add(nullptr);
   for (;;) {
+    esp_task_wdt_reset();
     size_t bytes = 0;
-    // Blocks until a DMA buffer is ready (16 ms); fine here, this is the audio task.
-    const esp_err_t err = i2s_read(kPort, buf, sizeof(buf), &bytes, portMAX_DELAY);
+    const esp_err_t err = i2s_read(kPort, buf, sizeof(buf), &bytes, kReadTimeout);
     if (err != ESP_OK || bytes == 0) {
       if (i2sErrors_.load() < UINT32_MAX) i2sErrors_.fetch_add(1);
       vTaskDelay(pdMS_TO_TICKS(5));

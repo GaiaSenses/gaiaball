@@ -50,7 +50,7 @@ pela UI sobrevivem a desligar/reiniciar a bola.
 
 ```bash
 npm install
-npm run dev        # servidor de desenvolvimento (localhost)
+npm run dev        # servidor de desenvolvimento (com --host: acessível na rede local)
 npm run build      # gera dist/
 npm run preview    # serve dist/ localmente (ou sirva dist/ com qualquer servidor estático)
 npm test           # testes (vitest)

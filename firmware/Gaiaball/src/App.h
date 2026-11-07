@@ -7,6 +7,7 @@
 
 #include "logic/CommandGate.h"
 #include "logic/NotifyThrottle.h"
+#include "logic/VirtualCo2Pulse.h"
 #include "services/AudioService.h"
 #include "services/BleService.h"
 #include "services/Co2Service.h"
@@ -38,7 +39,14 @@ class App {
   void taskLoop();
 
   void handleImuSample(const ImuSample &s);
+  // THE one place that copies config scalars into the App-task mirrors (and derived
+  // settings: gate PIN, throttle rate, virtual-pulse params). begin() and
+  // applyConfigIfDirty() both call it; never copy a field outside it.
+  void applySnapshot(const GaiaConfig &cfg);
   void applyConfigIfDirty();
+  // Virtual pulse peak while active; otherwise the real reading (co2Enabled=1) or
+  // the legacy fallback 600 (co2Enabled=0).
+  uint16_t reportedCo2Ppm(uint32_t nowMs);
   void updateSoundLed(uint32_t nowMs);
   void maybeNotifyCo2(uint32_t nowMs);
   void sendDiag(uint32_t nowMs);
@@ -68,8 +76,10 @@ class App {
   std::atomic<bool> configDirty_{false};
 
   // App-task-only state.
+  VirtualCo2Pulse virtualPulse_;  // pure logic; triggered/consumed only here
   uint8_t imuNotifyHz_ = 0;
   uint16_t co2AlertPpm_ = 2000;
+  bool co2Enabled_ = true;
   bool audioEnabled_ = true;
   bool potControls_ = true;
   bool audioBpf_ = true;

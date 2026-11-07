@@ -1,6 +1,7 @@
 #include "Co2Service.h"
 
 #include <Arduino.h>
+#include <esp_task_wdt.h>
 
 #include "Logger.h"
 
@@ -32,10 +33,6 @@ bool Co2Service::begin(ConfigStore &store) {
 
 void Co2Service::applyConfig(const GaiaConfig &cfg) {
   emaAlphaX1000_.store(cfg.co2EmaAlphaX1000 == 0 ? 1 : cfg.co2EmaAlphaX1000);
-  peakPpm_.store(cfg.virtualPeakPpm);
-  delayMs_.store(cfg.virtualDelayMs);
-  holdMs_.store(cfg.virtualHoldMs);
-  pulseDirty_.store(true);
   staleMs_.store(cfg.co2StaleTimeoutMs);
   enabled_.store(cfg.co2Enabled != 0);
   rawLog_.store(cfg.co2RawLogMode != 0);
@@ -57,7 +54,11 @@ void Co2Service::taskEntry(void *arg) {
 
 void Co2Service::taskLoop() {
   uint8_t raw[kMaxBytesPerCycle];
+  // Task WDT: registered and fed once per cycle (see the watchdog policy in
+  // Diagnostics.h). The UART drain is bounded (kMaxBytesPerCycle) and non-blocking.
+  esp_task_wdt_add(nullptr);
   for (;;) {
+    esp_task_wdt_reset();
     if (enabled_.load()) {
       size_t n = 0;
       while (n < kMaxBytesPerCycle && uart().available() > 0) {
@@ -102,26 +103,6 @@ void Co2Service::taskLoop() {
 bool Co2Service::stale(uint32_t nowMs) const {
   if (!haveFrame_.load()) return true;
   return (uint32_t)(nowMs - lastFrameMs_.load()) > staleMs_.load();
-}
-
-void Co2Service::syncPulseConfig() {
-  if (pulseDirty_.exchange(false))
-    pulse_.configure(peakPpm_.load(), delayMs_.load(), holdMs_.load());
-}
-
-void Co2Service::triggerVirtualPulse(uint32_t nowMs) {
-  syncPulseConfig();
-  pulse_.trigger(nowMs);
-}
-
-bool Co2Service::virtualActive(uint32_t nowMs) {
-  syncPulseConfig();
-  return pulse_.active(nowMs);
-}
-
-uint16_t Co2Service::reportedPpm(uint32_t nowMs) {
-  if (virtualActive(nowMs)) return pulse_.peakPpm();
-  return enabled_.load() ? realPpm_.load() : kFallbackPpm;
 }
 
 }  // namespace gaia

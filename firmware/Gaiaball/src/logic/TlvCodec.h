@@ -17,4 +17,13 @@ size_t tlvSerialize(const GaiaConfig &cfg, uint8_t *out, size_t cap);
 // Duplicate ids are allowed; the last one wins.
 bool tlvApply(GaiaConfig &cfg, const uint8_t *data, size_t len);
 
+// Lenient apply for PERSISTED data (NVS): applies each individually valid record and
+// skips unknown ids or invalid values instead of rejecting the buffer, so a config
+// saved by one firmware version loads on another (ids are stable; see protocol.md).
+// Stops at a truncated record. The PIN record (0x41) is never applied — the PIN is
+// persisted under its own NVS key. After the pass the cross-field invariants are
+// re-established by restoring the affected fields' defaults (distinct LED pins,
+// lpHz > hpHz). Returns the number of records applied.
+size_t tlvApplyLenient(GaiaConfig &cfg, const uint8_t *data, size_t len);
+
 }  // namespace gaia
