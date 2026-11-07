@@ -9,6 +9,7 @@ using namespace gaia;
 static_assert(sizeof(ImuPacket) == 23, "ImuPacket must be 23 bytes");
 static_assert(sizeof(Co2Packet) == 12, "Co2Packet must be 12 bytes");
 static_assert(sizeof(DiagPacket) == 23, "DiagPacket must be 23 bytes");
+static_assert(sizeof(SensorsPacket) == 23, "SensorsPacket must be 23 bytes");
 
 void setUp() {}
 void tearDown() {}
@@ -17,6 +18,30 @@ void test_packet_sizes() {
   TEST_ASSERT_EQUAL(23, sizeof(ImuPacket));
   TEST_ASSERT_EQUAL(12, sizeof(Co2Packet));
   TEST_ASSERT_EQUAL(23, sizeof(DiagPacket));
+  TEST_ASSERT_EQUAL(23, sizeof(SensorsPacket));
+}
+
+void test_sensors_encode_golden() {
+  SensorsPacket p = makeSensorsPacket(7, 123456u, 12345.4f, 23456.0f, 100000.0f, 2048.0f,
+                                      kSensAudioOk | kSensAudioEnabled | kSensPotControls);
+  const uint8_t expected[23] = {
+      0x01, 0x04,              // version, type = Sensors
+      0x07, 0x00,              // seq = 7
+      0x40, 0xE2, 0x01, 0x00,  // timestampMs = 123456
+      0x39, 0x30, 0x00, 0x00,  // rmsL = 12345 (rounded)
+      0xA0, 0x5B, 0x00, 0x00,  // rmsR = 23456
+      0xA0, 0x86, 0x01, 0x00,  // threshold = 100000
+      0x00, 0x08,              // potRaw = 2048
+      0x07};                   // flags
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, reinterpret_cast<const uint8_t *>(&p), 23);
+}
+
+void test_sensors_encode_saturation_and_nan() {
+  SensorsPacket p = makeSensorsPacket(1, 2, NAN, -5.0f, 5e9f, 70000.0f, 0);
+  TEST_ASSERT_EQUAL_UINT32(0, p.audioRmsL);          // NaN -> 0
+  TEST_ASSERT_EQUAL_UINT32(0, p.audioRmsR);          // negative -> 0
+  TEST_ASSERT_EQUAL_UINT32(0xFFFFFFFFu, p.audioThreshold);  // saturates
+  TEST_ASSERT_EQUAL_UINT16(0xFFFF, p.potRaw);        // saturates
 }
 
 void test_imu_encode_golden() {
@@ -93,6 +118,8 @@ int main(int, char **) {
   RUN_TEST(test_imu_encode_golden);
   RUN_TEST(test_imu_encode_nan);
   RUN_TEST(test_imu_encode_clamp);
+  RUN_TEST(test_sensors_encode_golden);
+  RUN_TEST(test_sensors_encode_saturation_and_nan);
   RUN_TEST(test_co2_layout_golden);
   RUN_TEST(test_diag_layout_golden);
   return UNITY_END();

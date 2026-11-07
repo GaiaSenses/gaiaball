@@ -1,5 +1,10 @@
 // Thin Web Bluetooth client over the tested codecs. Protocol: firmware/docs/protocol.md.
-import { decodeCo2Packet, decodeDiagPacket, decodeImuPacket } from '../protocol/packets.ts';
+import {
+  decodeCo2Packet,
+  decodeDiagPacket,
+  decodeImuPacket,
+  decodeSensorsPacket,
+} from '../protocol/packets.ts';
 import { buildCommand, decodeTlv, encodeTlv, type TlvWrite } from '../protocol/tlv.ts';
 
 export const SERVICE_UUID = '19b10000-e8f2-537e-4f6c-d104768a1214';
@@ -86,7 +91,9 @@ export class GaiaballClient extends EventTarget {
       this.cfgChar = cfg;
       this.subscribe(imu, 'imu', decodeImuPacket);
       this.subscribe(co2, 'co2', decodeCo2Packet);
+      // The diag characteristic carries two packet types; each decoder ignores the other's.
       this.subscribe(diag, 'diag', decodeDiagPacket);
+      this.subscribe(diag, 'sensors', decodeSensorsPacket);
       await imu.startNotifications();
       await co2.startNotifications();
       await diag.startNotifications();

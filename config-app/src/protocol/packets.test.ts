@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeCo2Packet, decodeDiagPacket, decodeImuPacket } from './packets';
+import { decodeCo2Packet, decodeDiagPacket, decodeImuPacket, decodeSensorsPacket, rmsToDbfs } from './packets';
 import { TLV, VALID_OUTPUT_GPIOS, buildCommand, decodeTlv, encodeTlv } from './tlv';
 
 const hex = (s: string) => new DataView(new Uint8Array(s.trim().split(/\s+/).map((b) => parseInt(b, 16))).buffer);
@@ -8,6 +8,7 @@ const hex = (s: string) => new DataView(new Uint8Array(s.trim().split(/\s+/).map
 const IMU = '01 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 01 00 FE FF 03 00 03';
 const CO2 = '01 02 02 01 0D 0C 0B 0A E8 03 05 07';
 const DIAG = '01 03 01 00 03 02 01 00 F4 01 F4 01 01 00 02 00 03 00 C8 00 96 00 07';
+const SENSORS = '01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 07';
 
 describe('golden decode', () => {
   it('IMU', () => {
@@ -31,6 +32,23 @@ describe('golden decode', () => {
       i2sErrors: 2, uartFrameErrors: 3, freeHeapKb: 200, minFreeHeapKb: 150, flags: 7,
     });
     expect([s.imuOk, s.audioOk, s.co2Ok]).toEqual([true, true, true]);
+  });
+
+  it('Sensors', () => {
+    const s = decodeSensorsPacket(hex(SENSORS))!;
+    expect(s).toMatchObject({
+      seq: 7, tMs: 123456, rmsL: 12345, rmsR: 23456, threshold: 100000, potRaw: 2048, flags: 7,
+    });
+    expect([s.audioOk, s.audioEnabled, s.potControls]).toEqual([true, true, true]);
+    // A diag packet is NOT a sensors packet and vice versa (same characteristic).
+    expect(decodeSensorsPacket(hex(DIAG))).toBeNull();
+    expect(decodeDiagPacket(hex(SENSORS))).toBeNull();
+  });
+
+  it('rmsToDbfs: AES17 reference points', () => {
+    expect(rmsToDbfs(8388608 / Math.SQRT2)).toBeCloseTo(0, 6); // full-scale sine RMS
+    expect(rmsToDbfs(0)).toBe(-120); // silence floor
+    expect(rmsToDbfs(8388608 / Math.SQRT2 / 10)).toBeCloseTo(-20, 6);
   });
 });
 

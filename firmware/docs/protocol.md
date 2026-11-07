@@ -14,7 +14,7 @@ Service `19b10000-e8f2-537e-4f6c-d104768a1214`.
 | `19b10002-e8f2-537e-4f6c-d104768a1214` | write | commands |
 | `19b10003-e8f2-537e-4f6c-d104768a1214` | notify | CO2 packets |
 | `19b10004-e8f2-537e-4f6c-d104768a1214` | read/write | config TLV |
-| `19b10005-e8f2-537e-4f6c-d104768a1214` | notify | diagnostics packets |
+| `19b10005-e8f2-537e-4f6c-d104768a1214` | notify | diagnostics (0x03, 1 Hz) and live-sensor (0x04, 5 Hz) packets |
 
 ## Scales
 
@@ -24,7 +24,8 @@ Service `19b10000-e8f2-537e-4f6c-d104768a1214`.
 
 ## Packet type ids
 
-`0x01` ImuSample, `0x02` Co2Sample, `0x03` Diagnostics.
+`0x01` ImuSample, `0x02` Co2Sample, `0x03` Diagnostics, `0x04` Sensors. The diag
+characteristic carries both 0x03 and 0x04; receivers must dispatch on the type byte.
 
 ## ImuPacket (23 bytes)
 
@@ -77,6 +78,36 @@ Flags: bit0 `valid`, bit1 `stale`, bit2 `virtualActive`.
 | 22 | 1 | u8 | flags |
 
 Flags: bit0 `imuOk`, bit1 `audioOk`, bit2 `co2Ok`.
+
+## SensorsPacket (23 bytes, type 0x04, 5 Hz, diag characteristic)
+
+Live audio/potentiometer levels for the config-app's real-time charts.
+
+| Offset | Size | Type | Field |
+|---|---|---|---|
+| 0 | 1 | u8 | version (1) |
+| 1 | 1 | u8 | type (0x04) |
+| 2 | 2 | u16 | seq |
+| 4 | 4 | u32 | timestampMs |
+| 8 | 4 | u32 | audioRmsL |
+| 12 | 4 | u32 | audioRmsR |
+| 16 | 4 | u32 | audioThreshold |
+| 20 | 2 | u16 | potRaw |
+| 22 | 1 | u8 | flags |
+
+Flags: bit0 `audioOk`, bit1 `audioEnabled`, bit2 `potControlsThreshold`.
+
+Units:
+- `audioRmsL/R` and `audioThreshold` are RMS values in 24-bit sample counts. The
+  INMP441 data arrives on a 32-bit I2S frame and is shifted (`sample >> 8`), so the
+  full-scale amplitude is 2^23 = 8388608. dBFS (AES17, 0 dBFS = full-scale sine):
+  `dBFS = 20*log10(rms*sqrt(2)/2^23)`. Estimated sound pressure: `SPL ≈ dBFS + 120`
+  (INMP441 sensitivity −26 dBFS @ 94 dB SPL, 1 kHz). **This scale assumes the
+  32-bit I2S configuration with `>>8`; a 16-bit I2S configuration would change it.**
+- `potRaw` is the EMA-filtered 12-bit ADC reading (0..4095) of the threshold
+  potentiometer; percent of travel = potRaw / 4095 × 100.
+- IMU acceleration (ImuPacket) is in raw DMP counts at ±4 g full scale:
+  g = counts / 8192.
 
 ## Command opcodes (characteristic `...0002`, write)
 
@@ -162,6 +193,13 @@ Co2Packet: seq=258, timestampMs=0x0A0B0C0D, ppm=1000, flags=0b101 (valid+virtual
 
 ```
 01 02 02 01 0D 0C 0B 0A E8 03 05 07
+```
+
+SensorsPacket: seq=7, timestampMs=123456, rmsL=12345, rmsR=23456, threshold=100000,
+potRaw=2048, flags=0b111
+
+```
+01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 07
 ```
 
 DiagPacket: seq=1, uptimeS=0x00010203, imuHzX10=500, notifyHzX10=500, fifoOverflows=1,

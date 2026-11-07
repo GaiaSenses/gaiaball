@@ -4,8 +4,9 @@ import { mountConnectionPanel } from './panels/connection-panel.ts';
 import { StreamStats } from './metrics/stream-stats.ts';
 import { mountConfigPanel } from './panels/config-panel.ts';
 import { mountMetricsPanel } from './panels/metrics-panel.ts';
+import { mountSensorsPanel } from './panels/sensors-panel.ts';
 import { OrientationScene, type ViewMode } from './viz/orientation-scene.ts';
-import type { ImuSample } from './protocol/packets.ts';
+import type { Co2Sample, ImuSample, SensorsSample } from './protocol/packets.ts';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
@@ -28,6 +29,7 @@ app.innerHTML = `
       <section id="panel-config"></section>
       <section id="panel-metricas"></section>
     </aside>
+    <section id="panel-sensores"></section>
   </main>`;
 
 if (!(navigator as Navigator & { bluetooth?: unknown }).bluetooth) {
@@ -44,6 +46,7 @@ client.addEventListener('status', (ev) => {
 mountConnectionPanel(app.querySelector<HTMLElement>('#panel-conexao')!, client);
 mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client);
 mountMetricsPanel(app.querySelector<HTMLElement>('#panel-metricas')!, client, stats);
+mountSensorsPanel(app.querySelector<HTMLElement>('#panel-sensores')!, client);
 
 // 3D view. Smoothing is UI-only (client-side slerp); it never touches device config.
 const scene = new OrientationScene(app.querySelector<HTMLCanvasElement>('#viz-canvas')!);
@@ -79,12 +82,59 @@ if (new URLSearchParams(location.search).get('demo')) {
     const s = Math.sin(ang / 2);
     return { w: Math.cos(ang / 2), x: ax * s, y: ay * s, z: az * s };
   };
+  // Synthetic packets are dispatched as client events, so every panel (3D, métricas,
+  // sensores) exercises the same code path as a real device.
+  const emit = <T>(event: string, detail: T): void => {
+    client.dispatchEvent(new CustomEvent(event, { detail }));
+  };
   let seq = 0;
   setInterval(() => {
     const t = performance.now() / 1000;
     // Add jitter on top so the raw vs filtered difference is visible.
     const q = mul(mul(axisAngle(0, 0, 1, t * 0.5), axisAngle(0, 1, 0, Math.sin(t * 0.7) * 0.6)), axisAngle(1, 0, 0, Math.sin(t * 25) * 0.04));
-    scene.setQuaternion(q);
-    stats.push(seq++ & 0xffff, 0, performance.now());
+    const s: ImuSample = {
+      seq: seq++ & 0xffff,
+      tUs: Math.round(t * 1e6),
+      quat: q,
+      acc: [Math.round(Math.sin(t * 1.3) * 2048), Math.round(Math.cos(t * 0.9) * 2048), Math.round(8192 + Math.sin(t * 3) * 300)],
+      flags: 0b101,
+      quatValid: true,
+      nineAxis: false,
+      moving: true,
+    };
+    emit('imu', s); // the 'imu' listener above drives the scene and the stats
   }, 20);
+  let sensSeq = 0;
+  setInterval(() => {
+    const t = performance.now() / 1000;
+    const rms = (base: number, f: number) => base * (1 + 0.6 * Math.sin(t * f)) + (Math.sin(t * 31) > 0.95 ? 400000 : 0);
+    const detail: SensorsSample = {
+      seq: sensSeq++ & 0xffff,
+      tMs: Math.round(t * 1000),
+      rmsL: Math.max(0, Math.round(rms(22000, 0.8))),
+      rmsR: Math.max(0, Math.round(rms(18000, 1.1))),
+      threshold: 100000,
+      potRaw: Math.round(2048 + 1800 * Math.sin(t * 0.15)),
+      flags: 0b111,
+      audioOk: true,
+      audioEnabled: true,
+      potControls: true,
+    };
+    emit('sensors', detail);
+  }, 200);
+  let co2Seq = 0;
+  setInterval(() => {
+    const t = performance.now() / 1000;
+    const detail: Co2Sample = {
+      seq: co2Seq++ & 0xffff,
+      tMs: Math.round(t * 1000),
+      ppm: Math.round(430 + 40 * Math.sin(t * 0.05)),
+      flags: 0b001,
+      ageS: 0,
+      valid: true,
+      stale: false,
+      virtualActive: false,
+    };
+    emit('co2', detail);
+  }, 1000);
 }

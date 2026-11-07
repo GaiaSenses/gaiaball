@@ -5,12 +5,23 @@ export const PROTOCOL_VERSION = 1;
 export const PKT_IMU = 0x01;
 export const PKT_CO2 = 0x02;
 export const PKT_DIAG = 0x03;
+export const PKT_SENSORS = 0x04;
 
 export const IMU_PACKET_SIZE = 23;
 export const CO2_PACKET_SIZE = 12;
 export const DIAG_PACKET_SIZE = 23;
+export const SENSORS_PACKET_SIZE = 23;
 
 export const QUAT_SCALE = 16384; // Q14
+/** DMP accel full scale is ±4 g (SparkFun initializeDMP) -> 8192 LSB/g. */
+export const ACCEL_LSB_PER_G = 8192;
+/** Audio RMS counts: INMP441 24-bit samples (int32 >> 8), full-scale amplitude 2^23. */
+export const AUDIO_FULL_SCALE = 8388608;
+/** AES17 dBFS: 0 dBFS = RMS of a full-scale sine (FS/sqrt(2)). Floor at -120 dBFS. */
+export function rmsToDbfs(rms: number): number {
+  if (!(rms > 0)) return -120;
+  return Math.max(-120, 20 * Math.log10((rms * Math.SQRT2) / AUDIO_FULL_SCALE));
+}
 
 export const IMU_FLAG_QUAT_VALID = 1 << 0;
 export const IMU_FLAG_NINE_AXIS = 1 << 1;
@@ -21,6 +32,9 @@ export const CO2_FLAG_VIRTUAL_ACTIVE = 1 << 2;
 export const DIAG_FLAG_IMU_OK = 1 << 0;
 export const DIAG_FLAG_AUDIO_OK = 1 << 1;
 export const DIAG_FLAG_CO2_OK = 1 << 2;
+export const SENS_FLAG_AUDIO_OK = 1 << 0;
+export const SENS_FLAG_AUDIO_ENABLED = 1 << 1;
+export const SENS_FLAG_POT_CONTROLS = 1 << 2;
 
 export interface ImuSample {
   seq: number;
@@ -60,6 +74,22 @@ export interface DiagSample {
   co2Ok: boolean;
 }
 
+export interface SensorsSample {
+  seq: number;
+  tMs: number;
+  /** Audio RMS in 24-bit counts (left / right); see rmsToDbfs for the dBFS value. */
+  rmsL: number;
+  rmsR: number;
+  /** Peak-detector threshold, same RMS counts. */
+  threshold: number;
+  /** EMA-filtered potentiometer ADC reading, 0..4095. */
+  potRaw: number;
+  flags: number;
+  audioOk: boolean;
+  audioEnabled: boolean;
+  potControls: boolean;
+}
+
 function header(dv: DataView, size: number, type: number): boolean {
   return dv.byteLength === size && dv.getUint8(0) === PROTOCOL_VERSION && dv.getUint8(1) === type;
 }
@@ -92,6 +122,23 @@ export function decodeCo2Packet(dv: DataView): Co2Sample | null {
     valid: (flags & CO2_FLAG_VALID) !== 0,
     stale: (flags & CO2_FLAG_STALE) !== 0,
     virtualActive: (flags & CO2_FLAG_VIRTUAL_ACTIVE) !== 0,
+  };
+}
+
+export function decodeSensorsPacket(dv: DataView): SensorsSample | null {
+  if (!header(dv, SENSORS_PACKET_SIZE, PKT_SENSORS)) return null;
+  const flags = dv.getUint8(22);
+  return {
+    seq: dv.getUint16(2, true),
+    tMs: dv.getUint32(4, true),
+    rmsL: dv.getUint32(8, true),
+    rmsR: dv.getUint32(12, true),
+    threshold: dv.getUint32(16, true),
+    potRaw: dv.getUint16(20, true),
+    flags,
+    audioOk: (flags & SENS_FLAG_AUDIO_OK) !== 0,
+    audioEnabled: (flags & SENS_FLAG_AUDIO_ENABLED) !== 0,
+    potControls: (flags & SENS_FLAG_POT_CONTROLS) !== 0,
   };
 }
 

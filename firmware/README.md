@@ -110,7 +110,9 @@ config write that lands both LED functions on the same GPIO is rejected atomical
 - Advertises as **`Globo_1`** (config TLV `0x40`, applied after reboot); accepts two
   simultaneous centrals.
 - IMU packets at `imuNotifyHz` (default 50 Hz), CO2 packets on every ppm/flag change plus
-  a 1 Hz keepalive, diagnostics at 1 Hz. Notifications are only sent to subscribers.
+  a 1 Hz keepalive, diagnostics at 1 Hz and live sensor levels (audio RMS + potentiometer,
+  SensorsPacket) at 5 Hz on the diag characteristic. Notifications are only sent to
+  subscribers.
 - Sound LED (GPIO2): 100 ms flash per detected sound peak, held on while the virtual CO2
   pulse is active. Nothing else drives it.
 - CO2 LED (GPIO4): on while the real (non-stale) reading exceeds `co2AlertPpm` (default 2000).

@@ -9,4 +9,9 @@ namespace gaia {
 ImuPacket makeImuPacket(uint16_t seq, uint32_t tUs, const float q[4], const int16_t acc[3],
                         uint8_t flags);
 
+// Encodes the live sensor levels. Floats are rounded and saturated to the integer
+// field ranges; non-finite inputs encode as 0.
+SensorsPacket makeSensorsPacket(uint16_t seq, uint32_t tMs, float rmsL, float rmsR,
+                                float threshold, float potRaw, uint8_t flags);
+
 }  // namespace gaia

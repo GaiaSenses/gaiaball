@@ -1211,6 +1211,22 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
       <p class="result-line">Flags: bit0 IMU ok, bit1 áudio ok, bit2 CO₂ ok.</p>
     </div>
 
+    <div class="packet">
+      <h3>Sensores <small>característica …0005 · notify · 23 bytes · 5 Hz</small></h3>
+      <div class="strip-wrap"><div class="strip" style="grid-template-columns: 1fr 1fr 2fr 4fr 4fr 4fr 4fr 2fr 1fr; grid-auto-flow: row;">
+        <div class="fld k-hdr">ver<small>u8</small></div>
+        <div class="fld k-hdr">tipo<small>u8</small></div>
+        <div class="fld k-time">seq<small>u16</small></div>
+        <div class="fld k-time">t (ms)<small>u32</small></div>
+        <div class="fld k-data">RMS esq<small>u32</small></div>
+        <div class="fld k-data">RMS dir<small>u32</small></div>
+        <div class="fld k-data">limiar<small>u32</small></div>
+        <div class="fld k-data">pot<small>u16</small></div>
+        <div class="fld k-flag">flags<small>u8</small></div>
+      </div></div>
+      <p class="result-line">Níveis dos microfones e potenciômetro para os gráficos em tempo real do config-app. Divide a característica <code>…0005</code> com o diagnóstico (o receptor despacha pelo byte de tipo). RMS em contagens de 24 bits (I²S 32 bits com <code>&gt;&gt;8</code>; 0 dBFS = seno de fundo de escala 2²³); pot = ADC filtrado 0–4095. Flags: bit0 áudio ok, bit1 áudio habilitado, bit2 pot controla o limiar.</p>
+    </div>
+
     <div class="two-col">
       <div>
         <h3>Tamanho por amostra de orientação</h3>
@@ -1227,7 +1243,7 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
 
     <div class="callout">
       <h3>Comandos e PIN</h3>
-      <p>O globo fica em exposição pública e qualquer celular por perto consegue se conectar por BLE. Por isso, leitura de dados e o comando legado do LED (<code>0x00</code>/<code>0x01</code>) continuam abertos, mas tudo que muda o comportamento do dispositivo exige desbloquear a conexão com um PIN de 4 dígitos: escrever <code>0x20</code> seguido do PIN em ASCII (padrão <code>1234</code>, ex.: <code>20 31 32 33 34</code>).</p>
+      <p>O globo fica em exposição pública e qualquer celular por perto consegue se conectar por BLE. Por isso, a leitura de dados continua aberta, mas tudo que muda o comportamento do dispositivo exige desbloquear a conexão com um PIN de 4 dígitos: escrever <code>0x20</code> seguido do PIN em ASCII (padrão <code>1234</code>, ex.: <code>20 31 32 33 34</code>). O comando legado do LED (<code>0x00</code>/<code>0x01</code>) foi removido — nenhum cliente o usava (<a href="#f04">F04</a>).</p>
       <div class="scroll">
         <table>
           <thead><tr><th>Opcode</th><th>Ação</th><th>PIN</th></tr></thead>
@@ -1313,13 +1329,14 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
         <ul>
           <li>Vista 3D da orientação, alternando entre cru e filtrado.</li>
           <li>Métricas do fluxo: taxa (Hz), perda por <code>seq</code> e jitter.</li>
+          <li><b>Sensores em tempo real</b>: valor atual de cada sensor com a unidade correta (orientação em °, aceleração em g, microfones em dBFS + dB SPL estimado, CO₂ em ppm, potenciômetro em %) e gráficos de linha (Plotly.js) empilhados verticalmente, um por sensor, cada um com sua cor, todos <b>compartilhando o mesmo eixo X (tempo)</b> — janela de 120 s a 10 Hz, com zoom.</li>
           <li>Formulário com todos os parâmetros; “Aplicar” envia só o que mudou e relê para conferir.</li>
           <li>Presets com nome, exportação e importação em JSON. O PIN nunca entra num preset.</li>
         </ul>
       </div>
       <div class="tool">
         <h3>Modo demo</h3>
-        <p>Abrindo <code>http://localhost:5173/?demo=1</code>, o config-app mostra a vista 3D com rotação sintética, sem dispositivo. Serve para apresentar a ferramenta e conferir o navegador antes da bancada.</p>
+        <p>Abrindo <code>http://localhost:5173/?demo=1</code>, o config-app mostra a vista 3D, as métricas e os gráficos de sensores com dados sintéticos, sem dispositivo. Serve para apresentar a ferramenta e conferir o navegador antes da bancada.</p>
         <p>O site e o config-app podem ficar conectados ao mesmo tempo (o firmware aceita 2 centrais): ajusta-se o filtro no config-app vendo o globo real reagir no site.</p>
       </div>
       <div class="tool">

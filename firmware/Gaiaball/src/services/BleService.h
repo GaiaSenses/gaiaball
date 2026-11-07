@@ -85,6 +85,7 @@ class BleService {
   void notifyImu(const ImuPacket &p);
   void notifyCo2(const Co2Packet &p);
   void notifyDiag(const DiagPacket &p);
+  void notifySensors(const SensorsPacket &p);  // same characteristic as diag
 
   // charSel = characteristic short id: 1 (IMU), 3 (CO2) or 5 (diag). Other ids: false.
   bool anySubscriber(uint16_t charSel) const;

@@ -1,6 +1,25 @@
 # Gaiaball Config
 
-App web (Vite + TypeScript) para configurar e testar o Gaiaball v2 via Web Bluetooth: visualização 3D da orientação (cru × filtrado), métricas do fluxo (taxa, perda, jitter), parâmetros do firmware e presets.
+App web (Vite + TypeScript) para configurar e testar o Gaiaball v2 via Web Bluetooth: visualização 3D da orientação (cru × filtrado), métricas do fluxo (taxa, perda, jitter), parâmetros do firmware, presets e um painel de **sensores em tempo real** com gráficos de linha (Plotly.js).
+
+## Sensores em tempo real
+
+O painel "Sensores em tempo real" mostra o valor atual de cada sensor com a unidade
+correta e, abaixo, gráficos de linha empilhados verticalmente que **compartilham o
+mesmo eixo X (tempo, em segundos)** — janela de 120 s amostrada a 10 Hz, cada gráfico
+com uma cor própria. Arraste para dar zoom; duplo clique restaura.
+
+| Sensor | Unidade | Derivação |
+|---|---|---|
+| Orientação (IMU ICM-20948) | graus (°) | quaternion → Euler na convenção legada (mesma saída que o site entrega ao patch Pd) |
+| Aceleração (IMU) | g | contagens do DMP ÷ 8192 (fundo de escala ±4 g) |
+| Microfones esq./dir. (INMP441) | dBFS (AES17) + dB SPL estimado | RMS em contagens de 24 bits (I²S 32 bits, `>>8`; fundo de escala 2²³); 0 dBFS = seno de fundo de escala; SPL ≈ dBFS + 120 (sensibilidade do INMP441: −26 dBFS @ 94 dB SPL, 1 kHz) |
+| CO₂ (Senseair S8) | ppm | leitura Modbus do firmware |
+| Potenciômetro | % do curso | ADC filtrado 0–4095 → 0–100 % (o limiar mapeado aparece no cartão e como linha pontilhada nos gráficos dos microfones) |
+
+Os dados de áudio/potenciômetro chegam num pacote próprio (`SensorsPacket`, 5 Hz, na
+característica de diagnóstico — ver `firmware/docs/protocol.md`); IMU e CO₂ usam os
+pacotes já existentes. No modo demo o painel roda com dados sintéticos.
 
 ## Requisitos
 
@@ -18,7 +37,7 @@ npm run preview    # serve dist/ localmente (ou sirva dist/ com qualquer servido
 npm test           # testes (vitest)
 ```
 
-**Modo demo:** abra `http://localhost:5173/?demo=1` para ver a visualização 3D com rotação sintética, sem dispositivo.
+**Modo demo:** abra `http://localhost:5173/?demo=1` para ver a visualização 3D, as métricas e o painel de sensores com dados sintéticos, sem dispositivo.
 
 ## Roteiro de bancada
 

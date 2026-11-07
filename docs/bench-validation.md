@@ -54,6 +54,12 @@ npm install
 npm run dev        # abre em http://localhost:5173 (use Chrome/Edge)
 ```
 
+Além da vista 3D e das métricas, o painel **Sensores em tempo real** mostra cada sensor
+com sua unidade (orientação °, aceleração g, microfones dBFS/dB SPL, CO₂ ppm,
+potenciômetro %) e gráficos de linha com eixo X (tempo) compartilhado — útil para ver,
+por exemplo, o pico de áudio cruzando o limiar quando se bate palma, e a leitura do S8
+mudando ao respirar perto do sensor.
+
 O roteiro básico do app está em [`config-app/README.md`](../config-app/README.md); aqui só
 os critérios e onde olhar cada número.
 

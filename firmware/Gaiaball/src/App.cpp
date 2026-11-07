@@ -20,6 +20,7 @@ constexpr TickType_t kImuWaitTicks = pdMS_TO_TICKS(20);  // loop pacer when IMU 
 constexpr uint32_t kPotPeriodMs = 100;                   // 10 Hz
 constexpr uint32_t kLedPeriodMs = 50;                    // 20 Hz
 constexpr uint32_t kDiagPeriodMs = 1000;                 // 1 Hz
+constexpr uint32_t kSensorsPeriodMs = 200;               // 5 Hz (audio/pot levels)
 constexpr uint32_t kCo2KeepaliveMs = 1000;               // 1 Hz
 constexpr uint32_t kSoundLedHoldMs = 100;                // legacy peak flash
 
@@ -45,6 +46,8 @@ void App::begin() {
   gate_.setPin(cfg.pin);
   imuNotifyHz_ = cfg.imuNotifyHz;
   co2AlertPpm_ = cfg.co2AlertPpm;
+  audioEnabled_ = cfg.audioEnabled != 0;
+  potControls_ = cfg.potControlsThreshold != 0;
   imuThrottle_.setRateHz(imuNotifyHz_);
   // Runs on the caller's task (NimBLE host for BLE config writes): flag only.
   store_.setOnChange([this](const GaiaConfig &) { configDirty_.store(true); });
@@ -87,7 +90,7 @@ void App::taskEntry(void *arg) {
 void App::taskLoop() {
   diag_.watchTask();
   const uint32_t startMs = millis();
-  lastPotMs_ = lastLedMs_ = lastDiagMs_ = diagWindowStartMs_ = startMs;
+  lastPotMs_ = lastLedMs_ = lastDiagMs_ = lastSensorsMs_ = diagWindowStartMs_ = startMs;
 
   ImuSample sample;
   for (;;) {
@@ -128,6 +131,11 @@ void App::taskLoop() {
       sendDiag(nowMs);
     }
 
+    if (elapsed(nowMs, lastSensorsMs_, kSensorsPeriodMs)) {
+      lastSensorsMs_ = nowMs;
+      sendSensors(nowMs);
+    }
+
     drainCommands();
     persistCapturedMounting();
     diag_.feed();
@@ -154,6 +162,8 @@ void App::applyConfigIfDirty() {
   pot_.applyConfig(cfg);
   threshold_.store(pot_.threshold());
   co2AlertPpm_ = cfg.co2AlertPpm;
+  audioEnabled_ = cfg.audioEnabled != 0;
+  potControls_ = cfg.potControlsThreshold != 0;
   // setRateHz() restarts the schedule: only call it on an actual change.
   if (cfg.imuNotifyHz != imuNotifyHz_) {
     imuNotifyHz_ = cfg.imuNotifyHz;
@@ -219,6 +229,19 @@ void App::sendDiag(uint32_t nowMs) {
 
   const DiagPacket p = diag_.collect(diagSeq_++, (uint16_t)hzX10, imu_, audio_, co2_, nowMs);
   ble_.notifyDiag(p);
+}
+
+// Live sensor levels for the config-app charts (5 Hz, diag characteristic).
+void App::sendSensors(uint32_t nowMs) {
+  if (!ble_.anySubscriber(5)) return;  // diag characteristic (…0005)
+  uint8_t flags = 0;
+  if (audio_.ok()) flags |= kSensAudioOk;
+  if (audioEnabled_) flags |= kSensAudioEnabled;
+  if (potControls_) flags |= kSensPotControls;
+  const SensorsPacket p =
+      makeSensorsPacket(sensorsSeq_++, nowMs, audio_.lastRmsLeft(), audio_.lastRmsRight(),
+                        pot_.threshold(), pot_.filteredRaw(), flags);
+  ble_.notifySensors(p);
 }
 
 void App::drainCommands() {

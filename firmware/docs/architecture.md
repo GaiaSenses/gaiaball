@@ -90,6 +90,7 @@ for (;;) {
   every  50 ms                    → sound LED = peak<100 ms || virtual pulse active
                                     CO2 notify if ppm/flags changed or 1 s since last
                                     led.update (CO2 LED from the real, non-stale ppm)
+  every  200 ms                   → sensors packet (audio RMS, threshold, pot) on diag char
   every 1000 ms                   → diag collect + notifyDiag
   drain command queue (non-blocking)
   persist captured mounting (if any)
