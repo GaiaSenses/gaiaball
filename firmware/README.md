@@ -94,23 +94,16 @@ cross-check lives in [docs/hardware-pinout.md](docs/hardware-pinout.md).
 | Threshold potentiometer | 34 | ADC1 channel 6, 11 dB (board RV1 via R3) |
 | Sound LED | 2 | board LED D2 ("LED mic"); config TLV `0x30` (reboot to apply). Strapping pin, held LOW at boot |
 | CO2 alert LED | 4 | board LED D1 ("LED co2"); config TLV `0x31` (reboot to apply) |
-| Status LED (BLE command) | 23 | **NEW — physical board change required** (see below); config TLV `0x33` (reboot to apply) |
 
-### ⚠️ Physical board change: status LED on GPIO23
+### One pin, one function
 
 The legacy firmware drove **three different functions on GPIO2** (BLE LED command,
 sound LED, and a bogus SPI chip-select): a design error — one pin must carry one
-function. The board has only two LEDs (D2 = GPIO2, D1 = GPIO4), so the BLE-controlled
-LED (command `0x00`/`0x01`, used by the Gaiasenses site) gets its **own, new LED**:
-
-- **Add to the board: GPIO23 → 220 Ω resistor → LED anode; LED cathode → GND**
-  (same topology as D1/D2 on the KiCAD design).
-- GPIO23 is free on the board (header J3 pin 2, unconnected in the netlist) and has
-  no strapping role.
-- Until the LED is added, command `0x00`/`0x01` still works — it just drives an
-  unconnected pin. The sound and CO2 LEDs are unaffected.
-- The three LED pins are enforced distinct: a config write that lands two LED
-  functions on the same GPIO is rejected atomically.
+function. The board has exactly two LEDs (D2 = GPIO2, D1 = GPIO4), and each now has
+exactly one driver. The legacy BLE LED command (`0x00`/`0x01`) was **removed**: no
+client ever sent it (the site declares the characteristic but never writes it), so
+the opcodes are reserved and ignored. The two LED pins are enforced distinct: a
+config write that lands both LED functions on the same GPIO is rejected atomically.
 
 ## Runtime behavior
 
@@ -121,8 +114,7 @@ LED (command `0x00`/`0x01`, used by the Gaiasenses site) gets its **own, new LED
 - Sound LED (GPIO2): 100 ms flash per detected sound peak, held on while the virtual CO2
   pulse is active. Nothing else drives it.
 - CO2 LED (GPIO4): on while the real (non-stale) reading exceeds `co2AlertPpm` (default 2000).
-- Status LED (GPIO23, new): driven only by the legacy BLE command `0x01`/`0x00`.
-  Subsystem failures are reported in the diagnostics packet (config-app), not on an LED.
+- Subsystem failures are reported in the diagnostics packet (config-app), not on an LED.
 - CO2 sensor: **Senseair S8** (per the KiCAD board), polled over Modbus every 2 s
   (`FE 04 00 03 00 01 D5 C5`); TLV `0x27` selects the legacy passive 0x42 0x4D frame
   parser instead, for bench experiments with other sensors.
@@ -138,7 +130,7 @@ that connection's unlock for 30 s. Unlock lasts until disconnect.
 
 | Opcode | Action | PIN required |
 |---|---|---|
-| `0x00` / `0x01` | status LED off / on (legacy BLE LED command, GPIO23) | no |
+| `0x00` / `0x01` | reserved (legacy LED command, removed — ignored) | — |
 | `0x10` | zero orientation (current pose becomes identity) | yes |
 | `0x11` | save the current config to NVS | yes |
 | `0x12` | factory reset (defaults, incl. PIN `1234` and mounting) + reboot | yes |
@@ -173,7 +165,7 @@ persisted only by command `0x11`. Full table with types: [`docs/protocol.md`](do
 | `0x10`–`0x15` | audio: enabled, fast/slow alpha ×1000, debounceMs, potControlsThreshold, thresholdFixed | 1, 250, 995, 300, 1, 100000 |
 | `0x20`–`0x26` | CO2: enabled, checksum variant, stale timeout, virtual peak/delay/hold, raw log | 1, 0, 5000, 2100, 1000, 17000, 0 |
 | `0x27` | CO2 protocol: 0 = Senseair S8 Modbus (poll), 1 = passive 0x42 0x4D frames | 0 |
-| `0x30`–`0x33` | sound LED pin, CO2 LED pin, co2AlertPpm, status LED pin (pins pairwise distinct) | 2, 4, 2000, 23 |
+| `0x30`–`0x32` | sound LED pin, CO2 LED pin (pins distinct), co2AlertPpm | 2, 4, 2000 |
 | `0x40` | bleName (≤16 chars) | `Globo_1` |
 | `0x41` | PIN (4 ASCII digits, write-only) | `1234` |
 

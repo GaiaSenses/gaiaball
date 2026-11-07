@@ -35,10 +35,10 @@ not be used).
    SPI chip-select (`CS_PIN 2`, left over from the SparkFun example — `USE_SPI` is
    commented out, so it never ran, but it cemented the pin confusion). On the board,
    GPIO2 is only D2 ("LED mic"). Fix: one pin per function — sound LED = GPIO2 (D2),
-   CO2 LED = GPIO4 (D1), and the BLE LED command moved to a **new status LED on
-   GPIO23** (board change: GPIO23 → 220 Ω → LED → GND; GPIO23 is free and has no
-   strapping role). The firmware enforces that the three LED pins are pairwise
-   distinct.
+   CO2 LED = GPIO4 (D1). The BLE LED command itself turned out to be dead weight: no
+   client ever sends it (the Gaiasenses site declares the characteristic but never
+   writes it), so it was removed rather than given a pin. The firmware enforces that
+   the two LED pins are distinct.
 2. **The IMU is wired for I2C only.** U1's NCS pin is unconnected and SCL/SDA go to
    GPIO22/21 — the board matches the legacy firmware's active I2C path (AD0 low) and
    rules out ever enabling the vestigial SPI path. The v2 firmware uses I2C on 21/22

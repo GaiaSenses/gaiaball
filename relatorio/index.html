@@ -571,22 +571,20 @@ const int ledPin = 2;
 ⋮
 #define LED_SOM_PIN 2   // Vermelho (som) - mantido no GPIO2</code></pre></figure>
       <figure class="after"><figcaption>Depois · src/services/LedController.h — 1 pino = 1 função</figcaption>
-<pre><code>// Drives the three LEDs, one pin per function (no sharing, no arbitration).
-//  - Sound LED  (board D2, GPIO2):  sound events / virtual-pulse hold.
-//  - CO2 LED    (board D1, GPIO4):  real ppm &gt; co2AlertPpm.
-//  - Status LED (NEW,     GPIO23):  legacy BLE LED command (0x00/0x01) only.
+<pre><code>// Drives the board's two LEDs, one pin per function (no sharing, no arbitration).
+//  - Sound LED (board D2, GPIO2): sound events / virtual-pulse hold.
+//  - CO2 LED   (board D1, GPIO4): real ppm &gt; co2AlertPpm.
 class LedController {
  public:
   bool begin(ConfigStore &amp;store);
   void setSoundLed(bool on);
-  void setStatusLed(bool on);
   void update(uint32_t nowMs, uint16_t realPpm, uint16_t alertPpm);</code></pre></figure>
     </div>
     <dl class="facts">
-      <dt>Correção</dt><dd>Três saídas, cada uma com um único dono: LED de som = GPIO2 (D2, só eventos de som/pulso virtual), LED de CO₂ = GPIO4 (D1, só alerta de CO₂ real) e o comando BLE legado (<code>0x00</code>/<code>0x01</code>) vai para um <strong>LED de status novo no GPIO23</strong>. Os três pinos são configuráveis (TLV <code>0x30</code>/<code>0x31</code>/<code>0x33</code>, com reboot) e o firmware <strong>rejeita</strong> qualquer configuração que repita um GPIO entre eles. Sinalização de erro de subsistema saiu dos LEDs: ela vive no pacote de diagnóstico (visível no config-app). O GPIO2 continua forçado para LOW no boot (strapping).</dd>
-      <dt>⚠️ Mudança física na placa</dt><dd><strong>Adicionar um LED novo: GPIO23 → resistor de 220 Ω → anodo do LED; catodo → GND</strong> (mesma topologia de D1/D2 no desenho KiCAD). O GPIO23 está livre na placa (header J3, pino 2, sem rede no netlist) e não tem papel de strapping. Enquanto o LED não for montado, o comando <code>0x00</code>/<code>0x01</code> funciona, só não acende nada — som e CO₂ não são afetados. Detalhes em <code>firmware/docs/hardware-pinout.md</code>.</dd>
-      <dt>Impacto esperado</dt><dd>Cada LED significa uma única coisa; um comando BLE não “rouba” nem mascara a sinalização de som. Menos risco no boot.</dd>
-      <dt>Validar na bancada</dt><dd>Com o LED novo montado: enviar <code>0x01</code>/<code>0x00</code> e ver só o LED de status mudar; bater palma e ver só o LED de som piscar; CO₂ alto acende só o LED de CO₂. Tentar gravar dois LEDs no mesmo GPIO pelo config-app: a escrita deve ser recusada.</dd>
+      <dt>Correção</dt><dd>Duas saídas, cada uma com um único dono: LED de som = GPIO2 (D2, só eventos de som/pulso virtual) e LED de CO₂ = GPIO4 (D1, só alerta de CO₂ real). Os dois pinos são configuráveis (TLV <code>0x30</code>/<code>0x31</code>, com reboot) e o firmware <strong>rejeita</strong> qualquer configuração que os repita. Sinalização de erro de subsistema saiu dos LEDs: ela vive no pacote de diagnóstico (visível no config-app). O GPIO2 continua forçado para LOW no boot (strapping).</dd>
+      <dt>E o comando BLE de LED?</dt><dd><strong>Removido.</strong> A terceira função do GPIO2 — o comando legado <code>0x00</code>/<code>0x01</code> — era vestígio do exemplo “LED Control” do Arduino: <strong>nenhum cliente o envia</strong>. O Gaiasenses-web declara a característica (<code>ble-control.tsx</code> L34) mas nunca escreve nela, e o config-app também não. Em vez de criar um LED físico novo para um comando que ninguém usa, o comando foi eliminado; os opcodes <code>0x00</code>/<code>0x01</code> ficam reservados (ignorados, nunca reutilizar) e o id TLV <code>0x33</code> fica reservado pelo mesmo motivo. Nenhuma mudança física na placa é necessária.</dd>
+      <dt>Impacto esperado</dt><dd>Cada LED significa uma única coisa; nada “rouba” nem mascara a sinalização de som. Menos risco no boot e nenhum hardware extra.</dd>
+      <dt>Validar na bancada</dt><dd>Bater palma e ver só o LED de som piscar; CO₂ alto acende só o LED de CO₂. Tentar gravar os dois LEDs no mesmo GPIO pelo config-app: a escrita deve ser recusada. Escrever <code>0x01</code> na característica de comando: nada acontece e o serial registra opcode desconhecido.</dd>
     </dl>
     <p class="credit">Apontado também pelo relatório inicial (§3.7).</p>
   </div>
@@ -1234,7 +1232,7 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
         <table>
           <thead><tr><th>Opcode</th><th>Ação</th><th>PIN</th></tr></thead>
           <tbody>
-            <tr><td><code>0x00</code> / <code>0x01</code></td><td>LED de status apagado / aceso (legado; GPIO23, ver <a href="#f04">F04</a>)</td><td>não</td></tr>
+            <tr><td><code>0x00</code> / <code>0x01</code></td><td>Reservados (comando de LED legado, removido — nenhum cliente o enviava; ver <a href="#f04">F04</a>)</td><td>—</td></tr>
             <tr><td><code>0x10</code></td><td>Zerar orientação (pose atual vira referência)</td><td>sim</td></tr>
             <tr><td><code>0x11</code></td><td>Salvar config na NVS</td><td>sim</td></tr>
             <tr><td><code>0x12</code></td><td>Restaurar padrões de fábrica (inclui PIN e montagem) e reiniciar</td><td>sim</td></tr>
@@ -1289,10 +1287,9 @@ const uint8_t kS8ReadCo2Request[8] = {0xFE, 0x04, 0x00, 0x03,
           <tr><td>CO₂</td><td>0x25</td><td><code>virtualHoldMs</code></td><td>0–65535</td><td>17000</td><td>Duração do CO₂ virtual.</td></tr>
           <tr><td>CO₂</td><td>0x26</td><td><code>co2RawLogMode</code></td><td>0 / ≠0</td><td>0</td><td>Imprime os bytes brutos da UART em hexadecimal no serial (diagnóstico do protocolo do sensor).</td></tr>
           <tr><td>CO₂</td><td>0x27</td><td><code>co2Protocol</code></td><td>0 ou 1</td><td>0</td><td>0 = Senseair S8 via Modbus (consulta a cada 2 s — o sensor da placa, ver <a href="#f15">F15</a>); 1 = frames passivos <code>42 4D</code>.</td></tr>
-          <tr><td>LEDs</td><td>0x30</td><td><code>soundLedPin</code></td><td>GPIO 0–33</td><td>2</td><td>Pino do LED de som (D2 na placa). Distinto dos demais LEDs. <span class="reboot">requer reinício</span></td></tr>
-          <tr><td>LEDs</td><td>0x31</td><td><code>co2LedPin</code></td><td>GPIO 0–33</td><td>4</td><td>Pino do LED de alerta de CO₂ (D1 na placa). Distinto dos demais LEDs. <span class="reboot">requer reinício</span></td></tr>
+          <tr><td>LEDs</td><td>0x30</td><td><code>soundLedPin</code></td><td>GPIO 0–33</td><td>2</td><td>Pino do LED de som (D2 na placa). Distinto do LED de CO₂. <span class="reboot">requer reinício</span></td></tr>
+          <tr><td>LEDs</td><td>0x31</td><td><code>co2LedPin</code></td><td>GPIO 0–33</td><td>4</td><td>Pino do LED de alerta de CO₂ (D1 na placa). Distinto do LED de som. <span class="reboot">requer reinício</span></td></tr>
           <tr><td>LEDs</td><td>0x32</td><td><code>co2AlertPpm</code></td><td>0–65535</td><td>2000</td><td>Acima disso (leitura real, não velha) o LED de CO₂ acende.</td></tr>
-          <tr><td>LEDs</td><td>0x33</td><td><code>statusLedPin</code></td><td>GPIO 0–33</td><td>23</td><td>Pino do LED de status (comando BLE <code>0x00</code>/<code>0x01</code>; LED novo — ver <a href="#f04">F04</a>). Distinto dos demais LEDs. <span class="reboot">requer reinício</span></td></tr>
           <tr><td>Identidade</td><td>0x40</td><td><code>bleName</code></td><td>1–16 caracteres ASCII</td><td>Globo_1</td><td>Nome anunciado no Bluetooth. O site filtra por UUID, não por nome. <span class="reboot">requer reinício</span></td></tr>
           <tr><td>Identidade</td><td>0x41</td><td><code>pin</code></td><td>4 dígitos</td><td>1234</td><td>PIN de desbloqueio. Só escrita: nunca aparece numa leitura nem nos presets.</td></tr>
         </tbody>

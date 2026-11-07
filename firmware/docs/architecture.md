@@ -5,8 +5,8 @@ namespace `gaia` under `Gaiaball/src/`:
 
 - `logic/` — pure, host-testable code (packets, TLV codec, filters, CO2 parser, peak
   detector, PIN gate, S8 Modbus client, notify throttle). Covered by `pio test -e native`.
-  LEDs have NO arbitration layer: each of the three LED pins has exactly one driver
-  (sound events → GPIO2, CO2 alert → GPIO4, BLE LED command → GPIO23).
+  LEDs have NO arbitration layer: each LED pin has exactly one driver
+  (sound events → GPIO2, CO2 alert → GPIO4).
 - `services/` — hardware/RTOS wrappers, one per peripheral.
 - `App.h/.cpp` — owns every service, boots them, runs the App task.
 - `Gaiaball.ino` — `setup(){ app.begin(); }`, `loop()` parks forever.
@@ -15,7 +15,7 @@ namespace `gaia` under `Gaiaball/src/`:
 
 1. `Serial` 115200 + `Logger`
 2. `ConfigStore` (NVS load) → `CommandGate::setPin(cfg.pin)` → install onChange (flag only)
-3. `LedController` (three distinct pins; GPIO2 driven LOW first: strapping pin)
+3. `LedController` (two distinct pins; GPIO2 driven LOW first: strapping pin)
 4. `BleService` (GATT + advertising start early)
 5. `ImuService::begin` (I2C + DMP init, blocks up to ~5 s if the IMU is absent)
 6. `PotService::begin`, `AudioService` (peak callback + threshold provider set first)

@@ -45,8 +45,6 @@ const GROUPS: Group[] = [
   { title: 'LEDs (1 pino = 1 função; pinos distintos)', fields: [
     { id: TLV.soundLedPin, label: 'Pino LED de som (D2 na placa)', kind: 'select', options: GPIO_OPTIONS },
     { id: TLV.co2LedPin, label: 'Pino LED de CO₂ (D1 na placa)', kind: 'select', options: GPIO_OPTIONS },
-    { id: TLV.statusLedPin, label: 'Pino LED de status (comando BLE)', kind: 'select', options: GPIO_OPTIONS,
-      hint: 'LED novo: não existe na placa original — adicionar LED + resistor de 220 Ω no GPIO escolhido (padrão 23).' },
     { id: TLV.co2AlertPpm, label: 'Alerta CO₂ (ppm)', kind: 'number', min: 0, max: 65535 },
   ] },
   { title: 'Sistema', fields: [
@@ -176,12 +174,12 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   const fail = (e: unknown): void => say(e instanceof Error ? e.message : String(e));
   const hasPin = (f: Field): boolean => f.id === TLV.pin;
 
-  /** Mirror of the firmware rule: the three LED functions must sit on distinct GPIOs.
+  /** Mirror of the firmware rule: the two LED functions must sit on distinct GPIOs.
    *  Checks the RESULTING state (written value, else device snapshot, else firmware
    *  default) and only when some LED pin is being written — the firmware check stays
    *  authoritative either way. */
   const LED_PIN_DEFAULTS: ReadonlyMap<number, number> = new Map([
-    [TLV.soundLedPin, 2], [TLV.co2LedPin, 4], [TLV.statusLedPin, 23],
+    [TLV.soundLedPin, 2], [TLV.co2LedPin, 4],
   ]);
   const ledPinsError = (regs: TlvWrite[]): string | null => {
     const ids = [...LED_PIN_DEFAULTS.keys()];
@@ -190,7 +188,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       Number(regs.find((r) => r.id === id)?.value ?? snapshot.get(id) ?? LED_PIN_DEFAULTS.get(id));
     const pins = ids.map(finalPin);
     if (new Set(pins).size !== pins.length)
-      return 'Pinos de LED repetidos: som, CO₂ e status precisam de GPIOs distintos (1 pino = 1 função).';
+      return 'Pinos de LED repetidos: som e CO₂ precisam de GPIOs distintos (1 pino = 1 função).';
     return null;
   };
 

@@ -18,8 +18,7 @@ class CommandGate;
 
 // Command opcodes with special handling inside BleService. Every other opcode is
 // forwarded verbatim through the command queue.
-constexpr uint8_t kCmdLedOff = 0x00;  // legacy, ungated
-constexpr uint8_t kCmdLedOn = 0x01;   // legacy, ungated
+// 0x00/0x01: reserved (legacy LED on/off; removed — no client ever sent them).
 constexpr uint8_t kCmdUnlock = 0x20;  // executed inline: CommandGate::unlock(slot, PIN)
 
 // One command-characteristic write, as handed to the App task.

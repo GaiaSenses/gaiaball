@@ -11,7 +11,7 @@
 namespace gaia {
 
 // Bump when GaiaConfig layout changes; mismatched stored data falls back to defaults.
-constexpr uint8_t kConfigSchemaVersion = 2;  // v2: GaiaConfig.mountQuat
+constexpr uint8_t kConfigSchemaVersion = 3;  // v3: co2Protocol added, statusLedPin removed
 
 // Threading: internally locked for applyTlv/serializeTlv/save/factoryReset/setMountQuat
 // (callable from BLE and App tasks; the mutex is created in begin(), before which the

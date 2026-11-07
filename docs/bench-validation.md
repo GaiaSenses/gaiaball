@@ -11,9 +11,8 @@ notify de orientação 50–60 Hz, latência medida < 50 ms, 24 h sem travar, ze
 
 - Placa ESP32 (DevKit) montada conforme o pinout de `firmware/README.md`: IMU ICM-20948 em
   SDA 21 / SCL 22, INMP441 em WS 25 / SCK 26 / SD 33, sensor de CO₂ com TX no GPIO 16,
-  potenciômetro no GPIO 34, LED de som no GPIO 2 (D2 na placa), LED de CO₂ no GPIO 4 (D1)
-  e LED de status no GPIO 23 (LED **novo**: adicionar LED + resistor de 220 Ω à placa;
-  ver `firmware/docs/hardware-pinout.md`). 1 pino = 1 função.
+  potenciômetro no GPIO 34, LED de som no GPIO 2 (D2 na placa) e LED de CO₂ no GPIO 4
+  (D1). 1 pino = 1 função (ver `firmware/docs/hardware-pinout.md`).
 - Cabo USB de dados, computador com PlatformIO (`pio`) **ou** `arduino-cli`.
 - Chrome ou Edge (Web Bluetooth) para o config-app.
 - Uma superfície plana e um celular/ímã pequeno para o teste de deriva.

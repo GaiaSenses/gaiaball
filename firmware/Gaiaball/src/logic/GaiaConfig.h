@@ -34,13 +34,11 @@ struct GaiaConfig {
   uint8_t co2RawLogMode = 0;
 
   // One pin = one function (see firmware/docs/hardware-pinout.md). Defaults follow the
-  // KiCAD board: D2 "LED mic" on GPIO2, D1 "LED co2" on GPIO4. The status LED is a NEW
-  // physical LED (GPIO23 + 220R + LED to GND must be added to the board); it carries
-  // ONLY the legacy BLE LED command (0x00/0x01). The three pins must be distinct
-  // (enforced by tlvApply).
-  uint8_t soundLedPin = 2;    // D2 on the board
-  uint8_t co2LedPin = 4;      // D1 on the board
-  uint8_t statusLedPin = 23;  // new LED; GPIO23 is free on the board headers
+  // KiCAD board: D2 "LED mic" on GPIO2, D1 "LED co2" on GPIO4. The two pins must be
+  // distinct (enforced by tlvApply). The legacy BLE LED command (0x00/0x01) was
+  // removed: no client ever sent it and the board has no LED for it.
+  uint8_t soundLedPin = 2;  // D2 on the board
+  uint8_t co2LedPin = 4;    // D1 on the board
   uint16_t co2AlertPpm = 2000;
 
   char bleName[17] = {'G', 'l', 'o', 'b', 'o', '_', '1', 0};  // 1..16 printable ASCII

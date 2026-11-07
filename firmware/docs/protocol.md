@@ -82,7 +82,7 @@ Flags: bit0 `imuOk`, bit1 `audioOk`, bit2 `co2Ok`.
 
 | Opcode | Meaning |
 |---|---|
-| `0x00` / `0x01` | legacy LED off / on (drives the status LED, TLV `0x33`) |
+| `0x00` / `0x01` | reserved (legacy LED command, removed — no client ever sent it; ignored, never reuse) |
 | `0x10` | zero orientation |
 | `0x11` | save config |
 | `0x12` | factory reset |
@@ -120,13 +120,13 @@ A sequence of records `id u8 | len u8 | value (len bytes, little-endian)`.
 | 0x30 | u8 | 2 | soundLedPin (valid output GPIOs only; 6–11 (flash) and nonexistent pins rejected) |
 | 0x31 | u8 | 4 | co2LedPin (same validation as 0x30) |
 | 0x32 | u16 | 2000 | co2AlertPpm |
-| 0x33 | u8 | 23 | statusLedPin (same validation as 0x30; drives commands 0x00/0x01) |
 | 0x40 | char[≤16] | "Globo_1" | bleName |
 | 0x41 | char[4] | "1234" | pin (write-only: never serialized/readable) |
 
-The three LED pins (0x30, 0x31, 0x33) are additionally validated **as a set**: a
-write whose resulting configuration puts two LED functions on the same GPIO is
-rejected atomically (one pin = one function).
+The two LED pins (0x30, 0x31) are additionally validated **as a set**: a write
+whose resulting configuration puts both LED functions on the same GPIO is rejected
+atomically (one pin = one function). Id 0x33 is reserved (was statusLedPin; removed
+with the legacy LED command).
 
 ## CO2 sensor protocol (UART1, 9600 8N1)
 

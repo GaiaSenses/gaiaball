@@ -230,12 +230,9 @@ void App::drainCommands() {
 
 void App::dispatch(const BleCommand &cmd) {
   switch (cmd.opcode) {
-    case kCmdLedOff:
-      led_.setStatusLed(false);
-      return;
-    case kCmdLedOn:
-      led_.setStatusLed(true);
-      return;
+    // 0x00/0x01 (legacy LED command) are reserved and ignored: no client ever sent
+    // them (the site declares the characteristic but never writes it), and the board
+    // has no LED for them. They fall through to "unknown opcode" below.
     case kCmdZero:
     case kCmdSave:
     case kCmdFactoryReset:
