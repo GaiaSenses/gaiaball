@@ -1,0 +1,3 @@
+# Frozen historical references: stored byte-for-byte, no line-ending conversion.
+firmware-original.ino -text
+relatorio.md -text
