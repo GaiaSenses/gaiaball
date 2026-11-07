@@ -79,7 +79,7 @@ const GROUPS: Group[] = [
     { id: TLV.co2RawLogMode, label: 'Log bruto', kind: 'checkbox',
       info: 'Imprime no log serial cada quadro recebido do sensor, em hexadecimal — só para diagnóstico de bancada; desligue depois. Liga/desliga, sem unidade.' },
   ] },
-  { title: 'LEDs (1 pino = 1 função; pinos distintos)', fields: [
+  { title: 'LEDs', fields: [
     { id: TLV.soundLedPin, label: 'Pino LED de som (D2 na placa)', kind: 'select', options: GPIO_OPTIONS,
       info: 'GPIO do LED que pisca quando um sopro é detectado (D2 na placa). Deve ser diferente do pino do LED de CO₂. Unidade: número do GPIO do ESP32.' },
     { id: TLV.co2LedPin, label: 'Pino LED de CO₂ (D1 na placa)', kind: 'select', options: GPIO_OPTIONS,
