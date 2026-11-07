@@ -77,12 +77,10 @@ const GROUPS: Group[] = [
     { id: TLV.co2RawLogMode, label: 'Log bruto', kind: 'checkbox',
       info: 'Imprime no log serial cada quadro recebido do sensor, em hexadecimal — só para diagnóstico de bancada; desligue depois. Liga/desliga, sem unidade.' },
   ] },
-  // The LED GPIOs (sound = D2/GPIO2, CO2 = D1/GPIO4) follow the board and are not
-  // exposed here on purpose; the firmware TLV registers 0x30/0x31 still exist.
-  { title: 'LEDs', fields: [
-    { id: TLV.co2AlertPpm, label: 'Alerta CO₂ (ppm)', kind: 'number', min: 0, max: 65535,
-      info: 'Concentração de CO₂ real que acende o LED de alerta (D1 na placa). Unidade: ppm (partes por milhão).' },
-  ] },
+  // No LEDs group on purpose: the LED GPIOs (sound = D2/GPIO2, CO2 = D1/GPIO4)
+  // follow the board, and the CO2 alert threshold stays on the firmware default.
+  // The TLV registers (0x30/0x31/0x32) still exist and read-back records for ids
+  // without a UI field are skipped by populate().
   { title: 'Sistema', fields: [
     { id: TLV.serialLogEnabled, label: 'Log serial (USB)', kind: 'checkbox',
       info: 'Mensagens de log pela USB. Desligado por padrão: formatar texto rouba CPU do caminho crítico de aquisição. Liga/desliga, sem unidade.' },
