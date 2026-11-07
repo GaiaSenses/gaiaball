@@ -2,9 +2,6 @@ import * as THREE from 'three';
 
 export interface Quat { w: number; x: number; y: number; z: number }
 export type ModelKind = 'plane' | 'box';
-export type ViewMode = 'both' | 'raw' | 'filtered';
-
-const OFFSET_X = 1.2;
 
 /** Dart-shaped paper plane, nose toward +X (sensor forward). Flat-shaded vertex colors. */
 function buildPlane(): THREE.Object3D {
@@ -38,23 +35,19 @@ function buildBox(): THREE.Object3D {
   return new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 0.5), mats);
 }
 
+/** Renders the treated quaternion exactly as received over BLE — no extra smoothing
+ *  in the UI, so what you see is what the firmware sends (including its own slerp,
+ *  when enabled in the device config). */
 export class OrientationScene {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
   private camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
   // Sensor frame is Z-up, three.js is Y-up: this fixed -90 deg rotation about X maps
-  // sensor +Z to screen-up. Models live inside it, so quaternions are applied as-is.
+  // sensor +Z to screen-up. The model lives inside it, so quaternions are applied as-is.
   private container = new THREE.Object3D();
-  private rawHolder = new THREE.Object3D();
-  private filtHolder = new THREE.Object3D();
-  private rawBody = new THREE.Object3D();
-  private filtBody = new THREE.Object3D();
-  private rawModel: THREE.Object3D | null = null;
-  private filtModel: THREE.Object3D | null = null;
-  private target = new THREE.Quaternion();
+  private body = new THREE.Object3D();
+  private model: THREE.Object3D | null = null;
   private grid: THREE.GridHelper | null = null;
-  private smoothing = 0;
-  private view: ViewMode = 'both';
   private raf = 0;
   private disposed = false;
   private ro: ResizeObserver;
@@ -68,11 +61,10 @@ export class OrientationScene {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.container.rotation.x = -Math.PI / 2; // fixed mount rotation, not an orientation path
     this.scene.add(this.container);
-    for (const [holder, body] of [[this.rawHolder, this.rawBody], [this.filtHolder, this.filtBody]] as const) {
-      holder.add(body);
-      holder.add(new THREE.AxesHelper(1.1));
-      this.container.add(holder);
-    }
+    const holder = new THREE.Object3D();
+    holder.add(this.body);
+    holder.add(new THREE.AxesHelper(1.1));
+    this.container.add(holder);
     this.setDark(true);
     this.scene.add(new THREE.HemisphereLight(0xcfd8ff, 0x22252b, 1.1));
     const sun = new THREE.DirectionalLight(0xffffff, 1.4);
@@ -81,7 +73,6 @@ export class OrientationScene {
     this.camera.position.set(0, 2.2, 5.2);
     this.camera.lookAt(0, 0, 0);
     this.setModel('plane');
-    this.applyView();
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(canvas.parentElement ?? canvas);
     this.resize();
@@ -90,27 +81,16 @@ export class OrientationScene {
   }
 
   setQuaternion(q: Quat): void {
-    this.target.set(q.x, q.y, q.z, q.w); // THREE order is (x, y, z, w)
-    this.rawBody.quaternion.copy(this.target);
-  }
-
-  setSmoothing(amount: number): void {
-    this.smoothing = Math.min(1, Math.max(0, amount));
+    this.body.quaternion.set(q.x, q.y, q.z, q.w); // THREE order is (x, y, z, w)
   }
 
   setModel(kind: ModelKind): void {
-    for (const [body, old] of [[this.rawBody, this.rawModel], [this.filtBody, this.filtModel]] as const) {
-      if (old) { body.remove(old); disposeTree(old); }
+    if (this.model) {
+      this.body.remove(this.model);
+      disposeTree(this.model);
     }
-    this.rawModel = kind === 'plane' ? buildPlane() : buildBox();
-    this.filtModel = kind === 'plane' ? buildPlane() : buildBox();
-    this.rawBody.add(this.rawModel);
-    this.filtBody.add(this.filtModel);
-  }
-
-  setView(mode: ViewMode): void {
-    this.view = mode;
-    this.applyView();
+    this.model = kind === 'plane' ? buildPlane() : buildBox();
+    this.body.add(this.model);
   }
 
   /** Matches the scene to the page theme (background + floor grid contrast). */
@@ -136,14 +116,6 @@ export class OrientationScene {
     this.renderer.dispose();
   }
 
-  private applyView(): void {
-    this.rawHolder.visible = this.view !== 'filtered';
-    this.filtHolder.visible = this.view !== 'raw';
-    const both = this.view === 'both';
-    this.rawHolder.position.x = both ? -OFFSET_X : 0;
-    this.filtHolder.position.x = both ? OFFSET_X : 0;
-  }
-
   private resize(): void {
     const host = this.canvas.parentElement ?? this.canvas;
     const w = Math.max(1, host.clientWidth), h = Math.max(1, host.clientHeight);
@@ -156,8 +128,6 @@ export class OrientationScene {
     if (this.raf || this.disposed) return;
     const loop = () => {
       this.raf = requestAnimationFrame(loop);
-      // 0 -> instant copy; higher smoothing -> smaller slerp step per frame.
-      this.filtBody.quaternion.slerp(this.target, 1 - this.smoothing * 0.9);
       this.renderer.render(this.scene, this.camera);
     };
     this.raf = requestAnimationFrame(loop);

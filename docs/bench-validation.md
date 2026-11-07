@@ -96,11 +96,10 @@ Se a taxa ficar abaixo do esperado, confira o campo **Taxa (Hz)** (faixa 10–60
    desbloqueio (item 06).
 2. Sobre uma **superfície plana**, gire a bola uma volta completa em cada eixo. No modelo 3D
    deve ser exatamente uma volta, no mesmo eixo e sentido (item 07).
-3. Alterne o seletor **Vista** entre **Recebido (BLE)** e **Prévia suavizada** e compare
-   (os dois modelos usam o mesmo quaternion tratado vindo da bola; a prévia só adiciona a
-   suavização local do slider, sem alterar o dispositivo). Achado um valor bom em
-   **Suavização da prévia**, configure **Suavização do quaternion (slerp)** no painel
-   Configuração e aplique.
+3. Se o movimento estiver tremido, ajuste **Suavização do quaternion (slerp)** no painel
+   Configuração e aplique: a vista 3D mostra o quaternion exatamente como chega da bola,
+   então o efeito do slerp — e o atraso que ele adiciona — aparece na própria vista.
+   Lembre que o site também suaviza por conta própria (mediana + EMA); evite exagerar.
 4. Deriva (item 08): em modo **Quat6 (relativo)**, deixe a bola parada por 5 min e anote a
    deriva do yaw. Aproxime um ímã ou celular: em Quat6 nada deve mudar. Compare com
    **Quat9 (absoluto)**.

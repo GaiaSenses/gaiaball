@@ -12,7 +12,7 @@ import { mountMetricsPanel } from './panels/metrics-panel.ts';
 import { mountSensorsPanel } from './panels/sensors-panel.ts';
 import { decorateInfo } from './panels/info.ts';
 import { initTheme, onThemeChange, resolvedTheme, toggleTheme } from './theme.ts';
-import { OrientationScene, type ViewMode } from './viz/orientation-scene.ts';
+import { OrientationScene } from './viz/orientation-scene.ts';
 import type { AudioChunkSample, Co2Sample, ImuSample, SensorsSample } from './protocol/packets.ts';
 
 initTheme();
@@ -36,16 +36,10 @@ app.innerHTML = `
         <label class="ctl">Modelo
           <select id="sel-model"><option value="plane">avião</option><option value="box">caixa</option></select>
         </label>
-        <label class="ctl" data-info="Os dois modelos mostram o mesmo quaternion tratado que chega por BLE: “recebido” aplica o valor direto; “prévia suavizada” adiciona por cima o slerp local do slider. Sem unidade.">Vista
-          <select id="sel-view"><option value="both">recebido × prévia</option><option value="raw">recebido (BLE)</option><option value="filtered">prévia suavizada</option></select>
-        </label>
-        <label class="ctl" data-info="Slerp aplicado só nesta visualização, para experimentar antes de configurar “Suavização do quaternion (slerp)” no dispositivo. Escala 0–100 (0 = desligada); nada é enviado à bola.">Suavização da prévia
-          <input id="rng-smooth" type="range" min="0" max="100" value="0" />
-        </label>
+        <span class="ctl" data-info="O modelo mostra a orientação exatamente como ela chega por BLE: o quaternion já tratado pelo firmware (fusão, calibração de montagem, zero e, se ligada, a suavização slerp do próprio dispositivo). Para suavizar o movimento, use “Suavização do quaternion (slerp)” no painel Configuração — aquele campo altera o firmware de verdade.">Orientação recebida por BLE</span>
       </div>
       <div id="viz-stage">
         <canvas id="viz-canvas"></canvas>
-        <div class="viz-labels" id="viz-labels"><span>Recebido (BLE)</span><span>Prévia suavizada</span></div>
       </div>
     </div></div>
     <aside id="panels">
@@ -93,22 +87,14 @@ mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client);
 mountMetricsPanel(app.querySelector<HTMLElement>('#panel-metricas')!, client, stats);
 mountSensorsPanel(app.querySelector<HTMLElement>('#panel-sensores')!, client);
 
-// 3D view. Smoothing is UI-only (client-side slerp); it never touches device config.
+// 3D view of the treated quaternion exactly as received over BLE (no UI smoothing:
+// the real knob is "Suavização do quaternion (slerp)" in the Configuração panel).
 const scene = new OrientationScene(app.querySelector<HTMLCanvasElement>('#viz-canvas')!);
 scene.setDark(resolvedTheme() === 'dark');
 onThemeChange((t) => scene.setDark(t === 'dark'));
 window.addEventListener('pagehide', () => scene.dispose());
-const labels = app.querySelector<HTMLElement>('#viz-labels')!;
 app.querySelector<HTMLSelectElement>('#sel-model')!.addEventListener('change', (e) =>
   scene.setModel((e.target as HTMLSelectElement).value as 'plane' | 'box'));
-app.querySelector<HTMLSelectElement>('#sel-view')!.addEventListener('change', (e) => {
-  const v = (e.target as HTMLSelectElement).value as ViewMode;
-  scene.setView(v);
-  labels.classList.toggle('single', v !== 'both');
-  labels.innerHTML = v === 'both' ? '<span>Recebido (BLE)</span><span>Prévia suavizada</span>' : `<span>${v === 'raw' ? 'Recebido (BLE)' : 'Prévia suavizada'}</span>`;
-});
-app.querySelector<HTMLInputElement>('#rng-smooth')!.addEventListener('input', (e) =>
-  scene.setSmoothing(Number((e.target as HTMLInputElement).value) / 100));
 
 client.addEventListener('imu', (ev) => {
   const s = (ev as CustomEvent<ImuSample>).detail;
@@ -139,7 +125,7 @@ if (new URLSearchParams(location.search).get('demo')) {
   let seq = 0;
   setInterval(() => {
     const t = performance.now() / 1000;
-    // Add jitter on top so the raw vs filtered difference is visible.
+    // Small fast wobble on top, like real sensor noise.
     const q = mul(mul(axisAngle(0, 0, 1, t * 0.5), axisAngle(0, 1, 0, Math.sin(t * 0.7) * 0.6)), axisAngle(1, 0, 0, Math.sin(t * 25) * 0.04));
     const s: ImuSample = {
       seq: seq++ & 0xffff,
