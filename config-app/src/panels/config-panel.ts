@@ -1,9 +1,7 @@
 import type { GaiaballClient, StatusDetail } from '../ble/gaiaball-client.ts';
 import { PresetStore } from '../presets/preset-store.ts';
-import { encodeTlv, TLV, VALID_OUTPUT_GPIOS, type TlvWrite } from '../protocol/tlv.ts';
+import { encodeTlv, TLV, type TlvWrite } from '../protocol/tlv.ts';
 import { infoDot } from './info.ts';
-
-const GPIO_OPTIONS: [number, string][] = VALID_OUTPUT_GPIOS.map((p) => [p, `GPIO ${p}`]);
 
 type Kind = 'number' | 'range' | 'checkbox' | 'select' | 'text' | 'pin';
 interface Field {
@@ -79,13 +77,11 @@ const GROUPS: Group[] = [
     { id: TLV.co2RawLogMode, label: 'Log bruto', kind: 'checkbox',
       info: 'Imprime no log serial cada quadro recebido do sensor, em hexadecimal — só para diagnóstico de bancada; desligue depois. Liga/desliga, sem unidade.' },
   ] },
+  // The LED GPIOs (sound = D2/GPIO2, CO2 = D1/GPIO4) follow the board and are not
+  // exposed here on purpose; the firmware TLV registers 0x30/0x31 still exist.
   { title: 'LEDs', fields: [
-    { id: TLV.soundLedPin, label: 'Pino LED de som (D2 na placa)', kind: 'select', options: GPIO_OPTIONS,
-      info: 'GPIO do LED que pisca quando um sopro é detectado (D2 na placa). Deve ser diferente do pino do LED de CO₂. Unidade: número do GPIO do ESP32.' },
-    { id: TLV.co2LedPin, label: 'Pino LED de CO₂ (D1 na placa)', kind: 'select', options: GPIO_OPTIONS,
-      info: 'GPIO do LED aceso enquanto o CO₂ real está acima do alerta (D1 na placa). Unidade: número do GPIO do ESP32.' },
     { id: TLV.co2AlertPpm, label: 'Alerta CO₂ (ppm)', kind: 'number', min: 0, max: 65535,
-      info: 'Concentração de CO₂ real que acende o LED de alerta. Unidade: ppm (partes por milhão).' },
+      info: 'Concentração de CO₂ real que acende o LED de alerta (D1 na placa). Unidade: ppm (partes por milhão).' },
   ] },
   { title: 'Sistema', fields: [
     { id: TLV.serialLogEnabled, label: 'Log serial (USB)', kind: 'checkbox',
@@ -243,24 +239,6 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   const fail = (e: unknown): void => say(e instanceof Error ? e.message : String(e));
   const hasPin = (f: Field): boolean => f.id === TLV.pin;
 
-  /** Mirror of the firmware rule: the two LED functions must sit on distinct GPIOs.
-   *  Checks the RESULTING state (written value, else device snapshot, else firmware
-   *  default) and only when some LED pin is being written — the firmware check stays
-   *  authoritative either way. */
-  const LED_PIN_DEFAULTS: ReadonlyMap<number, number> = new Map([
-    [TLV.soundLedPin, 2], [TLV.co2LedPin, 4],
-  ]);
-  const ledPinsError = (regs: TlvWrite[]): string | null => {
-    const ids = [...LED_PIN_DEFAULTS.keys()];
-    if (!regs.some((r) => ids.includes(r.id))) return null;
-    const finalPin = (id: number): number =>
-      Number(regs.find((r) => r.id === id)?.value ?? snapshot.get(id) ?? LED_PIN_DEFAULTS.get(id));
-    const pins = ids.map(finalPin);
-    if (new Set(pins).size !== pins.length)
-      return 'Pinos de LED repetidos: som e CO₂ precisam de GPIOs distintos (1 pino = 1 função).';
-    return null;
-  };
-
   /** Mirror of the firmware rule: the band-pass must be a real band (LP > HP). */
   const BAND_DEFAULTS: ReadonlyMap<number, number> = new Map([[TLV.audioHpHz, 10], [TLV.audioLpHz, 200]]);
   const bandError = (regs: TlvWrite[]): string | null => {
@@ -287,8 +265,8 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       if (err) return { regs: [], error: err };
       regs.push({ id: f.id, value: v as number | string });
     }
-    const dupErr = ledPinsError(regs) ?? bandError(regs);
-    if (dupErr) return { regs: [], error: dupErr };
+    const bandErr = bandError(regs);
+    if (bandErr) return { regs: [], error: bandErr };
     return { regs, error: null };
   };
 
