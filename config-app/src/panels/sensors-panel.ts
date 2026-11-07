@@ -13,6 +13,7 @@ import Plotly from 'plotly.js-dist-min';
 
 import type { GaiaballClient } from '../ble/gaiaball-client.ts';
 import { computeSpectrum } from '../metrics/fft.ts';
+import { onThemeChange, resolvedTheme } from '../theme.ts';
 import { quatToEulerLegacy } from '../protocol/euler.ts';
 import {
   ACCEL_LSB_PER_G,
@@ -31,16 +32,44 @@ const MAX_POINTS = Math.ceil((WINDOW_S * 1000) / TICK_MS);
 /** INMP441 sensitivity: -26 dBFS @ 94 dB SPL -> SPL ~= dBFS + 120 (1 kHz, estimate). */
 const DBFS_TO_SPL = 120;
 
-// One color family per chart (each chart visually distinct).
-const C = {
-  euler: ['#60a5fa', '#2563eb', '#bfdbfe'], // roll, pitch, yaw — blues
-  acc: ['#fb923c', '#ea580c', '#fed7aa'], // X, Y, Z — oranges
-  micL: '#4ade80', // green
-  micR: '#2dd4bf', // teal
-  co2: '#c084fc', // purple
-  pot: '#f472b6', // pink
-  threshold: '#9ca3af', // dashed guide on both mic charts
+// One color family per chart (each chart visually distinct), picked per theme so
+// every line keeps contrast on both backgrounds.
+interface ChartPalette {
+  euler: [string, string, string]; // roll, pitch, yaw — blues
+  acc: [string, string, string]; // X, Y, Z — oranges
+  micL: string;
+  micR: string;
+  co2: string;
+  pot: string;
+  threshold: string; // dashed guide on both mic charts
+  peak: string;
+  rms: string;
+  spectrum: string;
+  grid: string;
+  font: string;
+}
+const PALETTES: Record<'dark' | 'light', ChartPalette> = {
+  dark: {
+    euler: ['#60a5fa', '#2563eb', '#bfdbfe'],
+    acc: ['#fb923c', '#ea580c', '#fed7aa'],
+    micL: '#4ade80', micR: '#2dd4bf', co2: '#c084fc', pot: '#f472b6', threshold: '#9ca3af',
+    peak: '#f87171', rms: '#fbbf24', spectrum: '#eac23d', grid: '#27333f', font: '#8da0ab',
+  },
+  light: {
+    euler: ['#2563eb', '#1e3a8a', '#60a5fa'],
+    acc: ['#ea580c', '#9a3412', '#fb923c'],
+    micL: '#15803d', micR: '#0f766e', co2: '#7c3aed', pot: '#be185d', threshold: '#6b7280',
+    peak: '#dc2626', rms: '#b45309', spectrum: '#9a6a10', grid: '#d3dcd8', font: '#5a6c74',
+  },
 };
+const pal = (): ChartPalette => PALETTES[resolvedTheme()];
+/** Line colors in trace order (must match the `traces` list below). */
+const traceColors = (p: ChartPalette): string[] => [
+  p.euler[0], p.euler[1], p.euler[2],
+  p.acc[0], p.acc[1], p.acc[2],
+  p.micL, p.threshold, p.micR, p.threshold,
+  p.peak, p.rms, p.co2, p.pot,
+];
 
 interface Latest {
   imu: ImuSample | null;
@@ -79,6 +108,7 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
   const audioRing: number[] = [];
   let lastChunk: AudioChunkSample | null = null;
   let specShapesKey = '';
+  const p0 = pal();
   client.addEventListener('audio', (ev) => {
     const c = (ev as CustomEvent<AudioChunkSample>).detail;
     lastChunk = c;
@@ -92,7 +122,7 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
       x: [] as number[],
       y: [] as number[],
       mode: 'lines',
-      line: { color: '#facc15', width: 1.5 },
+      line: { color: p0.spectrum, width: 1.5 },
       hovertemplate: '%{x:.0f} Hz · %{y:.1f} dBFS<extra></extra>',
     }],
     {
@@ -100,10 +130,10 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
       margin: { l: 56, r: 8, t: 8, b: 40 },
       paper_bgcolor: 'rgba(0,0,0,0)',
       plot_bgcolor: 'rgba(0,0,0,0)',
-      font: { color: '#aab2bf', size: 11 },
+      font: { color: p0.font, size: 11 },
       showlegend: false,
-      xaxis: { ...{ gridcolor: '#2a2e35', zerolinecolor: '#2a2e35', color: '#aab2bf' }, title: { text: 'frequência (Hz)' }, range: [0, 1000] },
-      yaxis: { ...{ gridcolor: '#2a2e35', zerolinecolor: '#2a2e35', color: '#aab2bf' }, title: { text: 'nível (dBFS)' }, range: [-120, 0] },
+      xaxis: { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font, title: { text: 'frequência (Hz)' }, range: [0, 1000] },
+      yaxis: { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font, title: { text: 'nível (dBFS)' }, range: [-120, 0] },
     },
     { responsive: true, displaylogo: false },
   );
@@ -117,14 +147,14 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
       specShapesKey = key;
       const mark = (hz: number) => ({
         type: 'line', x0: hz, x1: hz, y0: -120, y1: 0,
-        line: { color: '#9ca3af', width: 1, dash: 'dot' },
+        line: { color: pal().threshold, width: 1, dash: 'dot' },
       });
       void Plotly.relayout(specEl, {
         shapes: lastChunk.bpfEnabled ? [mark(lastChunk.hpHz), mark(lastChunk.lpHz)] : [],
         annotations: lastChunk.bpfEnabled
           ? [
-              { x: lastChunk.hpHz, y: -4, text: `HP ${lastChunk.hpHz} Hz`, showarrow: false, font: { size: 10, color: '#9ca3af' }, xanchor: 'left' },
-              { x: lastChunk.lpHz, y: -12, text: `LP ${lastChunk.lpHz} Hz`, showarrow: false, font: { size: 10, color: '#9ca3af' }, xanchor: 'left' },
+              { x: lastChunk.hpHz, y: -4, text: `HP ${lastChunk.hpHz} Hz`, showarrow: false, font: { size: 10, color: pal().font }, xanchor: 'left' },
+              { x: lastChunk.lpHz, y: -12, text: `LP ${lastChunk.lpHz} Hz`, showarrow: false, font: { size: 10, color: pal().font }, xanchor: 'left' },
             ]
           : [],
       });
@@ -147,30 +177,30 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
   });
 
   const traces = [
-    line('roll (°)', C.euler[0], 1),
-    line('pitch (°)', C.euler[1], 1),
-    line('yaw (°)', C.euler[2], 1),
-    line('acc X (g)', C.acc[0], 2),
-    line('acc Y (g)', C.acc[1], 2),
-    line('acc Z (g)', C.acc[2], 2),
-    line('mic E (dBFS)', C.micL, 3),
-    line('limiar (dBFS)', C.threshold, 3, 'dot'),
-    line('mic D (dBFS)', C.micR, 4),
-    line('limiar (dBFS)', C.threshold, 4, 'dot'),
-    line('pico instantâneo (dBFS)', '#f87171', 5),
-    line('RMS 100 ms (dBFS)', '#fbbf24', 5),
-    line('CO₂ (ppm)', C.co2, 6),
-    line('pot (%)', C.pot, 7),
+    line('roll (°)', p0.euler[0], 1),
+    line('pitch (°)', p0.euler[1], 1),
+    line('yaw (°)', p0.euler[2], 1),
+    line('acc X (g)', p0.acc[0], 2),
+    line('acc Y (g)', p0.acc[1], 2),
+    line('acc Z (g)', p0.acc[2], 2),
+    line('mic E (dBFS)', p0.micL, 3),
+    line('limiar (dBFS)', p0.threshold, 3, 'dot'),
+    line('mic D (dBFS)', p0.micR, 4),
+    line('limiar (dBFS)', p0.threshold, 4, 'dot'),
+    line('pico instantâneo (dBFS)', p0.peak, 5),
+    line('RMS 100 ms (dBFS)', p0.rms, 5),
+    line('CO₂ (ppm)', p0.co2, 6),
+    line('pot (%)', p0.pot, 7),
   ];
 
   const N_ROWS = 7;
-  const axisStyle = { gridcolor: '#2a2e35', zerolinecolor: '#2a2e35', color: '#aab2bf' };
+  const axisStyle = { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font };
   const layout: Record<string, unknown> = {
     height: 1040,
     margin: { l: 56, r: 8, t: 8, b: 40 },
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
-    font: { color: '#aab2bf', size: 11 },
+    font: { color: p0.font, size: 11 },
     showlegend: false,
     grid: { rows: N_ROWS, columns: 1, pattern: 'independent', ygap: 0.08 },
   };
@@ -190,6 +220,31 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
     displaylogo: false,
     modeBarButtonsToRemove: ['lasso2d', 'select2d'],
   });
+
+  // Re-skin both Plotly charts when the theme flips (axes, fonts and line colors).
+  const applyChartTheme = (): void => {
+    const p = pal();
+    const cols = traceColors(p);
+    void Plotly.restyle(chartEl, { 'line.color': cols }, cols.map((_, i) => i));
+    const re: Record<string, unknown> = { 'font.color': p.font };
+    for (let i = 1; i <= N_ROWS; i++) {
+      const sfx = i === 1 ? '' : String(i);
+      for (const ax of [`xaxis${sfx}`, `yaxis${sfx}`]) {
+        re[`${ax}.gridcolor`] = p.grid;
+        re[`${ax}.zerolinecolor`] = p.grid;
+        re[`${ax}.color`] = p.font;
+      }
+    }
+    void Plotly.relayout(chartEl, re);
+    void Plotly.restyle(specEl, { 'line.color': p.spectrum }, [0]);
+    void Plotly.relayout(specEl, {
+      'font.color': p.font,
+      'xaxis.gridcolor': p.grid, 'xaxis.zerolinecolor': p.grid, 'xaxis.color': p.font,
+      'yaxis.gridcolor': p.grid, 'yaxis.zerolinecolor': p.grid, 'yaxis.color': p.font,
+    });
+    specShapesKey = ''; // force the HP/LP markers to redraw with the new colors
+  };
+  onThemeChange(applyChartTheme);
 
   // --- live readouts (updated per packet) ------------------------------------
   client.addEventListener('imu', (ev) => {

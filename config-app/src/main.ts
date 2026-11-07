@@ -1,29 +1,53 @@
 import './style.css';
-import { GaiaballClient } from './ble/gaiaball-client.ts';
+import '@fontsource/ibm-plex-sans/400.css';
+import '@fontsource/ibm-plex-sans/500.css';
+import '@fontsource/ibm-plex-sans/600.css';
+import '@fontsource/ibm-plex-mono/400.css';
+import '@fontsource/ibm-plex-mono/500.css';
+import { GaiaballClient, type StatusDetail } from './ble/gaiaball-client.ts';
 import { mountConnectionPanel } from './panels/connection-panel.ts';
 import { StreamStats } from './metrics/stream-stats.ts';
 import { mountConfigPanel } from './panels/config-panel.ts';
 import { mountMetricsPanel } from './panels/metrics-panel.ts';
 import { mountSensorsPanel } from './panels/sensors-panel.ts';
+import { decorateInfo } from './panels/info.ts';
+import { initTheme, onThemeChange, resolvedTheme, toggleTheme } from './theme.ts';
 import { OrientationScene, type ViewMode } from './viz/orientation-scene.ts';
 import type { AudioChunkSample, Co2Sample, ImuSample, SensorsSample } from './protocol/packets.ts';
+
+initTheme();
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 app.innerHTML = `
   <div id="banner"></div>
-  <header><h1>Gaiaball Config</h1></header>
+  <header id="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div class="brand-text"><h1>Gaiaball</h1><p>painel de controle</p></div>
+    </div>
+    <div class="top-actions">
+      <span class="chip" id="conn-chip" data-state="off">Desconectado</span>
+      <button id="btn-theme" type="button"></button>
+    </div>
+  </header>
   <main>
-    <div id="viz">
+    <div id="viz-wrap"><div id="viz">
       <div class="viz-controls">
-        <label>Modelo: <select id="sel-model"><option value="plane">avião</option><option value="box">caixa</option></select></label>
-        <label>Vista: <select id="sel-view"><option value="both">recebido × prévia</option><option value="raw">recebido (BLE)</option><option value="filtered">prévia suavizada</option></select></label>
-        <label title="Suavização extra aplicada só nesta visualização; não altera o dispositivo">Suavização da prévia <input id="rng-smooth" type="range" min="0" max="100" value="0" /></label>
+        <label class="ctl">Modelo
+          <select id="sel-model"><option value="plane">avião</option><option value="box">caixa</option></select>
+        </label>
+        <label class="ctl" data-info="Os dois modelos mostram o mesmo quaternion tratado que chega por BLE: “recebido” aplica o valor direto; “prévia suavizada” adiciona por cima o slerp local do slider. Sem unidade.">Vista
+          <select id="sel-view"><option value="both">recebido × prévia</option><option value="raw">recebido (BLE)</option><option value="filtered">prévia suavizada</option></select>
+        </label>
+        <label class="ctl" data-info="Slerp aplicado só nesta visualização, para experimentar antes de configurar “Suavização do quaternion (slerp)” no dispositivo. Escala 0–100 (0 = desligada); nada é enviado à bola.">Suavização da prévia
+          <input id="rng-smooth" type="range" min="0" max="100" value="0" />
+        </label>
       </div>
       <div id="viz-stage">
         <canvas id="viz-canvas"></canvas>
         <div class="viz-labels" id="viz-labels"><span>Recebido (BLE)</span><span>Prévia suavizada</span></div>
       </div>
-    </div>
+    </div></div>
     <aside id="panels">
       <section id="panel-conexao"></section>
       <section id="panel-config"></section>
@@ -31,6 +55,7 @@ app.innerHTML = `
     </aside>
     <section id="panel-sensores"></section>
   </main>`;
+decorateInfo(app);
 
 if (!(navigator as Navigator & { bluetooth?: unknown }).bluetooth) {
   app.querySelector('#banner')!.innerHTML =
@@ -43,6 +68,26 @@ export const stats = new StreamStats();
 client.addEventListener('status', (ev) => {
   if ((ev as CustomEvent<{ connected: boolean }>).detail.connected) stats.reset();
 });
+
+// Top bar: connection chip mirrors the Conexão panel; theme button flips light/dark.
+const chip = app.querySelector<HTMLElement>('#conn-chip')!;
+client.addEventListener('status', (ev) => {
+  const d = (ev as CustomEvent<StatusDetail>).detail;
+  chip.dataset.state = d.connected ? 'on' : 'off';
+  chip.textContent = d.connected ? (d.name ?? 'Conectado') : 'Desconectado';
+});
+const themeBtn = app.querySelector<HTMLButtonElement>('#btn-theme')!;
+const renderThemeBtn = (): void => {
+  const dark = resolvedTheme() === 'dark';
+  themeBtn.textContent = dark ? '☀' : '☾';
+  const tip = dark ? 'Mudar para o tema claro' : 'Mudar para o tema escuro';
+  themeBtn.setAttribute('aria-label', tip);
+  themeBtn.title = tip;
+};
+themeBtn.addEventListener('click', toggleTheme);
+onThemeChange(renderThemeBtn);
+renderThemeBtn();
+
 mountConnectionPanel(app.querySelector<HTMLElement>('#panel-conexao')!, client);
 mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client);
 mountMetricsPanel(app.querySelector<HTMLElement>('#panel-metricas')!, client, stats);
@@ -50,6 +95,8 @@ mountSensorsPanel(app.querySelector<HTMLElement>('#panel-sensores')!, client);
 
 // 3D view. Smoothing is UI-only (client-side slerp); it never touches device config.
 const scene = new OrientationScene(app.querySelector<HTMLCanvasElement>('#viz-canvas')!);
+scene.setDark(resolvedTheme() === 'dark');
+onThemeChange((t) => scene.setDark(t === 'dark'));
 window.addEventListener('pagehide', () => scene.dispose());
 const labels = app.querySelector<HTMLElement>('#viz-labels')!;
 app.querySelector<HTMLSelectElement>('#sel-model')!.addEventListener('change', (e) =>
@@ -70,6 +117,8 @@ client.addEventListener('imu', (ev) => {
 });
 
 if (new URLSearchParams(location.search).get('demo')) {
+  chip.dataset.state = 'demo';
+  chip.textContent = 'modo demo';
   // Synthetic slow compound rotation (quaternion products only), no BLE needed.
   type Q = { w: number; x: number; y: number; z: number };
   const mul = (a: Q, b: Q) => ({

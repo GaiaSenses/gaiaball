@@ -52,6 +52,7 @@ export class OrientationScene {
   private rawModel: THREE.Object3D | null = null;
   private filtModel: THREE.Object3D | null = null;
   private target = new THREE.Quaternion();
+  private grid: THREE.GridHelper | null = null;
   private smoothing = 0;
   private view: ViewMode = 'both';
   private raf = 0;
@@ -65,7 +66,6 @@ export class OrientationScene {
     this.canvas = canvas;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.scene.background = new THREE.Color(0x14161a);
     this.container.rotation.x = -Math.PI / 2; // fixed mount rotation, not an orientation path
     this.scene.add(this.container);
     for (const [holder, body] of [[this.rawHolder, this.rawBody], [this.filtHolder, this.filtBody]] as const) {
@@ -73,9 +73,7 @@ export class OrientationScene {
       holder.add(new THREE.AxesHelper(1.1));
       this.container.add(holder);
     }
-    const grid = new THREE.GridHelper(8, 16, 0x3a3f49, 0x24282f);
-    grid.position.y = -0.9;
-    this.scene.add(grid);
+    this.setDark(true);
     this.scene.add(new THREE.HemisphereLight(0xcfd8ff, 0x22252b, 1.1));
     const sun = new THREE.DirectionalLight(0xffffff, 1.4);
     sun.position.set(3, 5, 4);
@@ -113,6 +111,20 @@ export class OrientationScene {
   setView(mode: ViewMode): void {
     this.view = mode;
     this.applyView();
+  }
+
+  /** Matches the scene to the page theme (background + floor grid contrast). */
+  setDark(dark: boolean): void {
+    this.scene.background = new THREE.Color(dark ? 0x10161d : 0xe3eae7);
+    if (this.grid) {
+      this.scene.remove(this.grid);
+      disposeTree(this.grid);
+    }
+    this.grid = dark
+      ? new THREE.GridHelper(8, 16, 0x3a4552, 0x242d37)
+      : new THREE.GridHelper(8, 16, 0xa8b8b2, 0xc8d4d0);
+    this.grid.position.y = -0.9;
+    this.scene.add(this.grid);
   }
 
   dispose(): void {

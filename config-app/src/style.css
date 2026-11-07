@@ -1,54 +1,347 @@
-:root { color-scheme: dark; font-family: system-ui, sans-serif; }
-body { margin: 0; background: #14161a; color: #e6e8eb; }
-header { padding: 12px 20px; border-bottom: 1px solid #2a2e35; }
-h1 { margin: 0; font-size: 1.2rem; }
-h2 { margin: 0 0 12px; font-size: 1rem; }
-main { display: grid; grid-template-columns: 1fr minmax(300px, 380px); gap: 20px; padding: 20px; }
-#viz { min-height: 360px; border: 1px dashed #2a2e35; border-radius: 8px; }
-section { background: #1c1f25; border-radius: 8px; padding: 16px; }
-.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
-button, input { background: #262a32; color: inherit; border: 1px solid #3a3f49; border-radius: 6px; padding: 6px 12px; font: inherit; }
-button:hover:not(:disabled) { background: #313640; cursor: pointer; }
-button:disabled, input:disabled { opacity: 0.5; }
-input[type=password] { width: 6ch; }
-.status, .msg { color: #9aa3ad; font-size: 0.9rem; }
-.banner { background: #5a3d00; color: #ffd98a; padding: 10px 20px; }
-@media (max-width: 800px) { main { grid-template-columns: 1fr; } }
-#viz { position: relative; padding: 0; overflow: hidden; border-style: solid; }
-#viz canvas { display: block; width: 100%; height: 100%; }
-#viz-stage { position: relative; height: 420px; }
-.viz-labels { position: absolute; bottom: 8px; left: 0; right: 0; display: flex; justify-content: space-around; pointer-events: none; color: #9aa3ad; font-size: 0.85rem; }
-.viz-labels.single { justify-content: center; }
-.viz-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 8px 12px; font-size: 0.9rem; }
-.viz-controls select { background: #262a32; color: inherit; border: 1px solid #3a3f49; border-radius: 6px; padding: 4px 8px; }
-.viz-controls input[type=range] { padding: 0; width: 120px; }
-.metrics { display: grid; grid-template-columns: auto 1fr auto; gap: 4px 12px; align-items: center; margin: 0 0 16px; font-size: 0.9rem; }
-.metrics dt { color: #9aa3ad; }
-.metrics dd { margin: 0; font-variant-numeric: tabular-nums; }
-.ok { color: #5fd38d; } .fail { color: #ff6b6b; }
-.badge { background: #313640; border-radius: 4px; padding: 1px 6px; font-size: 0.75rem; }
-.badge.warn { background: #5a3d00; color: #ffd98a; }
-aside#panels { display: flex; flex-direction: column; gap: 20px; }
-fieldset { border: 1px solid #2a2e35; border-radius: 6px; margin: 0 0 12px; padding: 8px 12px; }
-legend { color: #9aa3ad; font-size: 0.85rem; }
-.cfg-field { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 4px 8px; margin: 6px 0; font-size: 0.9rem; }
-.cfg-field input[type=number], .cfg-field input[type=text], .cfg-field input[type=password], .cfg-field select { width: 11em; box-sizing: border-box; }
-.cfg-field select { background: #262a32; color: inherit; border: 1px solid #3a3f49; border-radius: 6px; padding: 6px; }
-.cfg-field small { flex-basis: 100%; color: #9aa3ad; }
-h3 { margin: 16px 0 8px; font-size: 0.95rem; }
-#panel-config select[data-el=plist] { background: #262a32; color: inherit; border: 1px solid #3a3f49; border-radius: 6px; padding: 6px; }
+/* Gaiaball Config — bench-instrument panel.
+   Type: IBM Plex Sans (UI) + IBM Plex Mono (live values), loaded via @fontsource in main.ts.
+   Themes: tokens below; <html data-theme="light|dark"> is set before first paint (index.html)
+   and kept by src/theme.ts. */
 
-/* --- sensors panel ---------------------------------------------------------- */
+:root {
+  color-scheme: dark;
+  --bg: #0e141a;
+  --surface: #151d25;
+  --raised: #1d2733;
+  --line: #27333f;
+  --text: #dee7ea;
+  --muted: #8da0ab;
+  --accent: #3cc498;
+  --accent-ink: #07130e;
+  --accent-soft: rgba(60, 196, 152, 0.14);
+  --warn: #e3b05b;
+  --warn-soft: rgba(224, 166, 62, 0.16);
+  --danger: #e66a5e;
+  --ok: #55c98c;
+  --focus: #8fdcc4;
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --tip-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: #edf1ef;
+  --surface: #ffffff;
+  --raised: #f1f5f3;
+  --line: #d3dcd8;
+  --text: #1c272d;
+  --muted: #5a6c74;
+  --accent: #147f66;
+  --accent-ink: #ffffff;
+  --accent-soft: rgba(20, 127, 102, 0.12);
+  --warn: #8f6210;
+  --warn-soft: rgba(154, 106, 16, 0.14);
+  --danger: #b23a2f;
+  --ok: #1d7e4f;
+  --focus: #147f66;
+  --shadow: 0 1px 3px rgba(26, 46, 41, 0.1);
+  --tip-shadow: 0 6px 24px rgba(26, 46, 41, 0.22);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 15px/1.5 'IBM Plex Sans', system-ui, sans-serif;
+  overflow-x: clip;
+}
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+
+/* ---- top bar ------------------------------------------------------------- */
+#topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+/* Small globe: ring + meridian, drawn in CSS so it inherits the accent. */
+.brand-mark {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  position: relative;
+  overflow: hidden;
+}
+.brand-mark::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  transform: scaleX(0.45);
+  opacity: 0.8;
+}
+.brand-mark::after {
+  content: '';
+  position: absolute;
+  left: -2px;
+  right: -2px;
+  top: 50%;
+  border-top: 2px solid var(--accent);
+  opacity: 0.8;
+}
+.brand-text h1 { margin: 0; font-size: 1.02rem; font-weight: 600; letter-spacing: 0.01em; }
+.brand-text p { margin: 0; font-size: 0.78rem; color: var(--muted); }
+.top-actions { display: flex; align-items: center; gap: 10px; }
+#btn-theme {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+/* Connection chip (mirrors the Conexão panel state). */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 46vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font: 500 0.78rem/1 'IBM Plex Mono', monospace;
+  color: var(--muted);
+}
+.chip::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.chip[data-state='on'] { color: var(--ok); border-color: var(--ok); background: var(--accent-soft); }
+.chip[data-state='on']::before { background: var(--ok); }
+.chip[data-state='demo'] { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+.chip[data-state='demo']::before { background: var(--warn); }
+
+.banner { background: var(--warn-soft); color: var(--warn); border-bottom: 1px solid var(--warn); padding: 10px 20px; font-size: 0.9rem; }
+
+/* ---- page grid ------------------------------------------------------------ */
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 400px;
+  gap: 18px;
+  padding: 18px;
+  max-width: 1540px;
+  margin: 0 auto;
+}
+aside#panels { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 #panel-sensores { grid-column: 1 / -1; }
-.sensor-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 12px 0 16px; }
-.sensor-card { background: #14171c; border: 1px solid #2a2e35; border-radius: 8px; padding: 10px 12px; }
-.sensor-card h3 { margin: 0 0 6px; font-size: 13px; color: #aab2bf; font-weight: 600; }
-.sensor-card p { margin: 0 0 4px; font-size: 15px; font-variant-numeric: tabular-nums; }
-.sensor-card small { color: #6b7280; font-size: 11px; line-height: 1.3; display: block; }
+
+section {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  box-shadow: var(--shadow);
+  min-width: 0;
+}
+h2 { margin: 0 0 12px; font-size: 1rem; font-weight: 600; }
+h3 { margin: 18px 0 8px; font-size: 0.88rem; font-weight: 600; color: var(--muted); }
+
+/* ---- controls -------------------------------------------------------------- */
+button, input, select {
+  background: var(--raised);
+  color: inherit;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 12px;
+  font: inherit;
+  min-height: 36px;
+}
+button { cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--muted); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+button.primary:hover:not(:disabled) { filter: brightness(1.08); }
+button:disabled, input:disabled, select:disabled { opacity: 0.45; cursor: default; }
+input[type='number'], input[type='text'], input[type='password'] { font-family: 'IBM Plex Mono', monospace; }
+input[type='password'] { width: 7ch; }
+input[type='checkbox'] { min-height: 0; width: 17px; height: 17px; accent-color: var(--accent); padding: 0; }
+input[type='range'] { min-height: 0; padding: 0; accent-color: var(--accent); background: none; border: none; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+.status, .msg { color: var(--muted); font-size: 0.88rem; font-weight: 400; }
+.ok { color: var(--ok); }
+.fail { color: var(--danger); font-weight: 600; }
+.badge {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 6px;
+  font: 500 0.72rem 'IBM Plex Mono', monospace;
+}
+.badge.warn { background: var(--warn-soft); border-color: var(--warn); color: var(--warn); }
+
+/* ---- info dots + tooltips --------------------------------------------------- */
+.info-dot {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  padding: 0;
+  margin-left: 6px;
+  border: 1px solid var(--muted);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font: italic 600 11px/1 'IBM Plex Mono', monospace;
+  vertical-align: text-bottom;
+  position: relative;
+  cursor: help;
+}
+.info-dot:hover, .info-dot:focus { border-color: var(--accent); color: var(--accent); }
+.info-dot::after {
+  content: attr(data-tip);
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: -10px;
+  width: max-content;
+  max-width: min(310px, 76vw);
+  background: var(--raised);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 11px;
+  font: 400 0.82rem/1.5 'IBM Plex Sans', sans-serif;
+  font-style: normal;
+  text-align: left;
+  white-space: normal;
+  box-shadow: var(--tip-shadow);
+  pointer-events: none;
+  z-index: 40;
+}
+.info-dot:hover::after, .info-dot:focus::after { display: block; }
+/* Inside the right rail the dots sit near the viewport edge: grow leftwards. */
+#panels .info-dot::after { left: auto; right: -8px; }
+/* Phones: anchor-less bottom sheet so long texts never overflow the viewport. */
+@media (max-width: 620px) {
+  .info-dot::after, #panels .info-dot::after {
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: 10px;
+    top: auto;
+    max-width: none;
+    width: auto;
+  }
+}
+
+/* ---- hero: 3D orientation ---------------------------------------------------
+   The grid item is a plain wrapper that stretches to the row height; the panel
+   inside is the sticky element, so its travel is bounded by the wrapper (sticky
+   grid items are clamped by the container, not the area, in Chromium). */
+#viz-wrap { min-width: 0; }
+#viz {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 32px);
+  max-height: 100%;
+  min-height: 430px;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+}
+.viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.viz-controls .ctl { display: inline-flex; align-items: center; gap: 8px; }
+.viz-controls select { padding: 4px 8px; min-height: 30px; }
+.viz-controls input[type='range'] { width: 130px; }
+#viz-stage { position: relative; flex: 1; min-height: 0; }
+#viz canvas { display: block; width: 100%; height: 100%; }
+.viz-labels {
+  position: absolute;
+  bottom: 10px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-around;
+  pointer-events: none;
+  color: var(--muted);
+  font: 500 0.8rem 'IBM Plex Mono', monospace;
+}
+.viz-labels.single { justify-content: center; }
+
+/* ---- config form ------------------------------------------------------------- */
+fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 14px; padding: 8px 12px 10px; min-width: 0; }
+legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 6px; }
+.cfg-field {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 9px 0;
+  font-size: 0.9rem;
+}
+.cfg-name { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.cfg-field input[type='number'], .cfg-field input[type='text'], .cfg-field input[type='password'], .cfg-field select {
+  width: 10.5em;
+}
+.filter-toggle { margin-right: 2px; }
+.cfg-field.filter-off input:not(.filter-toggle), .cfg-field.filter-off select { opacity: 0.4; }
+#panel-config .row input[type='text'] { flex: 1 1 10em; }
+
+/* ---- metrics ----------------------------------------------------------------- */
+.metrics {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 6px 12px;
+  align-items: center;
+  margin: 0 0 14px;
+  font-size: 0.88rem;
+}
+.metrics dt { color: var(--muted); display: flex; align-items: center; }
+.metrics dd { margin: 0; font-family: 'IBM Plex Mono', monospace; font-size: 0.85rem; text-align: right; }
+
+/* ---- sensors ------------------------------------------------------------------ */
+.sensor-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(235px, 1fr)); gap: 12px; margin: 12px 0 16px; }
+.sensor-card { background: var(--raised); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+.sensor-card h3 { margin: 0 0 6px; font-size: 0.8rem; color: var(--muted); }
+.sensor-card p { margin: 0 0 4px; font: 500 0.92rem/1.4 'IBM Plex Mono', monospace; overflow-wrap: break-word; }
+.sensor-card small { color: var(--muted); font-size: 0.72rem; line-height: 1.35; display: block; }
 .sensor-chart { width: 100%; }
 .sensor-spectrum { width: 100%; margin-bottom: 8px; }
-.spec-title { margin: 16px 0 4px; font-size: 14px; color: #aab2bf; }
+.spec-title { margin: 16px 0 4px; }
 
-/* --- per-filter toggles ------------------------------------------------------ */
-.filter-toggle { margin-right: 6px; accent-color: #4ade80; }
-.cfg-field.filter-off input:not(.filter-toggle), .cfg-field.filter-off select { opacity: 0.4; }
+/* ---- responsive ---------------------------------------------------------------- */
+@media (max-width: 1080px) {
+  main { grid-template-columns: 1fr; padding: 14px; gap: 14px; }
+  #viz { position: static; height: auto; max-height: none; min-height: 0; }
+  #viz-stage { flex: none; height: 360px; }
+}
+@media (max-width: 620px) {
+  #topbar { padding: 8px 12px; }
+  .brand-text p { display: none; }
+  main { padding: 10px; gap: 12px; }
+  section { padding: 13px; }
+  #viz-stage { height: 300px; }
+  .cfg-field input[type='number'], .cfg-field input[type='text'], .cfg-field select { width: 100%; }
+  .cfg-name { flex-basis: 100%; }
+  .metrics { grid-template-columns: auto 1fr; }
+  .metrics canvas, .metrics dd + span { display: none; }
+}

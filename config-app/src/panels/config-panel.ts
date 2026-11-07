@@ -1,6 +1,7 @@
 import type { GaiaballClient, StatusDetail } from '../ble/gaiaball-client.ts';
 import { PresetStore } from '../presets/preset-store.ts';
 import { encodeTlv, TLV, VALID_OUTPUT_GPIOS, type TlvWrite } from '../protocol/tlv.ts';
+import { infoDot } from './info.ts';
 
 const GPIO_OPTIONS: [number, string][] = VALID_OUTPUT_GPIOS.map((p) => [p, `GPIO ${p}`]);
 
@@ -9,10 +10,11 @@ interface Field {
   id: number;
   label: string;
   kind: Kind;
+  /** Didactic tooltip (the "i" dot): what the parameter does + its unit. */
+  info: string;
   min?: number;
   max?: number;
   options?: [number, string][];
-  hint?: string;
   /** Per-filter on/off toggle: the register value that means "filter OFF". */
   offValue?: number;
   /** Value restored in the input when the toggle is turned on with nothing sensible. */
@@ -22,51 +24,76 @@ interface Group { title: string; fields: Field[] }
 
 const GROUPS: Group[] = [
   { title: 'Orientação', fields: [
-    { id: TLV.orientationMode, label: 'Modo', kind: 'select', options: [[0, 'Quat6 (relativo)'], [1, 'Quat9 (absoluto)']] },
+    { id: TLV.orientationMode, label: 'Modo', kind: 'select', options: [[0, 'Quat6 (relativo)'], [1, 'Quat9 (absoluto)']],
+      info: 'Como o firmware calcula a orientação: Quat6 usa giroscópio + acelerômetro (referência relativa, imune a ímãs); Quat9 acrescenta o magnetômetro (yaw absoluto, porém sensível a interferência magnética). Sem unidade.' },
     { id: TLV.imuNotifyHz, label: 'Taxa (Hz)', kind: 'number', min: 10, max: 200,
-      hint: 'Também reconfigura a taxa de amostragem da IMU (MPU-9250, até 200 Hz).' },
+      info: 'Quantas amostras de orientação a bola envia por segundo via BLE; também reconfigura a amostragem da IMU (MPU-9250). Unidade: hertz (Hz), de 10 a 200.' },
     { id: TLV.slerpAmount, label: 'Suavização do quaternion (slerp)', kind: 'range', min: 0, max: 100,
-      offValue: 0, onDefault: 20 },
+      offValue: 0, onDefault: 20,
+      info: 'Interpolação esférica aplicada no firmware antes do envio: 0 = desligada, 100 = máxima. Suaviza o movimento, mas adiciona atraso — e o site já faz a própria suavização. Escala 0–100, sem unidade.' },
     { id: TLV.accelLpAlphaX1000, label: 'Filtro da aceleração (EMA ×1000)', kind: 'number', min: 0, max: 1000,
-      offValue: 0, onDefault: 300 },
+      offValue: 0, onDefault: 300,
+      info: 'Média móvel exponencial da aceleração publicada. Valor = alfa ×1000: 1000 = sem filtro; menor = mais liso e mais lento. Adimensional (0–1000).' },
   ] },
   { title: 'Áudio', fields: [
-    { id: TLV.audioEnabled, label: 'Habilitado', kind: 'checkbox' },
-    { id: TLV.audioFastAlphaX1000, label: 'Alfa rápido (×1000)', kind: 'number', min: 0, max: 1000 },
-    { id: TLV.audioSlowAlphaX1000, label: 'Alfa lento (×1000)', kind: 'number', min: 0, max: 1000 },
-    { id: TLV.debounceMs, label: 'Debounce (ms)', kind: 'number', min: 0, max: 65535 },
-    { id: TLV.potControlsThreshold, label: 'Pot controla limiar', kind: 'checkbox' },
-    { id: TLV.thresholdFixed, label: 'Limiar fixo', kind: 'number', min: 0, max: 4294967295 },
+    { id: TLV.audioEnabled, label: 'Habilitado', kind: 'checkbox',
+      info: 'Liga a captura dos dois microfones I²S e o detector de sopro. Liga/desliga, sem unidade.' },
+    { id: TLV.audioFastAlphaX1000, label: 'Alfa rápido (×1000)', kind: 'number', min: 0, max: 1000,
+      info: 'Velocidade do envelope rápido do detector de sopro (segue o pico). Valor = alfa EMA ×1000: maior = resposta mais rápida. Adimensional.' },
+    { id: TLV.audioSlowAlphaX1000, label: 'Alfa lento (×1000)', kind: 'number', min: 0, max: 1000,
+      info: 'Velocidade da linha de base (ruído ambiente) do detector; deve ser bem menor que o alfa rápido. Valor = alfa EMA ×1000. Adimensional.' },
+    { id: TLV.debounceMs, label: 'Debounce (ms)', kind: 'number', min: 0, max: 65535,
+      info: 'Intervalo mínimo entre dois sopros reconhecidos, para o mesmo sopro não disparar duas vezes. Unidade: milissegundos (ms).' },
+    { id: TLV.potControlsThreshold, label: 'Pot controla limiar', kind: 'checkbox',
+      info: 'Ligado, o potenciômetro físico da bola ajusta o limiar do detector de sopro em tempo real; desligado, vale o “Limiar fixo”. Liga/desliga, sem unidade.' },
+    { id: TLV.thresholdFixed, label: 'Limiar fixo', kind: 'number', min: 0, max: 4294967295,
+      info: 'Nível acima do qual um sopro é reconhecido, usado quando o potenciômetro não controla. Unidade: contagens RMS do áudio (adimensional).' },
     { id: TLV.potEmaAlphaX1000, label: 'Suavização do potenciômetro (EMA ×1000)', kind: 'number', min: 1, max: 1000,
-      offValue: 1000, onDefault: 300 },
+      offValue: 1000, onDefault: 300,
+      info: 'Média móvel exponencial da leitura do potenciômetro (tira o chiado do ADC). Valor = alfa ×1000: 1000 = sem filtro. Adimensional.' },
     { id: TLV.audioBpfEnabled, label: 'Filtro passa-banda (sopro)', kind: 'checkbox',
-      hint: 'HP e LP aplicados antes do detector de pico. Ajuste os cortes olhando o espectro no painel Sensores.' },
-    { id: TLV.audioHpHz, label: 'High-pass (Hz)', kind: 'number', min: 1, max: 7000 },
+      info: 'Mantém só a faixa de frequências típica do sopro (entre o high-pass e o low-pass) antes do detector. Ajuste os cortes olhando o espectro no painel Sensores. Liga/desliga, sem unidade.' },
+    { id: TLV.audioHpHz, label: 'High-pass (Hz)', kind: 'number', min: 1, max: 7000,
+      info: 'Corte inferior do passa-banda: atenua o que fica abaixo dele (vibração, manuseio da bola). Unidade: hertz (Hz).' },
     { id: TLV.audioHpQX100, label: 'Q do high-pass (×100)', kind: 'number', min: 10, max: 2000,
-      hint: 'Q > 71 (0,71) cria pico ressonante no corte (~20·log₁₀(Q) dB); a inclinação vem da ordem do filtro, não do Q.' },
-    { id: TLV.audioLpHz, label: 'Low-pass (Hz)', kind: 'number', min: 1, max: 7000 },
-    { id: TLV.audioLpQX100, label: 'Q do low-pass (×100)', kind: 'number', min: 10, max: 2000 },
+      info: 'Fator de qualidade do corte ×100 (71 = 0,71 = resposta plana). Acima disso cria pico ressonante de ~20·log₁₀(Q) dB no corte; a inclinação vem da ordem do filtro, não do Q. Adimensional.' },
+    { id: TLV.audioLpHz, label: 'Low-pass (Hz)', kind: 'number', min: 1, max: 7000,
+      info: 'Corte superior do passa-banda: atenua o que fica acima dele. Precisa ficar acima do high-pass. Unidade: hertz (Hz).' },
+    { id: TLV.audioLpQX100, label: 'Q do low-pass (×100)', kind: 'number', min: 10, max: 2000,
+      info: 'Fator de qualidade do corte ×100 (71 = 0,71 = resposta plana); valores altos criam pico ressonante no corte. Adimensional.' },
   ] },
   { title: 'CO₂', fields: [
-    { id: TLV.co2Enabled, label: 'Habilitado', kind: 'checkbox' },
-    { id: TLV.co2StaleTimeoutMs, label: 'Timeout de dado velho (ms)', kind: 'number', min: 0, max: 65535 },
-    { id: TLV.virtualPeakPpm, label: 'Pico virtual (ppm)', kind: 'number', min: 0, max: 65535 },
-    { id: TLV.virtualDelayMs, label: 'Atraso virtual (ms)', kind: 'number', min: 0, max: 65535 },
-    { id: TLV.virtualHoldMs, label: 'Duração virtual (ms)', kind: 'number', min: 0, max: 65535 },
+    { id: TLV.co2Enabled, label: 'Habilitado', kind: 'checkbox',
+      info: 'Liga a leitura do sensor SC8 na UART (o firmware apenas escuta — nunca transmite, pois qualquer consulta emudece o sensor). Liga/desliga, sem unidade.' },
+    { id: TLV.co2StaleTimeoutMs, label: 'Timeout de dado velho (ms)', kind: 'number', min: 0, max: 65535,
+      info: 'Sem quadro novo do sensor por esse tempo, a leitura é marcada como desatualizada (stale). Unidade: milissegundos (ms).' },
+    { id: TLV.virtualPeakPpm, label: 'Pico virtual (ppm)', kind: 'number', min: 0, max: 65535,
+      info: 'Valor de CO₂ simulado enviado ao site quando um sopro é detectado — dispara a composição sem esperar a resposta lenta do sensor real (T90 < 3 min). Unidade: ppm.' },
+    { id: TLV.virtualDelayMs, label: 'Atraso virtual (ms)', kind: 'number', min: 0, max: 65535,
+      info: 'Espera entre o sopro detectado e o início do pulso virtual de CO₂. Unidade: milissegundos (ms).' },
+    { id: TLV.virtualHoldMs, label: 'Duração virtual (ms)', kind: 'number', min: 0, max: 65535,
+      info: 'Tempo que o pulso virtual permanece ativo antes de voltar à leitura real. Unidade: milissegundos (ms).' },
     { id: TLV.co2EmaAlphaX1000, label: 'Suavização (EMA ×1000)', kind: 'number', min: 1, max: 1000,
-      offValue: 1000, onDefault: 300 },
-    { id: TLV.co2RawLogMode, label: 'Log bruto', kind: 'checkbox' },
+      offValue: 1000, onDefault: 300,
+      info: 'Média móvel exponencial das leituras reais de CO₂. Valor = alfa ×1000: 1000 = sem filtro; menor = mais liso, porém mais atraso. Adimensional.' },
+    { id: TLV.co2RawLogMode, label: 'Log bruto', kind: 'checkbox',
+      info: 'Imprime no log serial cada quadro recebido do sensor, em hexadecimal — só para diagnóstico de bancada; desligue depois. Liga/desliga, sem unidade.' },
   ] },
   { title: 'LEDs (1 pino = 1 função; pinos distintos)', fields: [
-    { id: TLV.soundLedPin, label: 'Pino LED de som (D2 na placa)', kind: 'select', options: GPIO_OPTIONS },
-    { id: TLV.co2LedPin, label: 'Pino LED de CO₂ (D1 na placa)', kind: 'select', options: GPIO_OPTIONS },
-    { id: TLV.co2AlertPpm, label: 'Alerta CO₂ (ppm)', kind: 'number', min: 0, max: 65535 },
+    { id: TLV.soundLedPin, label: 'Pino LED de som (D2 na placa)', kind: 'select', options: GPIO_OPTIONS,
+      info: 'GPIO do LED que pisca quando um sopro é detectado (D2 na placa). Deve ser diferente do pino do LED de CO₂. Unidade: número do GPIO do ESP32.' },
+    { id: TLV.co2LedPin, label: 'Pino LED de CO₂ (D1 na placa)', kind: 'select', options: GPIO_OPTIONS,
+      info: 'GPIO do LED aceso enquanto o CO₂ real está acima do alerta (D1 na placa). Unidade: número do GPIO do ESP32.' },
+    { id: TLV.co2AlertPpm, label: 'Alerta CO₂ (ppm)', kind: 'number', min: 0, max: 65535,
+      info: 'Concentração de CO₂ real que acende o LED de alerta. Unidade: ppm (partes por milhão).' },
   ] },
   { title: 'Sistema', fields: [
     { id: TLV.serialLogEnabled, label: 'Log serial (USB)', kind: 'checkbox',
-      hint: 'Desligado por padrão: a formatação do log rouba CPU do caminho crítico.' },
-    { id: TLV.bleName, label: 'Nome BLE (≤16)', kind: 'text' },
-    { id: TLV.pin, label: 'Novo PIN (4 dígitos)', kind: 'pin', hint: 'Somente escrita; nunca é lido do dispositivo.' },
+      info: 'Mensagens de log pela USB. Desligado por padrão: formatar texto rouba CPU do caminho crítico de aquisição. Liga/desliga, sem unidade.' },
+    { id: TLV.bleName, label: 'Nome BLE (≤16)', kind: 'text',
+      info: 'Nome anunciado via Bluetooth (1 a 16 bytes). O site encontra a bola pelo UUID do serviço, então mudar o nome não quebra nada.' },
+    { id: TLV.pin, label: 'Novo PIN (4 dígitos)', kind: 'pin',
+      info: 'Troca o PIN que desbloqueia comandos e escritas sensíveis. Somente escrita: nunca é lido do dispositivo. Exatamente 4 dígitos.' },
   ] },
 ];
 const FIELDS = GROUPS.flatMap((g) => g.fields);
@@ -87,7 +114,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
     <h2>Configuração</h2>
     <div class="row">
       <button type="button" data-act="read">Ler do dispositivo</button>
-      <button type="button" data-act="apply">Aplicar</button>
+      <button type="button" data-act="apply" class="primary">Aplicar</button>
     </div>
     <p class="msg" data-el="hint">Aplicar envia só o que mudou, confere a aceitação e já grava de forma permanente (sobrevive a desligar/reiniciar).</p>
     <p class="msg" data-el="msg" role="status"></p>
@@ -117,7 +144,9 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
     for (const f of g.fields) {
       const label = document.createElement('label');
       label.className = 'cfg-field';
-      label.append(`${f.label} `);
+      const name = document.createElement('span');
+      name.className = 'cfg-name';
+      name.append(f.label, infoDot(f.info));
       let el: HTMLInputElement | HTMLSelectElement;
       if (f.kind === 'select') {
         el = document.createElement('select');
@@ -138,12 +167,11 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
         tg.title = 'Ligar/desligar este filtro';
         tg.setAttribute('aria-label', `Ligar/desligar: ${f.label}`);
         tg.checked = true;
-        label.prepend(tg);
+        name.prepend(tg);
         toggles.set(f.id, tg);
         tg.addEventListener('change', () => label.classList.toggle('filter-off', !tg.checked));
       }
-      label.append(el);
-      if (f.hint) { const s = document.createElement('small'); s.textContent = f.hint; label.append(s); }
+      label.append(name, el);
       fs.append(label);
       inputs.set(f.id, el);
     }

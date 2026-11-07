@@ -1439,6 +1439,7 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
         <p>App web local (Vite + TypeScript) em <code>gaiaball/config-app/</code>, interface em português, via Web Bluetooth (Chrome ou Edge).</p>
         <ul>
           <li>Vista 3D da orientação: o quaternion recebido por BLE lado a lado com uma prévia de suavização local (o slider não altera o dispositivo).</li>
+          <li>Tooltips didáticos (ⓘ) em todos os parâmetros — descrição em português + unidade de medida —, tema claro/escuro e layout responsivo (desktop, tablet e celular).</li>
           <li>Métricas do fluxo: taxa (Hz), perda por <code>seq</code> e jitter.</li>
           <li><b>Sensores em tempo real</b>: valor atual de cada sensor com a unidade correta (orientação em °, aceleração em g, microfones em dBFS + dB SPL estimado, CO₂ em ppm, potenciômetro em %) e gráficos de linha (Plotly.js) empilhados verticalmente, um por sensor, cada um com sua cor, todos <b>compartilhando o mesmo eixo X (tempo)</b> — janela de 120 s a 10 Hz, com zoom.</li>
           <li><b>Analisador de espectro do sopro</b>: a bola transmite o áudio bruto decimado (2 kHz, int16) e o <b>FFT roda no navegador</b> (512 pontos, bins de ~3,9 Hz, 0–1000 Hz), com as linhas dos cortes HP/LP sobrepostas — sopre na bola e ajuste o passa-banda vendo quais frequências sobem.</li>
