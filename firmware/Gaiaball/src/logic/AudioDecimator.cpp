@@ -4,6 +4,13 @@
 
 namespace gaia {
 
+void AudioDecimator::reset() {
+  acc_ = 0.0f;
+  accN_ = 0;
+  n_ = 0;
+  for (size_t i = 0; i < kChunkSamples; i++) out_[i] = 0;
+}
+
 bool AudioDecimator::feed(float sample) {
   acc_ += sample;
   if (++accN_ < kDecim) return false;

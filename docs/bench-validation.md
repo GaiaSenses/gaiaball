@@ -60,12 +60,17 @@ potenciômetro %) e gráficos de linha com eixo X (tempo) compartilhado — úti
 por exemplo, o pico de áudio cruzando o limiar quando se bate palma, e a leitura do SC8
 mudando ao respirar perto do sensor.
 
-**Ajuste do passa-banda do sopro:** com a bola conectada, sopre sobre ela olhando o
-**Espectro do áudio (cru)** no painel Sensores. As frequências excitadas pelo sopro
-sobem no gráfico; mova o **High-pass** e o **Low-pass** (Configuração › Áudio) até a
-banda cobrir o que o sopro excita e cortar o que não interessa (voz, música ambiente).
-Aplicar já grava. Teste também taxas de orientação maiores (Configuração › Orientação ›
-Taxa, até 200 Hz) observando **Taxa** e **Perda** nas métricas.
+**Ajuste do passa-banda do sopro:** o espectro depende do stream de áudio cru, que vem
+**desligado de fábrica** (ele consome mais tempo de ar que todos os outros pacotes
+somados). Ligue **Configuração › Avançado › Áudio › Stream de áudio cru (2 kHz)**,
+aplique, e o gráfico começa a desenhar; sem isso o painel mostra o aviso "Stream de
+áudio cru desligado". Sopre sobre a bola olhando o **Espectro do áudio (cru)** no painel
+Sensores: as frequências excitadas pelo sopro sobem no gráfico; mova o **High-pass** e o
+**Low-pass** até a banda cobrir o que o sopro excita e cortar o que não interessa (voz,
+música ambiente). **Desligue o stream ao terminar** — o RMS e o pico dos microfones não
+dependem dele, vêm medidos do firmware em cada pacote de orientação. Teste também taxas
+de orientação maiores (Configuração › Básico › Taxa, até 200 Hz) observando **Taxa** e
+**Perda** nas métricas.
 
 O roteiro básico do app está em [`config-app/README.md`](../config-app/README.md); aqui só
 os critérios e onde olhar cada número.
@@ -76,7 +81,7 @@ os critérios e onde olhar cada número.
 3. **Ler do dispositivo** (painel Configuração). O formulário já abre preenchido com os
    padrões de fábrica; depois da leitura os valores devem continuar iguais aos da tabela
    de `firmware/README.md` (item 02). O painel tem duas abas: **Básico** (14 parâmetros
-   de operação) e **Avançado** (25 de afinação da cadeia de sinais). A contagem na aba
+   de operação) e **Avançado** (26 de afinação da cadeia de sinais). A contagem na aba
    Avançado acende quando algum parâmetro está fora do padrão — confira isso antes de
    culpar o firmware por um comportamento estranho.
 4. Medir no painel **Métricas** (deixe a bola em movimento):
@@ -90,8 +95,24 @@ os critérios e onde olhar cada número.
 | Sem NaN nem saltos (item 05) | vista 3D | girar rápido e com trancos por 5 min: o modelo não pode pular, congelar nem sumir |
 | IMU interna | Firmware › **IMU** e **Notify** | próximos da taxa configurada |
 | Saúde | Firmware › **Saúde** | IMU, áudio e CO₂ ok |
+| Intervalo de conexão (v8) | Firmware › **Intervalo de conexão** | 7,5–15 ms. É o teto de tudo: se o navegador conceder 30 ms, nenhuma taxa acima de ~100 Hz é possível, por mais rápido que o firmware produza |
 
-Se a taxa ficar abaixo do esperado, confira o campo **Taxa (Hz)** (faixa 10–60) e aplique.
+Se a taxa ficar abaixo do esperado, confira primeiro o **Intervalo de conexão** e depois
+o campo **Taxa (Hz)** (faixa 10–200) e aplique.
+
+### 3.1 Envelope de áudio em alta taxa (v8)
+
+O RMS e o pico dos microfones agora são medidos no firmware (janela de 20 ms, pico no
+16 kHz cheio) e viajam em cada pacote de orientação. O que verificar:
+
+| Critério | Onde olhar | Meta |
+|---|---|---|
+| Envelope chega na taxa de orientação | Sensores › cartões **Microfone esquerdo/direito** | o valor se move junto com o som, sem o degrau de 200 ms que existia a 5 Hz |
+| Pico ≥ RMS, sempre | mesmos cartões ("pico −xx dBFS") | o pico fica alguns dB acima do RMS (fator de crista); se ficar igual, o sinal saturou |
+| Pico vê o transiente | bater palma seca | o pico salta bem mais que o RMS — era isso que a decimação escondia |
+| Dois canais independentes | tapar um microfone | só o canal tapado cai; se os dois caírem junto, há problema de I²S |
+| Bytes no ar | Métricas › **Notify** e a tabela de orçamento do `firmware/README.md` | com stream cru desligado e 50 Hz: ~1,7 kB/s (era ~5,6 kB/s na v7) |
+| Pacote maior não derrubou a taxa | Métricas › **Taxa** e **Perda** | 23 → 31 bytes custa ~9 % de tempo de ar; a taxa não deve cair |
 
 ## 4. Precisão de movimento
 

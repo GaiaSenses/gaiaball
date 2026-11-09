@@ -135,10 +135,21 @@ if (new URLSearchParams(location.search).get('demo')) {
       tUs: Math.round(t * 1e6),
       quat: q,
       acc: [Math.round(Math.sin(t * 1.3) * 2048), Math.round(Math.cos(t * 0.9) * 2048), Math.round(8192 + Math.sin(t * 3) * 300)],
-      flags: 0b101,
+      flags: 0b1101,
       quatValid: true,
       nineAxis: false,
       moving: true,
+      // Microphone envelope, as the firmware publishes it on every orientation packet:
+      // a breath every ~6 s on top of a -58 dBFS room floor, peak ~8 dB above the RMS.
+      audioValid: true,
+      audioRmsDbfs: [
+        -58 + (Math.sin(t * 1.05) > 0.85 ? 30 : 0) + 2 * Math.sin(t * 7),
+        -60 + (Math.sin(t * 1.05) > 0.85 ? 28 : 0) + 2 * Math.sin(t * 6.3),
+      ],
+      audioPeakDbfs: [
+        -50 + (Math.sin(t * 1.05) > 0.85 ? 30 : 0) + 2 * Math.sin(t * 9),
+        -52 + (Math.sin(t * 1.05) > 0.85 ? 28 : 0) + 2 * Math.sin(t * 8.1),
+      ],
     };
     emit('imu', s); // the 'imu' listener above drives the scene and the stats
   }, 20);

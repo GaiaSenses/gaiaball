@@ -19,7 +19,7 @@ void Diagnostics::feed() { esp_task_wdt_reset(); }
 
 DiagPacket Diagnostics::collect(uint16_t seq, uint16_t notifyHzX10, const ImuService &imu,
                                 const AudioService &audio, const Co2Service &co2,
-                                uint32_t nowMs) const {
+                                uint32_t nowMs, uint16_t connItvlMsX10) const {
   DiagPacket p = {};
   p.version = kProtocolVersion;
   p.type = (uint8_t)PacketType::Diagnostics;
@@ -39,6 +39,9 @@ DiagPacket Diagnostics::collect(uint16_t seq, uint16_t notifyHzX10, const ImuSer
   p.accelErrDeg = imu.accelErrDeg();
   p.magErrDeg = imu.magErrDeg();
   imu.gyroBiasX100(p.gyroBiasX100);
+  // BLE link state (v8): the granted connection interval is the ceiling on every
+  // notify rate, so it is reported instead of assumed.
+  p.connItvlMsX10 = connItvlMsX10;
   uint8_t f = 0;
   if (imu.imuOk()) f |= kDiagImuOk;
   if (audio.ok()) f |= kDiagAudioOk;

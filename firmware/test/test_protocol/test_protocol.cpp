@@ -6,18 +6,18 @@
 
 using namespace gaia;
 
-static_assert(sizeof(ImuPacket) == 23, "ImuPacket must be 23 bytes");
+static_assert(sizeof(ImuPacket) == 31, "ImuPacket must be 31 bytes");
 static_assert(sizeof(Co2Packet) == 12, "Co2Packet must be 12 bytes");
-static_assert(sizeof(DiagPacket) == 32, "DiagPacket must be 32 bytes");
+static_assert(sizeof(DiagPacket) == 34, "DiagPacket must be 34 bytes");
 static_assert(sizeof(SensorsPacket) == 23, "SensorsPacket must be 23 bytes");
 
 void setUp() {}
 void tearDown() {}
 
 void test_packet_sizes() {
-  TEST_ASSERT_EQUAL(23, sizeof(ImuPacket));
+  TEST_ASSERT_EQUAL(31, sizeof(ImuPacket));
   TEST_ASSERT_EQUAL(12, sizeof(Co2Packet));
-  TEST_ASSERT_EQUAL(32, sizeof(DiagPacket));
+  TEST_ASSERT_EQUAL(34, sizeof(DiagPacket));
   TEST_ASSERT_EQUAL(106, sizeof(MagChunkPacket));
   TEST_ASSERT_EQUAL(23, sizeof(SensorsPacket));
 }
@@ -48,21 +48,28 @@ void test_sensors_encode_saturation_and_nan() {
 void test_imu_encode_golden() {
   const float q[4] = {1.f, 0.f, 0.f, 0.f};
   const int16_t acc[3] = {1, -2, 3};
-  ImuPacket p = makeImuPacket(258, 0x0A0B0C0Du, q, acc, 0b011);
-  const uint8_t expected[23] = {
+  AudioLevels lv;
+  lv.rms[0] = kAudioFullScale / 1.41421356f;          //   0.00 dBFS (full-scale sine)
+  lv.rms[1] = kAudioFullScale / 1.41421356f / 10.0f;  // -20.00 dBFS
+  lv.peak[0] = kAudioFullScale;                       //   0.00 dBFS peak
+  lv.peak[1] = kAudioFullScale / 2.0f;                //  -6.02 dBFS peak
+  ImuPacket p = makeImuPacket(258, 0x0A0B0C0Du, q, acc, 0b1011, lv);
+  const uint8_t expected[31] = {
       0x01, 0x01,                          // version, type
       0x02, 0x01,                          // seq = 258
       0x0D, 0x0C, 0x0B, 0x0A,              // timestampUs
       0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  // quat W=16384, X, Y, Z = 0
       0x01, 0x00, 0xFE, 0xFF, 0x03, 0x00,  // acc 1, -2, 3
-      0x03};                               // flags
-  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, reinterpret_cast<const uint8_t *>(&p), 23);
+      0x0B,                                // flags (quat valid, 9-axis, audio valid)
+      0x00, 0x00, 0x30, 0xF8,              // rms L = 0, rms R = -2000 (x100 dBFS)
+      0x00, 0x00, 0xA6, 0xFD};             // peak L = 0, peak R = -602 (x100 dBFS)
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, reinterpret_cast<const uint8_t *>(&p), 31);
 }
 
 void test_imu_encode_nan() {
   const float q[4] = {NAN, 0.f, 0.f, 0.f};
   const int16_t acc[3] = {0, 0, 0};
-  ImuPacket p = makeImuPacket(1, 2, q, acc, kImuQuatValid | kImuMoving);
+  ImuPacket p = makeImuPacket(1, 2, q, acc, kImuQuatValid | kImuMoving, AudioLevels{});
   TEST_ASSERT_EQUAL_HEX8(kImuMoving, p.flags);
   TEST_ASSERT_EQUAL_INT16(16384, p.quatW);
   TEST_ASSERT_EQUAL_INT16(0, p.quatX);
@@ -73,10 +80,21 @@ void test_imu_encode_nan() {
 void test_imu_encode_clamp() {
   const float q[4] = {2.f, -2.f, 0.f, 0.f};
   const int16_t acc[3] = {0, 0, 0};
-  ImuPacket p = makeImuPacket(0, 0, q, acc, kImuQuatValid);
+  ImuPacket p = makeImuPacket(0, 0, q, acc, kImuQuatValid, AudioLevels{});
   TEST_ASSERT_EQUAL_INT16(32767, p.quatW);
   TEST_ASSERT_EQUAL_INT16(-32768, p.quatX);
   TEST_ASSERT_EQUAL_HEX8(kImuQuatValid, p.flags);
+}
+
+void test_imu_encodes_silence_as_the_db_floor() {
+  const float q[4] = {1.f, 0.f, 0.f, 0.f};
+  const int16_t acc[3] = {0, 0, 0};
+  ImuPacket p = makeImuPacket(0, 0, q, acc, kImuQuatValid, AudioLevels{});
+  for (int c = 0; c < 2; c++) {
+    TEST_ASSERT_EQUAL_INT16(kAudioDbFloorX100, p.audioRmsDbX100[c]);
+    TEST_ASSERT_EQUAL_INT16(kAudioDbFloorX100, p.audioPeakDbX100[c]);
+  }
+  TEST_ASSERT_EQUAL_HEX8(kImuQuatValid, p.flags);  // the codec never sets kImuAudioValid
 }
 
 void test_co2_layout_golden() {
@@ -113,11 +131,13 @@ void test_diag_layout_golden() {
   p.gyroBiasX100[0] = 150;   // +1.50 dps
   p.gyroBiasX100[1] = -75;   // -0.75 dps
   p.gyroBiasX100[2] = 0;
-  const uint8_t expected[32] = {0x01, 0x03, 0x01, 0x00, 0x03, 0x02, 0x01, 0x00,
+  p.connItvlMsX10 = 150;  // 15.0 ms negotiated connection interval
+  const uint8_t expected[34] = {0x01, 0x03, 0x01, 0x00, 0x03, 0x02, 0x01, 0x00,
                                 0xF4, 0x01, 0xF4, 0x01, 0x01, 0x00, 0x02, 0x00,
                                 0x03, 0x00, 0xC8, 0x00, 0x96, 0x00, 0x07, 0x11,
-                                0x03, 0x0C, 0x96, 0x00, 0xB5, 0xFF, 0x00, 0x00};
-  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, reinterpret_cast<const uint8_t *>(&p), 32);
+                                0x03, 0x0C, 0x96, 0x00, 0xB5, 0xFF, 0x00, 0x00,
+                                0x96, 0x00};
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, reinterpret_cast<const uint8_t *>(&p), 34);
 }
 
 
@@ -156,6 +176,7 @@ int main(int, char **) {
   RUN_TEST(test_imu_encode_clamp);
   RUN_TEST(test_sensors_encode_golden);
   RUN_TEST(test_sensors_encode_saturation_and_nan);
+  RUN_TEST(test_imu_encodes_silence_as_the_db_floor);
   RUN_TEST(test_co2_layout_golden);
   RUN_TEST(test_diag_layout_golden);
   RUN_TEST(test_mag_chunk_encode_golden);

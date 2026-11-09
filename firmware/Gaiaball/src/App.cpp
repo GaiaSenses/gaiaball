@@ -165,7 +165,16 @@ void App::handleImuSample(const ImuSample &s) {
   if (!imuThrottle_.shouldSend(s.tUs)) return;
   if (!ble_.anySubscriber(1)) return;
   const float q[4] = {s.q.w, s.q.x, s.q.y, s.q.z};
-  const ImuPacket p = makeImuPacket(imuSeq_++, s.tUs, q, s.acc, s.flags);
+  // The microphone envelope rides on this packet: one notification per tick carries
+  // orientation and sound with the same timestamp, which is both cheaper on the BLE
+  // connection-event budget than a second packet and easier to consume.
+  AudioLevels levels;
+  uint8_t flags = s.flags;
+  if (audio_.ok()) {
+    levels = audio_.levels();
+    flags = (uint8_t)(flags | kImuAudioValid);
+  }
+  const ImuPacket p = makeImuPacket(imuSeq_++, s.tUs, q, s.acc, flags, levels);
   ble_.notifyImu(p);
   imuNotifiesInWindow_++;
 }
@@ -255,7 +264,8 @@ void App::sendDiag(uint32_t nowMs) {
   imuNotifiesInWindow_ = 0;
   diagWindowStartMs_ = nowMs;
 
-  const DiagPacket p = diag_.collect(diagSeq_++, (uint16_t)hzX10, imu_, audio_, co2_, nowMs);
+  const DiagPacket p =
+      diag_.collect(diagSeq_++, (uint16_t)hzX10, imu_, audio_, co2_, nowMs, ble_.connIntervalMsX10());
   ble_.notifyDiag(p);
 }
 

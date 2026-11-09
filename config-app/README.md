@@ -15,19 +15,29 @@ com uma cor própria. Arraste para dar zoom; duplo clique restaura.
 |---|---|---|
 | Orientação (IMU GY-91/MPU-9250) | graus (°) | fusão Madgwick no firmware → quaternion → Euler na convenção legada (mesma saída que o site entrega ao patch Pd) |
 | Aceleração (IMU) | g | contagens do MPU-9250 ÷ 8192 (fundo de escala ±4 g) |
-| Microfones esq./dir. (INMP441) | dBFS (AES17) + dB SPL estimado | RMS em contagens de 24 bits (I²S 32 bits, `>>8`; fundo de escala 2²³); 0 dBFS = seno de fundo de escala; SPL ≈ dBFS + 120 (sensibilidade do INMP441: −26 dBFS @ 94 dB SPL, 1 kHz) |
+| Microfones esq./dir. (INMP441) | dBFS (AES17) + dB SPL estimado | **RMS e pico medidos no firmware** (janela de 20 ms; o pico amostrado no 16 kHz cheio) e enviados em cada pacote de orientação — ou seja, na taxa de orientação, não a 5 Hz. 0 dBFS do RMS = seno de fundo de escala (AES17); 0 dBFS do pico = amostra de fundo de escala, 3,01 dB abaixo para a mesma senoide. SPL ≈ dBFS + 120 (sensibilidade do INMP441: −26 dBFS @ 94 dB SPL, 1 kHz) |
 | CO₂ (Senseair S8) | ppm | leitura Modbus do firmware (EMA opcional, TLV `0x28`) |
 | Potenciômetro | % do curso | ADC filtrado 0–4095 → 0–100 % (o limiar mapeado aparece no cartão e como linha pontilhada nos gráficos dos microfones) |
 
-Os dados de áudio/potenciômetro chegam num pacote próprio (`SensorsPacket`, 5 Hz, na
-característica de diagnóstico — ver `firmware/docs/protocol.md`); IMU e CO₂ usam os
-pacotes já existentes. No modo demo o painel roda com dados sintéticos.
+O limiar do detector, o potenciômetro e as flags de saúde chegam num pacote próprio
+(`SensorsPacket`, 5 Hz, na característica de diagnóstico — ver
+`firmware/docs/protocol.md`); o envelope dos microfones (RMS e pico por canal) viaja
+junto com a orientação no `ImuPacket`, com o mesmo carimbo de tempo. No modo demo o
+painel roda com dados sintéticos.
 
 ### Analisador de espectro (ajuste do passa-banda do sopro)
 
-A bola transmite o **áudio bruto decimado** (mono, 2 kHz, int16, ~4,4 kB/s) e o
+A bola transmite o **áudio bruto decimado** (mono, 2 kHz, int16, ~4,3 kB/s) e o
 **FFT roda aqui no navegador** (512 pontos, janela Hann de 256 ms, bins de ~3,9 Hz,
-0–1000 Hz). Sopre na bola e observe quais frequências sobem; as linhas tracejadas
+0–1000 Hz).
+
+> **Esse stream vem desligado de fábrica.** Ligue em **Configuração › Avançado › Áudio ›
+> Stream de áudio cru (2 kHz)** e aplique; enquanto está desligado o gráfico mostra o
+> aviso correspondente. Ele é o item mais caro do enlace (~45 ms/s de tempo de ar,
+> ~53 % do total quando ligado) e nada mais depende dele: o RMS e o pico vêm medidos do
+> firmware. Desligue ao terminar o ajuste.
+
+Sopre na bola e observe quais frequências sobem; as linhas tracejadas
 mostram os cortes HP/LP configurados (ecoados pelo firmware em cada pacote). Os
 filtros (HP 10 Hz / LP 200 Hz, Q 5,00 por padrão) são aplicados **no firmware**,
 antes do detector de pico — o espectro mostra o sinal **cru**, justamente para

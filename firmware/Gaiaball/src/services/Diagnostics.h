@@ -28,8 +28,11 @@ class Diagnostics {
 
   // Subsystem health travels in the diag packet flags (shown by the config-app);
   // there is no error LED — each LED pin has exactly one function.
+  // connItvlMsX10 comes from BleService::connIntervalMsX10(); it is passed in rather
+  // than read here so this class stays independent of the BLE stack.
   DiagPacket collect(uint16_t seq, uint16_t notifyHzX10, const ImuService &imu,
-                     const AudioService &audio, const Co2Service &co2, uint32_t nowMs) const;
+                     const AudioService &audio, const Co2Service &co2, uint32_t nowMs,
+                     uint16_t connItvlMsX10) const;
 };
 
 }  // namespace gaia

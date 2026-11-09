@@ -11,7 +11,7 @@ static int16_t encodeQ14(float v) {
 }
 
 ImuPacket makeImuPacket(uint16_t seq, uint32_t tUs, const float q[4], const int16_t acc[3],
-                        uint8_t flags) {
+                        uint8_t flags, const AudioLevels &audio) {
   ImuPacket p{};
   p.version = kProtocolVersion;
   p.type = static_cast<uint8_t>(PacketType::ImuSample);
@@ -32,6 +32,10 @@ ImuPacket makeImuPacket(uint16_t seq, uint32_t tUs, const float q[4], const int1
   p.accY = acc[1];
   p.accZ = acc[2];
   p.flags = flags;
+  for (int c = 0; c < 2; ++c) {
+    p.audioRmsDbX100[c] = rmsToDbfsX100(audio.rms[c]);
+    p.audioPeakDbX100[c] = peakToDbfsX100(audio.peak[c]);
+  }
   return p;
 }
 

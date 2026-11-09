@@ -6,6 +6,7 @@ pulse, two status LEDs, and a NimBLE GATT server streaming binary packets to up 
 centrals.
 
 - Why each processing stage exists, per sensor: [Signal processing chains](#signal-processing-chains)
+- What each packet costs on the air, per item and in total: [BLE byte budget](#ble-byte-budget)
 
 - Wire protocol (UUIDs, packets, opcodes, config TLV): [`docs/protocol.md`](docs/protocol.md)
 - Tasks, cores, priorities, data flow: [`docs/architecture.md`](docs/architecture.md)
@@ -41,7 +42,7 @@ pio run -d firmware -e esp32dev                       # build
 pio run -d firmware -e esp32dev -t upload             # build + flash (auto-detects the port)
 pio run -d firmware -e esp32dev -t upload --upload-port /dev/ttyUSB0
 pio device monitor -d firmware -e esp32dev            # serial log, 115200 baud
-pio test -d firmware -e native                        # host unit tests (120 cases)
+pio test -d firmware -e native                        # host unit tests (131 cases)
 ```
 
 `platformio.ini` pins `espressif32@6.12.0` (Arduino core 2.0.17) and
@@ -68,12 +69,15 @@ arduino-cli compile --fqbn esp32:esp32:esp32 firmware/Gaiaball
 arduino-cli upload  --fqbn esp32:esp32:esp32 -p /dev/ttyUSB0 firmware/Gaiaball
 ```
 
-### Resource usage (build of 2026-11-08)
+### Resource usage (build of 2026-11-09)
 
 | Toolchain | Flash (of 1 310 720 B) | Static RAM (of 327 680 B) |
 |---|---|---|
-| PlatformIO `esp32dev` | 811 969 B (61.9 %) | 52 684 B (16.1 %) |
-| arduino-cli `esp32:esp32:esp32` | 801 621 B (61 %) | 52 580 B (16 %) |
+| PlatformIO `esp32dev` | 814 085 B (62.1 %) | 51 372 B (15.7 %) |
+| arduino-cli `esp32:esp32:esp32` | 803 653 B (61 %) | 51 268 B (15 %) |
+
+Static RAM went *down* with the v8 audio changes: the I2S block shrank from 256 to 80
+frames, so both the DMA buffers and the task's sample buffer are smaller.
 
 Known build warnings (pre-existing, harmless, from the legacy IDF drivers kept on
 purpose for core 2.0.17): `'I2S_COMM_FORMAT_I2S' is deprecated` (AudioService) and
@@ -117,10 +121,17 @@ config write that lands both LED functions on the same GPIO is rejected atomical
 - Advertises as **`Globo_1`** (config TLV `0x40`, applied after reboot); accepts two
   simultaneous centrals.
 - IMU packets at `imuNotifyHz` (default 50 Hz, configurable 10–200 Hz — the MPU-9250
-  sample rate follows), CO2 packets on every ppm/flag change plus a 1 Hz keepalive, diagnostics
-  at 1 Hz, live sensor levels (SensorsPacket) at 5 Hz and raw decimated audio (2 kHz
-  int16, for the config-app's frontend FFT) at ~21 pkt/s on the diag characteristic.
-  Notifications are only sent to subscribers.
+  sample rate follows), **each one carrying the microphone envelope** (RMS and peak per
+  channel, in dBFS); CO2 packets on every ppm/flag change plus a 1 Hz keepalive;
+  diagnostics at 1 Hz; live sensor levels (SensorsPacket) at 5 Hz; and raw decimated
+  audio (2 kHz int16, for the config-app's frontend FFT) at ~21 pkt/s on the diag
+  characteristic **only while `audioRawStream` (TLV `0x1F`) is on — off by default**.
+  Notifications are only sent to subscribers. See [BLE byte budget](#ble-byte-budget).
+- On every connect the firmware requests a **7.5–15 ms connection interval** (0 latency,
+  4 s supervision timeout). This is what makes rates above ~60 Hz reachable at all: a
+  notification can only leave inside a connection event, so the ceiling is (packets per
+  event) / (interval). The central may refuse, so the granted interval is reported in
+  the diag packet and shown in the config-app's metrics panel.
 - Per-sensor filters, all configurable from the config-app and persisted: the IMU
   anti-alias filter and gyro range, the AHRS gain and its acceleration/magnetic
   rejection, the gyro-bias tracker, orientation smoothing (fixed slerp or the 1-euro
@@ -150,6 +161,77 @@ config write that lands both LED functions on the same GPIO is rejected atomical
   on the header after any byte loss.
 - A sound peak triggers the virtual CO2 pulse: after `virtualDelayMs` (1 s) the reported
   ppm becomes `virtualPeakPpm` (2100) for `virtualHoldMs` (17 s).
+
+## BLE byte budget
+
+Everything here is arithmetic over the packet sizes in
+[`docs/protocol.md`](docs/protocol.md) and the BLE 4.2 link-layer framing — **nothing in
+this section has been measured on hardware yet** (see [`../docs/bench-validation.md`](../docs/bench-validation.md)).
+
+Air time per notification, LE 1M PHY, unencrypted link (the PIN is an application-level
+gate, there is no pairing), counting the central's mandatory empty PDU and both
+inter-frame spaces:
+
+```
+LL packet bytes = 1 (preamble) + 4 (access address) + 2 (LL header)
+                + payload + 3 (CRC) + 7 (L2CAP 4 + ATT 3)   =  P + 17
+air time        = (P + 17) x 8 us  +  80 us (empty PDU)  +  300 us (2 x T_IFS)
+```
+
+So a 23-byte packet costs ~700 µs and a 208-byte one ~2180 µs. **Packet slots, not
+bytes, are the scarce resource**: an 8-byte field added to an existing packet costs
+64 µs, while the same 8 bytes in a packet of their own cost a full ~660 µs.
+
+### What each v8 item costs or saves
+
+Default configuration (`imuNotifyHz` = 50, raw stream off):
+
+| # | Item | Bytes on the wire | Payload/s | Air time/s | CPU |
+|---|---|---|---|---|---|
+| 1 | RMS per channel on every ImuPacket | **+4 B/packet** (2 × i16, 0.01 dBFS) | +200 B/s | +1.6 ms | ~0 (it was already being computed) |
+| 2 | Peak per channel, tracked at 16 kHz | **+4 B/packet** (2 × i16, 0.01 dBFS) | +200 B/s | +1.6 ms | +1 compare per sample per channel ≈ 0.01 % of a core |
+| 3 | Granted connection interval in the DiagPacket | **+2 B/packet** (u16, 0.1 ms) | +2 B/s | +0.02 ms | 0 |
+| 4 | Raw 2 kHz stream now opt-in (TLV `0x1F`) | **−208 B/packet × −20.8 packets/s** | **−4333 B/s** | **−45.4 ms** | −1 decimator feed per sample ≈ −0.1 % of a core |
+| 5 | `double` → `float` in the RMS accumulators | 0 | 0 | 0 | **−1.7 % of a core** (the LX6 FPU is single-precision; every double op was emulated) |
+| | **Total** | ImuPacket 23 → 31 B, DiagPacket 32 → 34 B | **−3931 B/s (−70 %)** | **−42.2 ms (−49 %)** | ≈ −1.8 % of one core |
+
+Item 1 and item 2 together are the 8 bytes appended to the ImuPacket; they are listed
+apart because they answer different questions (energy over a window vs. the transient
+inside it), and because only the peak needed new per-sample work.
+
+### Link totals
+
+| Scenario | Packets/s | Payload | Air time | Duty |
+|---|---|---|---|---|
+| v7 (50 Hz, stream always on) | 77.8 | 5642 B/s | 85.3 ms/s | 8.5 % |
+| **v8 default (50 Hz, stream off)** | **57** | **1711 B/s** | **43.1 ms/s** | **4.3 %** |
+| v8 at 100 Hz, stream off | 107 | 3261 B/s | 81.3 ms/s | 8.1 % |
+| v8 at 200 Hz, stream off | 207 | 6361 B/s | 157.7 ms/s | 15.8 % |
+| v8 at 100 Hz while tuning (stream on) | 128 | 7594 B/s | 126.7 ms/s | 12.7 % |
+
+Breakdown of the v8 default, per packet type:
+
+| Packet | Payload | Rate | Payload/s | Air time/s |
+|---|---|---|---|---|
+| ImuPacket (orientation + envelope) | 31 B | 50 Hz | 1550 B/s | 38.2 ms |
+| SensorsPacket (threshold, pot, health) | 23 B | 5 Hz | 115 B/s | 3.5 ms |
+| DiagPacket | 34 B | 1 Hz | 34 B/s | 0.8 ms |
+| Co2Packet | 12 B | 1 Hz | 12 B/s | 0.6 ms |
+| AudioChunkPacket (opt-in) | 208 B | 0 (20.8 Hz when on) | 0 (4333 B/s) | 0 (45.4 ms) |
+| **Total** | | | **1711 B/s** | **43.1 ms** |
+
+### Why the spectrum is not computed here
+
+A 512-point spectrum of the 2 kHz stream is 256 bins. At one byte per bin that is
+256 B per channel per frame — **more** than the 192 bytes of audio it was derived from,
+and 520 B per stereo frame does not fit the 247-byte MTU. Sending spectra at the
+resolution the config-app shows today would cost ~2.6× the air time of sending the audio
+itself, and at 100 Hz the frames would be 96 % overlapped: the same 256 ms window
+retransmitted 25 times. The FFT itself is affordable (~37 kcycles per frame per channel,
+≈ 3 % of a core at 100 Hz stereo), so this is a bandwidth and information decision, not
+a CPU one. If coarse bands ever turn out to be what the application wants, a bank of
+~24 biquads costs ~0.3 % of a core and has no window latency, where a 256 ms FFT window
+delays the result by ~128 ms.
 
 ## Signal processing chains
 
@@ -202,30 +284,37 @@ and is noted where it matters.
 ### Sound (2× INMP441)
 
 ```
-   2x INMP441 ──> I2S, 32-bit stereo @ 16 kHz
+   2x INMP441 ──> I2S, 32-bit stereo @ 16 kHz, 80-frame blocks (5 ms)
         │
    [1] >>8 to 24-bit samples, DC removal
         │
         ├──> [2] breath band-pass: HP biquad then LP biquad
         │          │
-        │     [3] block RMS (per channel)
+        │     [3] per-block sum of squares + max |sample| (16 kHz, float)
         │          │
-        │     [4] adaptive peak detector: fast EMA vs slow EMA + threshold,
-        │          hysteresis and debounce
+        │     [4] AudioLevelWindow: 20 ms pooled energy, fresh every block
         │          │
-        │          └──> sound event ──> LED flash + virtual CO2 pulse
+        │          ├──> [5] RMS + peak per channel ──> every ImuPacket (dBFS x100)
+        │          │                                   and the 5 Hz SensorsPacket
+        │          │
+        │          └──> [6] adaptive peak detector (every 3rd block = 15 ms):
+        │                   fast EMA vs slow EMA + threshold, hysteresis, debounce
+        │                   │
+        │                   └──> sound event ──> LED flash + virtual CO2 pulse
         │
-        └──> [5] decimate 16 kHz -> 2 kHz (average of 8) ──> AudioChunkPacket
-                   (the FFT runs in the browser, not here)
+        └──> [7] decimate 16 kHz -> 2 kHz (average of 8) ──> AudioChunkPacket
+                   OPT-IN (TLV 0x1F, off by default); the FFT runs in the browser
 ```
 
 | # | Stage | What goes wrong without it | What it buys |
 |---|---|---|---|
-| 1 | 24-bit extraction + DC removal | The INMP441 pushes 24-bit data inside 32-bit slots and carries a DC offset that would bias every RMS value. | A zero-mean signal, so RMS measures sound and not the offset. |
-| 2 | Breath band-pass (`audioBpfEnabled`, HP/LP + Q) | Handling noise and table thumps live below the breath band; speech and room tone above it. Both fire the detector. | Only the breath band reaches the detector. The cut-offs are tuned against the live spectrum in the config-app, which is why the raw stream is also published. |
-| 3 | Block RMS | Instantaneous amplitude swings sample to sample; a threshold on it would chatter. | Energy over a block: one stable number per block to compare against a threshold. |
-| 4 | Adaptive peak detector (`src/logic/PeakDetector.*`) | A fixed threshold drifts out of calibration with the room: too high in a quiet hall, constantly triggered in a noisy one. | The fast envelope is compared against a slow envelope (the room's own noise floor) plus the threshold, so the detector adapts to the room. Hysteresis and debounce turn one long breath into exactly one event. |
-| 5 | Decimation to 2 kHz | Streaming 16 kHz audio over BLE would eat the notify budget the orientation stream needs. | ~4.4 kB/s instead of ~32 kB/s, which still covers the breath band with room to spare. Average-of-8 is the anti-alias filter for that decimation. |
+| 1 | 24-bit extraction + DC removal | The INMP441 pushes 24-bit data inside 32-bit slots and carries a DC offset that would bias every RMS value. | A zero-mean signal, so RMS measures sound and not the offset. The 5 ms block exists because the envelope published on the orientation packet can never be fresher than one block, and that packet goes out at up to 200 Hz. |
+| 2 | Breath band-pass (`audioBpfEnabled`, HP/LP + Q) | Handling noise and table thumps live below the breath band; speech and room tone above it. Both fire the detector. | Only the breath band reaches the detector. The cut-offs are tuned against the live spectrum in the config-app, which is what the opt-in raw stream is for. |
+| 3 | Sum of squares + peak, in `float` | Instantaneous amplitude swings sample to sample; a threshold on it would chatter. A peak measured on the decimated stream (as the browser used to) is averaged over 8 samples, so it under-reads every transient. | Energy and the true 16 kHz peak of the same signal, so peak/RMS is a meaningful crest factor. `float`, not `double`: the Xtensa LX6 FPU is single-precision, so every double operation here was emulated in software — more cycles than the rest of the audio front end put together, for an error of 1e-4 dB. |
+| 4 | Pooled 20 ms window (`src/logic/AudioFeatures.*`) | At 200 Hz a block is 5 ms — shorter than one period of the low end of the breath band (10 ms at 100 Hz) — so a single block measures instantaneous amplitude, not energy, and the value wobbles with the waveform. | A 20 ms energy window that still refreshes every block (75 % overlap): a stable number at a fast rate, instead of having to choose. |
+| 5 | Envelope on the wire (`audioRmsDbX100`, `audioPeakDbX100`) | The envelope used to reach the host at 5 Hz (SensorsPacket) or had to be re-derived in the browser from the decimated stream — a 200 ms-old number, or a wrong one. | The signal the application actually uses as a control arrives at the orientation rate (up to 200 Hz), with the same timestamp, for 8 bytes on a packet that was already being sent. |
+| 6 | Adaptive peak detector (`src/logic/PeakDetector.*`) | A fixed threshold drifts out of calibration with the room: too high in a quiet hall, constantly triggered in a noisy one. | The fast envelope is compared against a slow envelope (the room's own noise floor) plus the threshold, so the detector adapts to the room. Hysteresis and debounce turn one long breath into exactly one event. It runs every 3rd block (15 ms) on purpose: its EMA coefficients are per update and were tuned against the old 16 ms block, so keeping the cadence keeps the stored alphas meaningful. |
+| 7 | Decimation to 2 kHz, opt-in (`audioRawStream`) | Streaming 16 kHz audio over BLE would eat the notify budget the orientation stream needs. Streaming even the decimated version *all the time* costs more air time than every other packet put together. | ~4.3 kB/s instead of ~32 kB/s while it is on, and nothing at all while it is off — which is the default, because only the spectrum view needs it. Average-of-8 is the anti-alias filter for that decimation. |
 
 ### CO2 (SC8-CO2-5K)
 
@@ -318,6 +407,7 @@ persisted only by command `0x11`. Full table with types: [`docs/protocol.md`](do
 | `0x1E` | magCal — 24-byte hard/soft-iron record (see protocol.md) | identity |
 | `0x10`–`0x15` | audio: enabled, fast/slow alpha ×1000, debounceMs, potControlsThreshold, thresholdFixed | 1, 250, 995, 300, 1, 100000 |
 | `0x16`–`0x1A` | breath band-pass: enabled, HP Hz, HP Q×100, LP Hz, LP Q×100 (LP > HP enforced) | 1, 10, 500, 200, 500 |
+| `0x1F` | audioRawStream — raw 2 kHz stream on/off (costs ~4.3 kB/s; only the spectrum view needs it) | 0 |
 | `0x1B` | potEmaAlphaX1000 | 300 |
 | `0x20`, `0x22`–`0x26` | CO2: enabled, stale timeout, virtual peak/delay/hold, raw log | 1, 5000, 2100, 1000, 17000, 0 |
 | `0x28` | co2EmaAlphaX1000 (1000 = off) | 1000 |

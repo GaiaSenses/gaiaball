@@ -30,7 +30,7 @@ After `setup()` returns, `loop()` blocks in `vTaskDelay(portMAX_DELAY)`.
 | Task | Core | Prio | Stack | Wakes on | Owns |
 |---|---|---|---|---|---|
 | `imu` | 1 | 3 | 6144 | `vTaskDelay` (adaptive: sample period / 4, clamped 2–5 ms — the GY-91 INT pin is not routed on the board) | MPU-9250 (I2C), Madgwick fusion, gyro-bias tracker, mounting/zero state |
-| `audio` | 1 | 2 | 4096 | `i2s_read` (256 frames @ 16 kHz = 16 ms; 100 ms timeout) | I2S0, PeakDetector |
+| `audio` | 1 | 2 | 4096 | `i2s_read` (80 frames @ 16 kHz = 5 ms; 100 ms timeout) | I2S0, AudioLevelWindow, PeakDetector |
 | `app` | 1 | 2 | 6144 | IMU queue (`xQueueReceive`, 20 ms timeout) | LEDs, pot ADC, virtual pulse (`VirtualCo2Pulse` member), NVS saves |
 | `co2` | 1 | 1 | 3072 | `vTaskDelay(20 ms)` | UART1 RX (listen-only), SC8 Co2FrameParser |
 | NimBLE host | 0 | (lib) | (lib) | BLE events | GATT, CommandGate unlock, config TLV apply |
@@ -53,11 +53,11 @@ silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen b
  │          │──MagRawSample queue───────>│  CO2 on change / 1 Hz │   └─────────────┘
  │          │  (depth 32, drop-oldest,   │  mag chunk (16/pkt)   │
                                          │  diag 1 Hz            │          │
- ┌──────────┐ onPeak: atomics only       │  LED update 20 Hz     │  BleCommand queue
+ ┌──────────┐ onPeak + levels(): atomics │  LED update 20 Hz     │  BleCommand queue
  │audio task│──lastPeakMs_, peakPending_>│  pot poll 10 Hz       │<─(depth 8)──┤
- │ prio 2   │<─threshold provider────────│  → threshold_ atomic  │             │
- └──────────┘  reads App::threshold_     │  command dispatch     │  ConfigStore onChange
-                                         │  config re-apply      │<─configDirty_ flag──┤
+ │ prio 2   │──rms/peak of the 20 ms win>│  → threshold_ atomic  │             │
+ │          │<─threshold provider────────│  command dispatch     │  ConfigStore onChange
+ └──────────┘  reads App::threshold_     │  config re-apply      │<─configDirty_ flag──┤
  ┌──────────┐ realPpm/frameCount atomics │  mount persist (NVS)  │   NimBLE host task
  │ co2 task │───────────────────────────>│  WDT feed             │   (0x20 unlock inline,
  │ prio 1   │                            └───────────────────────┘    config TLV apply)
@@ -72,6 +72,18 @@ silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen b
   `Co2Service` is real-sensor-only and has no pulse state.
 - **App → Audio**: `PotService` is single-task (App). After each `poll()` the App stores
   `threshold()` in an `std::atomic<float>`; the audio task's threshold provider reads it.
+- **Audio → App (envelope)**: the audio task publishes the pooled 20 ms levels (RMS and
+  peak per channel) into four `std::atomic<float>`; the App task snapshots them with
+  `AudioService::levels()` and appends them to the ImuPacket it was already sending.
+  Atomics and not a queue because only the latest value matters: a control signal has
+  no use for a backlog, and the IMU notify rate already paces the reads. The audio task
+  runs at 200 blocks/s, so the envelope is never more than 5 ms older than the
+  orientation sample it travels with.
+- **BLE → App (link state)**: `BleService::connIntervalMsX10()` asks the NimBLE host for
+  the live connection descriptor (safe from any task; it takes the host lock) and the
+  App passes the value to `Diagnostics::collect`. The firmware requests 7.5–15 ms on
+  connect, but the central decides, so the granted value is reported rather than
+  assumed — it is the ceiling on every notify rate.
 - **BLE → App (commands)**: every command except `0x20` (unlock, inline on the host task)
   goes through the BleCommand queue. Gated opcodes are authorized with
   `BleCommand::unlockedAtEnqueue`, never by re-querying the gate.

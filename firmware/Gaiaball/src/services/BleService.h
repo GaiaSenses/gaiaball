@@ -97,6 +97,13 @@ class BleService {
 
   uint8_t connectedCount() const { return connCount_.load(); }
 
+  // Connection interval granted by the central, in 0.1 ms per LSB (0 = not connected).
+  // The firmware REQUESTS 7.5-15 ms on connect; the central may refuse, so the granted
+  // value travels in the diagnostics packet. It is the hard ceiling on every notify
+  // rate: max notifications/s = (packets per connection event) / (interval).
+  // Safe from any task (reads the NimBLE host's own connection descriptor).
+  uint16_t connIntervalMsX10() const;
+
  private:
   class ServerCb;
   class CommandCb;
@@ -124,6 +131,8 @@ class BleService {
   QueueHandle_t cmdQueue_ = nullptr;
 
   uint16_t connHandles_[kMaxConns] = {0xFFFF, 0xFFFF};  // host task only; 0xFFFF = free
+  // Mirror of one live handle for connIntervalMsX10(), which runs on the App task.
+  std::atomic<uint16_t> liveHandle_{0xFFFF};
   std::atomic<uint8_t> connCount_{0};
   // Bit n set = slot n has notifications enabled on that characteristic.
   std::atomic<uint8_t> subMask_[kNotifyChars] = {{0}, {0}, {0}};

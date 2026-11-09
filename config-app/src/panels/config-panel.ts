@@ -98,6 +98,9 @@ const GROUPS: Group[] = [
       info: 'Corte superior do passa-banda: atenua o que fica acima dele. Precisa ficar acima do high-pass. Unidade: hertz (Hz).' },
     { id: TLV.audioLpQX100, label: 'Q do low-pass (×100)', kind: 'number', min: 10, max: 2000,
       info: 'Fator de qualidade do corte ×100 (71 = 0,71 = resposta plana); valores altos criam pico ressonante no corte. Adimensional.' },
+    { id: TLV.audioRawStream, label: 'Stream de áudio cru (2 kHz)', kind: 'select',
+      options: [[0, 'desligado'], [1, 'ligado']],
+      info: 'Envia o áudio mono decimado a 2 kHz para desenhar o espectro no painel Sensores. Ligue só para ajustar os cortes do passa-banda: enquanto está ligado ele consome ~4,3 kB/s e ~45 ms de tempo de ar por segundo — mais que todos os outros pacotes somados. O RMS e o pico não dependem dele (vêm medidos do firmware em cada pacote de orientação). Liga/desliga, sem unidade.' },
   ] },
   { title: 'CO₂', fields: [
     { id: TLV.co2Enabled, label: 'Habilitado', kind: 'checkbox',
@@ -185,6 +188,7 @@ export const FIELD_DEFAULTS: ReadonlyMap<number, number | string> = new Map<numb
   [TLV.audioHpQX100, 500],
   [TLV.audioLpHz, 200],
   [TLV.audioLpQX100, 500],
+  [TLV.audioRawStream, 0],
   [TLV.co2Enabled, 1],
   [TLV.co2StaleTimeoutMs, 5000],
   [TLV.virtualPeakPpm, 2100],

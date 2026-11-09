@@ -23,6 +23,11 @@ class AudioDecimator {
   bool feed(float sample);
   const int16_t *chunk() const { return out_; }
 
+  // Drops the partial chunk and the partial average. Called when the raw stream is
+  // switched back on, so the first chunk after the pause cannot mix fresh samples
+  // with ones captured before it.
+  void reset();
+
  private:
   float acc_ = 0.0f;
   int accN_ = 0;

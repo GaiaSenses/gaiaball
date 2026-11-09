@@ -18,8 +18,17 @@ constexpr int kPinWs = 25;
 constexpr int kPinSck = 26;
 constexpr int kPinSd = 33;
 constexpr int kSampleRate = 16000;
-constexpr size_t kFrames = 256;
-// A DMA buffer is ready every 16 ms; a finite read timeout keeps the task feeding
+// 80 frames = 5 ms per block: the envelope published on the orientation packet can
+// never be fresher than one block, and the notify rate goes up to 200 Hz.
+constexpr size_t kFrames = 80;
+// 8 buffers = 40 ms of DMA slack before an overrun if the task is held off (the old
+// 4 x 256 frames was 64 ms; 40 ms is still 8 blocks of headroom).
+constexpr int kDmaBufCount = 8;
+// The adaptive detector's EMA coefficients are per update and were tuned against the
+// old 16 ms block. Feeding it every 3rd block keeps that cadence at 15 ms, so the
+// stored alphas keep their meaning (time constants shift by 6 %, not by 3.2x).
+constexpr uint8_t kDetectorBlocks = 3;
+// A DMA buffer is ready every 5 ms; a finite read timeout keeps the task feeding
 // the WDT even if the I2S DMA stalls (a timeout counts as an i2sError).
 constexpr TickType_t kReadTimeout = pdMS_TO_TICKS(100);
 }  // namespace
@@ -35,7 +44,7 @@ bool AudioService::begin(const GaiaConfig &cfg) {
   c.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
   c.communication_format = I2S_COMM_FORMAT_I2S;
   c.intr_alloc_flags = 0;
-  c.dma_buf_count = 4;
+  c.dma_buf_count = kDmaBufCount;
   c.dma_buf_len = kFrames;
   c.use_apll = false;
 
@@ -58,7 +67,7 @@ bool AudioService::begin(const GaiaConfig &cfg) {
   }
   i2s_zero_dma_buffer(kPort);
   ok_ = true;
-  GB_LOGI(kTag, "I2S stereo ready (16 kHz)");
+  GB_LOGI(kTag, "I2S stereo ready (16 kHz, %u-frame blocks)", (unsigned)kFrames);
   return true;
 }
 
@@ -68,11 +77,21 @@ void AudioService::applyConfig(const GaiaConfig &cfg) {
   debounceMs_.store(cfg.debounceMs);
   enabled_.store(cfg.audioEnabled != 0);
   bpfEnabled_.store(cfg.audioBpfEnabled != 0);
+  rawStreamEnabled_.store(cfg.audioRawStream != 0);
   hpHz_.store(cfg.audioHpHz);
   hpQX100_.store(cfg.audioHpQX100);
   lpHz_.store(cfg.audioLpHz);
   lpQX100_.store(cfg.audioLpQX100);
   cfgDirty_.store(true);
+}
+
+AudioLevels AudioService::levels() const {
+  AudioLevels l;
+  l.rms[0] = rmsL_.load();
+  l.rms[1] = rmsR_.load();
+  l.peak[0] = peakL_.load();
+  l.peak[1] = peakR_.load();
+  return l;
 }
 
 bool AudioService::takeAudioChunk(int16_t out[AudioDecimator::kChunkSamples]) {
@@ -99,7 +118,7 @@ void AudioService::taskEntry(void *arg) {
 }
 
 void AudioService::taskLoop() {
-  static int32_t buf[kFrames * 2];  // 2 KB, kept off the 4 KB task stack
+  static int32_t buf[kFrames * 2];  // 640 B, kept off the 4 KB task stack
   // Task WDT: registered and fed once per cycle (see the watchdog policy in
   // Diagnostics.h); the finite i2s_read timeout is what makes the feed reachable.
   esp_task_wdt_add(nullptr);
@@ -116,6 +135,15 @@ void AudioService::taskLoop() {
       detector_.configure(fastX1000_.load() / 1000.0f, slowX1000_.load() / 1000.0f,
                           debounceMs_.load());
       bpfActive_ = bpfEnabled_.load();
+      // Raw stream toggled: starting fresh keeps the first chunk after a pause from
+      // mixing new samples with ones captured before it; stopping drops the chunk the
+      // App task has not picked up yet.
+      const bool wantRaw = rawStreamEnabled_.load();
+      if (wantRaw != rawStreamActive_) {
+        decim_.reset();
+        chunkReady_.store(false);
+        rawStreamActive_ = wantRaw;
+      }
       const float fs = (float)kSampleRate;
       hpL_.configure(Biquad::Type::HighPass, (float)hpHz_.load(), hpQX100_.load() / 100.0f, fs);
       hpR_.configure(Biquad::Type::HighPass, (float)hpHz_.load(), hpQX100_.load() / 100.0f, fs);
@@ -124,22 +152,29 @@ void AudioService::taskLoop() {
     }
 
     // Per-block DC removal (same math as the reference computeStereoRms), fused with
-    // the raw-audio decimator feed and the optional band-pass before the RMS.
+    // the raw-audio decimator feed, the optional band-pass, the energy accumulation
+    // and the peak tracking: one pass over the samples does all four.
     const size_t frames = (bytes / sizeof(int32_t)) / 2;
     if (frames == 0) continue;
-    int64_t sumL = 0, sumR = 0;
+    int64_t sumL = 0, sumR = 0;  // int64: exact for any block size
     for (size_t i = 0; i < frames; i++) {
       sumL += buf[2 * i] >> 8;
       sumR += buf[2 * i + 1] >> 8;
     }
-    const float meanL = (float)((double)sumL / (double)frames);
-    const float meanR = (float)((double)sumR / (double)frames);
-    double accL = 0.0, accR = 0.0;
+    const float meanL = (float)sumL / (float)frames;
+    const float meanR = (float)sumR / (float)frames;
+    // float, not double: the Xtensa LX6 FPU is single-precision only, so every double
+    // operation in this loop was emulated in software -- more cycles than the whole
+    // rest of the audio front end. The relative error of the sum stays near 1e-5,
+    // which is 1e-4 dB (see test_rms_float_accumulator_precision).
+    float sumSq[2] = {0.0f, 0.0f};
+    float peak[2] = {0.0f, 0.0f};
     for (size_t i = 0; i < frames; i++) {
       float l = (float)(buf[2 * i] >> 8) - meanL;
       float r = (float)(buf[2 * i + 1] >> 8) - meanR;
-      // Raw (unfiltered) mono mix feeds the 2 kHz stream for the frontend FFT.
-      if (decim_.feed(0.5f * (l + r))) {
+      // Raw (unfiltered) mono mix feeds the 2 kHz stream for the frontend FFT, and
+      // only while that stream is switched on (GaiaConfig::audioRawStream).
+      if (rawStreamActive_ && decim_.feed(0.5f * (l + r))) {
         portENTER_CRITICAL(&chunkMux_);
         memcpy(chunkBuf_, decim_.chunk(), sizeof(chunkBuf_));
         chunkReady_.store(true);
@@ -149,17 +184,28 @@ void AudioService::taskLoop() {
         l = lpL_.process(hpL_.process(l));
         r = lpR_.process(hpR_.process(r));
       }
-      accL += (double)l * l;
-      accR += (double)r * r;
+      sumSq[0] += l * l;
+      sumSq[1] += r * r;
+      // Peak at the full 16 kHz, on the same signal as the RMS so that peak/RMS is a
+      // meaningful crest factor.
+      const float al = fabsf(l), ar = fabsf(r);
+      if (al > peak[0]) peak[0] = al;
+      if (ar > peak[1]) peak[1] = ar;
     }
-    const float rl = sqrtf((float)(accL / (double)frames));
-    const float rr = sqrtf((float)(accR / (double)frames));
-    rmsL_.store(rl);
-    rmsR_.store(rr);
+    window_.push(sumSq, peak, (uint16_t)frames);
+    const AudioLevels lv = window_.levels();
+    rmsL_.store(lv.rms[0]);
+    rmsR_.store(lv.rms[1]);
+    peakL_.store(lv.peak[0]);
+    peakR_.store(lv.peak[1]);
     if (!enabled_.load()) continue;
+    // The detector keeps its own, slower cadence: see kDetectorBlocks.
+    if (++detectorPhase_ < kDetectorBlocks) continue;
+    detectorPhase_ = 0;
     const float thr = thresholdProvider_ ? thresholdProvider_() : fixedThreshold_;
     const uint32_t now = millis();
-    if (detector_.update(rl > rr ? rl : rr, thr, now) && onPeak_) onPeak_(now);
+    const float level = lv.rms[0] > lv.rms[1] ? lv.rms[0] : lv.rms[1];
+    if (detector_.update(level, thr, now) && onPeak_) onPeak_(now);
   }
 }
 

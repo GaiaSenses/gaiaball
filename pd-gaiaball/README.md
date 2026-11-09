@@ -103,12 +103,34 @@ Opcional: `[gaiaball 9500]` escuta em outra porta UDP (rode a ponte com
 | 5 | `mics` | `dBFS_L dBFS_R rms_L rms_R filtrado` | dBFS (AES17, 0 = senoide de fundo de escala; SPL ≈ dBFS + 120); RMS em contagens de 24 bits; flag 0/1 = RMS medido após o passa-banda do sopro |
 | 6 | `pot` | `porcento cru limiar controla` | % do curso; ADC 0–4095; limiar em RMS (mesma escala dos mics); flag 0/1 = potenciômetro controla o limiar |
 | 7 | `diag` | `uptime hzIMU hzNotify errosI2C errosI2S errosUART heapKb heapMinKb imuOk audioOk co2Ok` | s; Hz; contadores; KB; 3 flags 0/1 — chega 1×/s |
-| 8 | `audio` | 96 amostras int16 | áudio cru decimado a 2 kHz (~21 msg/s) — **só com a ponte em `--audio`** |
-| 9 | `status` | `bridge <versão>` · `scanning` · `connected <nome>` · `disconnected` · `audioinfo <taxa> <hp> <lp> <bpf>` | estado da ponte/conexão |
+| 8 | `micenv` | `rms_L rms_R pico_L pico_R` | **dBFS**, medidos pelo firmware em janela de 20 ms, com o pico amostrado nos 16 kHz cheios. Chega **na taxa de orientação** (até 200 Hz) — é este o sinal para controle de sopro, não o `mics` de 5 Hz. RMS na referência AES17 (0 dBFS = senoide de fundo de escala), pico na referência de amplitude (0 dBFS = amostra de fundo de escala), portanto 3,01 dB abaixo para a mesma senoide |
+| 9 | `status` | `bridge <versão>` · `scanning` · `connected <nome>` · `disconnected` | estado da ponte/conexão |
 
-Taxas típicas: `euler`/`quat`/`accel` chegam na taxa configurada na bola
+Taxas típicas: `euler`/`quat`/`accel`/`micenv` chegam na taxa configurada na bola
 (10–200 Hz, padrão 50); `co2` quando muda ou 1×/s; `mics`/`pot` 5×/s;
-`diag` 1×/s.
+`diag` 1×/s. O `--imu-div` decima o `micenv` junto com a orientação: eles viajam
+no mesmo pacote.
+
+### Áudio: o Pd recebe as variáveis tratadas, não as amostras
+
+A ponte **não** encaminha o áudio cru. O que chega é o envelope já calculado na
+bola — RMS e pico por canal, em dBFS (`micenv`) — porque é isso que um patch
+usa como sinal de controle:
+
+| | Amostras cruas (o que saiu) | Envelope tratado (o que fica) |
+|---|---|---|
+| Mensagens/s | ~21, com 96 floats cada ≈ 2000 floats/s | 1 por pacote de orientação, 4 floats |
+| Pronto para usar? | não: exigiria janela, RMS e detecção de pico dentro do Pd | sim: dois números por canal, em dBFS |
+| Fidelidade do pico | o stream é decimado por média de 8 — transientes sumiam | pico amostrado nos 16 kHz cheios |
+| Custo no enlace BLE | ~4,3 kB/s e ~45 ms/s de tempo de ar (mais que todos os outros pacotes somados) | 8 bytes num pacote que já era enviado |
+
+**E o espectro (FFT)?** Fica só no navegador, no config-app, que é onde ele serve
+para ajustar os cortes do passa-banda vendo o resultado. Mandar espectro pelo
+BLE custaria mais banda que mandar o próprio áudio (256 raias por canal × 21/s)
+e não cabe no MTU. Se precisar de análise espectral dentro do Pd, o caminho é
+analisar o sinal de um microfone local ali mesmo — não transportar áudio da bola.
+O `mics` continua informando, no último campo, se o passa-banda do sopro estava
+ativo quando aquele RMS foi medido.
 
 ## Opções da ponte
 
@@ -122,8 +144,7 @@ python3 gaiaball_bridge.py --help
 | `--address END` | — | conecta por endereço (MAC no Win/Linux, UUID no macOS); ignora `--name` |
 | `--port N` | `9478` | porta UDP (tem que casar com o argumento do `[gaiaball]`) |
 | `--host IP` | `127.0.0.1` | manda os dados para outro computador (Pd em outra máquina) |
-| `--imu-div N` | `1` | encaminha 1 a cada N pacotes de IMU (alivia patches pesados: `--imu-div 4` a 200 Hz ≈ 50 msg/s) |
-| `--audio` | off | encaminha também o áudio cru de 2 kHz (outlet 8) |
+| `--imu-div N` | `1` | encaminha 1 a cada N pacotes de IMU (alivia patches pesados: `--imu-div 4` a 200 Hz ≈ 50 msg/s). Vale também para o `micenv`, que viaja no mesmo pacote |
 | `--list` | — | só lista os dispositivos BLE visíveis (a Gaiaball aparece marcada) e sai |
 | `-v` | — | imprime contadores de pacotes a cada 5 s |
 
@@ -135,8 +156,9 @@ O `gaiaball-help.pd` traz os três prontos:
    para a frequência de um `[osc~]`.
 2. **Sopro → evento**: o 4º campo de `co2` (pulso virtual) → `[sel 1]` → bang.
    É o mesmo gatilho que o site usa para disparar a composição.
-3. **Nível dos microfones**: `mics` → dBFS por canal, pronto para controlar
-   amplitude/filtros (SPL estimado ≈ dBFS + 120).
+3. **Nível dos microfones**: `micenv` → RMS e pico por canal na taxa de orientação,
+   pronto para controlar amplitude/filtros (SPL estimado ≈ dBFS + 120). O outlet
+   `mics`, de 5 Hz, serve como leitura lenta/diagnóstico.
 
 ## Solução de problemas
 
@@ -147,7 +169,8 @@ O `gaiaball-help.pd` traz os três prontos:
 | macOS: a ponte aborta na hora | permissão de Bluetooth negada ao Terminal — conceda em Ajustes → Privacidade e Segurança → Bluetooth e rode de novo. |
 | Linux: `org.bluez` error / adaptador não achado | `sudo systemctl start bluetooth`; confira `bluetoothctl show`. |
 | Windows: a bola não aparece nem no `--list` | Bluetooth desativado ou rádio sem BLE (4.0+); teste com um dongle BLE. |
-| `--audio` sem dados no outlet 8 | o SO negociou MTU < 211 — raro em máquinas modernas; sem correção local, use o analisador de espectro do config-app. |
+| Quero o áudio cru / o espectro no Pd | não é oferecido de propósito (ver [Áudio](#áudio-o-pd-recebe-as-variáveis-tratadas-não-as-amostras)). Use `micenv` para nível e transiente; o espectro fica no config-app. |
+| `micenv` não chega | a bola está rodando firmware anterior à v8 (pacote de orientação de 23 B em vez de 31 B) — atualize o firmware; a ponte descarta pacotes curtos. |
 | Ângulos "diferentes do site" | não são: é a mesma convenção (`quatToEulerLegacy`). Lembre que zero/montagem são aplicados **na bola** — use o comando "Zerar orientação" do config-app. |
 
 ## Notas de projeto

@@ -5,9 +5,13 @@ import { TLV, VALID_OUTPUT_GPIOS, buildCommand, decodeTlv, encodeTlv } from './t
 const hex = (s: string) => new DataView(new Uint8Array(s.trim().split(/\s+/).map((b) => parseInt(b, 16))).buffer);
 
 // Golden vectors copied verbatim from firmware/docs/protocol.md
-const IMU = '01 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 01 00 FE FF 03 00 03';
+const IMU =
+  '01 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 01 00 FE FF 03 00 0B' +
+  ' 00 00 30 F8 00 00 A6 FD';
 const CO2 = '01 02 02 01 0D 0C 0B 0A E8 03 05 07';
-const DIAG = '01 03 01 00 03 02 01 00 F4 01 F4 01 01 00 02 00 03 00 C8 00 96 00 07 11 03 0C 96 00 B5 FF 00 00';
+const DIAG =
+  '01 03 01 00 03 02 01 00 F4 01 F4 01 01 00 02 00 03 00 C8 00 96 00 07 11 03 0C 96 00 B5 FF 00 00' +
+  ' 96 00';
 const MAG = '01 06 09 00 04 03 02 01 02 00 64 00 38 FF 2C 01 65 00 37 FF 2D 01' + ' 00'.repeat(84);
 const SENSORS = '01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 07';
 
@@ -18,8 +22,25 @@ describe('golden decode', () => {
     expect(s.tUs).toBe(0x0a0b0c0d);
     expect(s.quat).toEqual({ w: 1.0, x: 0, y: 0, z: 0 });
     expect(s.acc).toEqual([1, -2, 3]);
-    expect(s.flags).toBe(0b011);
+    expect(s.flags).toBe(0b1011);
     expect([s.quatValid, s.nineAxis, s.moving]).toEqual([true, true, false]);
+    // Microphone envelope appended in v8: AES17 dBFS for the RMS, amplitude dBFS for
+    // the peak, both x100 on the wire.
+    expect(s.audioValid).toBe(true);
+    expect(s.audioRmsDbfs).toEqual([0, -20]);
+    expect(s.audioPeakDbfs[0]).toBe(0);
+    expect(s.audioPeakDbfs[1]).toBeCloseTo(-6.02, 2);
+  });
+
+  it('IMU without a microphone reads the dB floor, not 0 dBFS', () => {
+    // Same packet with kImuAudioValid clear and both levels at the floor (-120.00).
+    const silent =
+      '01 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 01 00 FE FF 03 00 01' +
+      ' 20 D1 20 D1 20 D1 20 D1';
+    const s = decodeImuPacket(hex(silent))!;
+    expect(s.audioValid).toBe(false);
+    expect(s.audioRmsDbfs).toEqual([-120, -120]);
+    expect(s.audioPeakDbfs).toEqual([-120, -120]);
   });
   it('CO2', () => {
     const s = decodeCo2Packet(hex(CO2))!;
@@ -32,6 +53,8 @@ describe('golden decode', () => {
       seq: 1, uptimeS: 0x00010203, imuHzX10: 500, notifyHzX10: 500, fifoOverflows: 1,
       i2sErrors: 2, uartFrameErrors: 3, freeHeapKb: 200, minFreeHeapKb: 150, flags: 7,
       ahrsFlags: 0x11, accelErrDeg: 3, magErrDeg: 12,
+      // Granted connection interval (v8): the ceiling on every notify rate.
+      connItvlMs: 15,
     });
     expect([s.imuOk, s.audioOk, s.co2Ok]).toEqual([true, true, true]);
     expect(s.gyroBiasDps[0]).toBeCloseTo(1.5, 6);
@@ -128,7 +151,7 @@ describe('invalid input returns null', () => {
 
 describe('TLV', () => {
   it('registry ids', () => {
-    expect(Object.keys(TLV)).toHaveLength(43);
+    expect(Object.keys(TLV)).toHaveLength(44);
     expect(TLV.orientationMode).toBe(0x01);
     expect(TLV.imuNotifyHz).toBe(0x02);
     expect(TLV.slerpAmount).toBe(0x03);

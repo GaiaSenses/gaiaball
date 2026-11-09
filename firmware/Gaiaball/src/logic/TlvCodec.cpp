@@ -35,7 +35,7 @@ constexpr Reg kRegs[] = {
     {0x15, Kind::U32, 0, kAnyU32},    {0x16, Kind::U8, 0, 1},
     {0x17, Kind::U16, 1, 7000},       {0x18, Kind::U16, 10, 2000},
     {0x19, Kind::U16, 1, 7000},       {0x1A, Kind::U16, 10, 2000},
-    {0x1B, Kind::U16, 1, 1000},
+    {0x1B, Kind::U16, 1, 1000},       {0x1F, Kind::U8, 0, 1},
     {0x1C, Kind::U16, 0, 10000},      {0x1D, Kind::U8, 0, 100},
     {0x1E, Kind::MagCal, 0, 0},       {0x20, Kind::U8, 0, kAnyU8},
     {0x22, Kind::U16, 0, kAnyU16},
@@ -88,6 +88,7 @@ void *numField(GaiaConfig &c, uint8_t id) {
     case 0x19: return &c.audioLpHz;
     case 0x1A: return &c.audioLpQX100;
     case 0x1B: return &c.potEmaAlphaX1000;
+    case 0x1F: return &c.audioRawStream;
     case 0x20: return &c.co2Enabled;
     case 0x22: return &c.co2StaleTimeoutMs;
     case 0x23: return &c.virtualPeakPpm;

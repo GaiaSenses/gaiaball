@@ -34,6 +34,7 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
       <dt data-info="Discordância entre a inclinação estimada e a que o acelerômetro indica (e, no Quat9, o mesmo para o rumo e o magnetômetro). É o valor comparado com os limiares de rejeição. Unidade: graus (°).">Discordância incl./rumo</dt><dd id="d-err">–</dd><span></span>
       <dt data-info="Offset de velocidade angular estimado em repouso e subtraído de cada leitura — é ele que, se não fosse removido, viraria deriva de rumo. “aprendendo” aparece enquanto a bola está parada e a estimativa se refina. Unidade: graus por segundo (°/s).">Bias do giroscópio</dt><dd id="d-bias">–</dd><span></span>
       <dt data-info="Se há uma calibração hard/soft-iron gravada na bola. Sem ela, o modo Quat9 pode errar o rumo em dezenas de graus. Sem unidade.">Calibração magnética</dt><dd id="d-magcal">–</dd><span></span>
+      <dt data-info="Intervalo de conexão BLE concedido por este navegador. O firmware pede 7,5–15 ms; o navegador decide. É o teto de qualquer taxa de notificação: notificações por segundo ≤ (pacotes por evento de conexão) ÷ intervalo. Com 15 ms e 3 pacotes por evento o teto é 200/s. Unidade: milissegundos (ms).">Intervalo de conexão</dt><dd id="d-itvl">–</dd><span></span>
       <dt data-info="Última leitura de CO₂. “virtual” = pulso disparado por sopro; “desatualizado” = sem quadro novo do sensor dentro do timeout. Unidade: ppm.">CO₂</dt><dd id="d-co2">–</dd><span></span>
     </dl>`;
   decorateInfo(root);
@@ -84,6 +85,15 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
       $('d-magcal').innerHTML = diag.magCalibrated
         ? '<span class="ok">calibrado</span>'
         : '<span class="badge warn">não calibrado</span>';
+      // The granted interval sets the notify ceiling; show the headroom next to it so
+      // a disappointing rate has a visible cause instead of looking like a firmware bug.
+      if (diag.connItvlMs > 0) {
+        const ceiling = Math.round((3 / diag.connItvlMs) * 1000);  // ~3 packets per event
+        $('d-itvl').innerHTML = `${diag.connItvlMs.toFixed(1)} ms` +
+          ` <span class="badge${diag.connItvlMs <= 15 ? '' : ' warn'}">teto ≈ ${ceiling} notif/s</span>`;
+      } else {
+        $('d-itvl').textContent = '–';
+      }
     }
     if (co2) {
       $('d-co2').innerHTML = `${co2.ppm} ppm` +

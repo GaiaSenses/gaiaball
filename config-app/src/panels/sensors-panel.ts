@@ -107,11 +107,14 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
   const specEl = q<HTMLDivElement>('[data-el=spectrum]');
   const audioRing: number[] = [];
   let lastChunk: AudioChunkSample | null = null;
+  let lastChunkAt = 0;
+  let specIdle: boolean | null = null;
   let specShapesKey = '';
   const p0 = pal();
   client.addEventListener('audio', (ev) => {
     const c = (ev as CustomEvent<AudioChunkSample>).detail;
     lastChunk = c;
+    lastChunkAt = performance.now();
     for (const v of c.samples) audioRing.push(v);
     if (audioRing.length > FFT_SIZE * 2) audioRing.splice(0, audioRing.length - FFT_SIZE * 2);
   });
@@ -138,7 +141,29 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
     { responsive: true, displaylogo: false },
   );
   const refreshSpectrum = (): void => {
-    if (!lastChunk || audioRing.length < FFT_SIZE) return;
+    // The raw stream is opt-in (TLV 0x1F) because it costs ~45 ms/s of BLE air time.
+    // When it is off there is simply nothing to transform, so say so on the chart
+    // instead of leaving a dead plot: the RMS and peak readouts keep working, they
+    // come measured from the firmware on every orientation packet.
+    const idle = performance.now() - lastChunkAt > 2000;
+    if (idle !== specIdle) {
+      specIdle = idle;
+      specShapesKey = '';  // force the HP/LP markers to redraw when it comes back
+      if (idle) {
+        audioRing.length = 0;  // never splice pre-pause samples into a fresh FFT
+        void Plotly.restyle(specEl, { x: [[] as number[]], y: [[] as number[]] }, [0]);
+        void Plotly.relayout(specEl, {
+          shapes: [],
+          annotations: [{
+            xref: 'paper', yref: 'paper', x: 0.5, y: 0.5, showarrow: false, align: 'center',
+            text: 'Stream de áudio cru desligado.<br>Ligue em Configuração › Avançado › Áudio'
+              + ' para ver o espectro.',
+            font: { size: 12, color: pal().font },
+          }],
+        });
+      }
+    }
+    if (idle || !lastChunk || audioRing.length < FFT_SIZE) return;
     const sp = computeSpectrum(audioRing.slice(-FFT_SIZE), FFT_SIZE, lastChunk.sampleRateHz || 2000);
     void Plotly.restyle(specEl, { x: [Array.from(sp.freqsHz)], y: [Array.from(sp.dbfs)] }, [0]);
     // Dashed cutoff markers follow the configured band (echoed in every chunk).
@@ -187,8 +212,8 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
     line('limiar (dBFS)', p0.threshold, 3, 'dot'),
     line('mic D (dBFS)', p0.micR, 4),
     line('limiar (dBFS)', p0.threshold, 4, 'dot'),
-    line('pico instantâneo (dBFS)', p0.peak, 5),
-    line('RMS 100 ms (dBFS)', p0.rms, 5),
+    line('pico E (dBFS)', p0.peak, 5),
+    line('pico D (dBFS)', p0.rms, 5),
     line('CO₂ (ppm)', p0.co2, 6),
     line('pot (%)', p0.pot, 7),
   ];
@@ -204,7 +229,7 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
     showlegend: false,
     grid: { rows: N_ROWS, columns: 1, pattern: 'independent', ygap: 0.08 },
   };
-  const rowTitles = ['Orientação (°)', 'Aceleração (g)', 'Mic esquerdo (dBFS)', 'Mic direito (dBFS)', 'Áudio cru mono (dBFS)', 'CO₂ (ppm)', 'Potenciômetro (%)'];
+  const rowTitles = ['Orientação (°)', 'Aceleração (g)', 'Mic esquerdo (dBFS)', 'Mic direito (dBFS)', 'Pico por canal (dBFS)', 'CO₂ (ppm)', 'Potenciômetro (%)'];
   for (let i = 1; i <= N_ROWS; i++) {
     const xk = i === 1 ? 'xaxis' : `xaxis${i}`;
     const yk = i === 1 ? 'yaxis' : `yaxis${i}`;
@@ -268,13 +293,21 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
         imu.acc[1] / ACCEL_LSB_PER_G, 2)} g · Z ${fmt(imu.acc[2] / ACCEL_LSB_PER_G, 2)} g`;
     }
     if (sensors) {
-      const dbL = rmsToDbfs(sensors.rmsL);
-      const dbR = rmsToDbfs(sensors.rmsR);
+      // RMS and peak come from the orientation packet (firmware, 20 ms window at the
+      // full 16 kHz) when they are live; the 5 Hz sensors packet is the fallback and
+      // still carries the threshold, the pot and the health flags.
+      const live = imu !== null && imu.audioValid;
+      const dbL = live ? imu.audioRmsDbfs[0] : rmsToDbfs(sensors.rmsL);
+      const dbR = live ? imu.audioRmsDbfs[1] : rmsToDbfs(sensors.rmsR);
       const audioNote =
-        (!sensors.audioOk ? ' · falha de I²S' : !sensors.audioEnabled ? ' · desativado' : '') +
-        (sensors.audioFiltered ? ' · RMS filtrado (HP/LP)' : ' · RMS cru');
-      q('[data-el=v-micl]').textContent = `${fmt(dbL)} dBFS ≈ ${fmt(dbL + DBFS_TO_SPL, 0)} dB SPL${audioNote}`;
-      q('[data-el=v-micr]').textContent = `${fmt(dbR)} dBFS ≈ ${fmt(dbR + DBFS_TO_SPL, 0)} dB SPL${audioNote}`;
+        (!sensors.audioOk ? ' · falha de I²S' : !sensors.audioEnabled ? ' · detector desativado' : '') +
+        (sensors.audioFiltered ? ' · filtrado (HP/LP)' : ' · cru');
+      const peakNote = (ch: 0 | 1) =>
+        live ? ` · pico ${fmt(imu.audioPeakDbfs[ch])} dBFS` : '';
+      q('[data-el=v-micl]').textContent =
+        `${fmt(dbL)} dBFS ≈ ${fmt(dbL + DBFS_TO_SPL, 0)} dB SPL${peakNote(0)}${audioNote}`;
+      q('[data-el=v-micr]').textContent =
+        `${fmt(dbR)} dBFS ≈ ${fmt(dbR + DBFS_TO_SPL, 0)} dB SPL${peakNote(1)}${audioNote}`;
       const potPct = (sensors.potRaw / 4095) * 100;
       const thrSrc = sensors.potControls ? 'potenciômetro' : 'fixo';
       q('[data-el=v-pot]').textContent = `${fmt(potPct)} % (bruto ${sensors.potRaw}) · limiar ${sensors.threshold.toLocaleString('pt-BR')} (${thrSrc})`;
@@ -293,24 +326,15 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
     const t = (performance.now() - t0) / 1000;
     const e = imu && imu.quatValid ? quatToEulerLegacy(imu.quat) : null;
     const thrDb = sensors ? rmsToDbfs(sensors.threshold) : null;
-    const audioLive = sensors !== null && sensors.audioOk && sensors.audioEnabled;
-    // Instantaneous peak + short RMS straight from the raw 2 kHz mono stream
-    // (int16 full scale; AES17 for the RMS line, plain amplitude for the peak).
-    let rawPeakDb: number | null = null;
-    let rawRmsDb: number | null = null;
-    if (audioRing.length >= 32) {
-      const win = audioRing.slice(-200); // last ~100 ms at 2 kHz
-      let peak = 0;
-      let acc = 0;
-      for (const v of win) {
-        const a = Math.abs(v);
-        if (a > peak) peak = a;
-        acc += v * v;
-      }
-      const rms = Math.sqrt(acc / win.length);
-      rawPeakDb = peak > 0 ? Math.max(-120, 20 * Math.log10(peak / 32768)) : -120;
-      rawRmsDb = rms > 0 ? Math.max(-120, 20 * Math.log10((rms * Math.SQRT2) / 32768)) : -120;
-    }
+    // The envelope is measured in the firmware, at the notify rate: RMS over a 20 ms
+    // window and peak at the full 16 kHz. The browser no longer derives either from
+    // the decimated stream, which averaged 8 samples together and so under-read every
+    // transient -- and which is now off by default anyway.
+    const envLive = imu !== null && imu.audioValid;
+    const rmsLDb = envLive ? imu.audioRmsDbfs[0] : null;
+    const rmsRDb = envLive ? imu.audioRmsDbfs[1] : null;
+    const peakLDb = envLive ? imu.audioPeakDbfs[0] : null;
+    const peakRDb = envLive ? imu.audioPeakDbfs[1] : null;
     const ys: (number | null)[] = [
       e ? e.rollDeg : null,
       e ? e.pitchDeg : null,
@@ -318,12 +342,12 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
       imu ? imu.acc[0] / ACCEL_LSB_PER_G : null,
       imu ? imu.acc[1] / ACCEL_LSB_PER_G : null,
       imu ? imu.acc[2] / ACCEL_LSB_PER_G : null,
-      audioLive ? rmsToDbfs(sensors.rmsL) : null,
+      rmsLDb,
       thrDb,
-      audioLive ? rmsToDbfs(sensors.rmsR) : null,
+      rmsRDb,
       thrDb,
-      rawPeakDb,
-      rawRmsDb,
+      peakLDb,
+      peakRDb,
       co2 ? co2.ppm : null,
       sensors ? (sensors.potRaw / 4095) * 100 : null,
     ];

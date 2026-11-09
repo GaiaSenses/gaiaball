@@ -9,9 +9,9 @@ export const PKT_SENSORS = 0x04;
 export const PKT_AUDIO = 0x05;
 export const PKT_MAG = 0x06;
 
-export const IMU_PACKET_SIZE = 23;
+export const IMU_PACKET_SIZE = 31;
 export const CO2_PACKET_SIZE = 12;
-export const DIAG_PACKET_SIZE = 32;
+export const DIAG_PACKET_SIZE = 34;
 export const SENSORS_PACKET_SIZE = 23;
 export const AUDIO_PACKET_SIZE = 208;
 export const AUDIO_CHUNK_SAMPLES = 96;
@@ -31,9 +31,13 @@ export function rmsToDbfs(rms: number): number {
   return Math.max(-120, 20 * Math.log10((rms * Math.SQRT2) / AUDIO_FULL_SCALE));
 }
 
+/** Floor of the firmware's dBFS x100 wire fields (firmware logic/AudioFeatures.h). */
+export const AUDIO_DB_FLOOR = -120;
+
 export const IMU_FLAG_QUAT_VALID = 1 << 0;
 export const IMU_FLAG_NINE_AXIS = 1 << 1;
 export const IMU_FLAG_MOVING = 1 << 2;
+export const IMU_FLAG_AUDIO_VALID = 1 << 3;
 export const CO2_FLAG_VALID = 1 << 0;
 export const CO2_FLAG_STALE = 1 << 1;
 export const CO2_FLAG_VIRTUAL_ACTIVE = 1 << 2;
@@ -64,6 +68,16 @@ export interface ImuSample {
   quatValid: boolean;
   nineAxis: boolean;
   moving: boolean;
+  /**
+   * Microphone envelope measured in the firmware over the 20 ms window that ended
+   * with this sample, at the full 16 kHz rate (left, right).
+   * RMS is AES17 dBFS (0 dBFS = full-scale sine); peak is amplitude dBFS (0 dBFS =
+   * full-scale sample), so the same sine reads 3.01 dB lower on the peak scale.
+   * Both read AUDIO_DB_FLOOR while audioValid is false.
+   */
+  audioValid: boolean;
+  audioRmsDbfs: [number, number];
+  audioPeakDbfs: [number, number];
 }
 
 export interface Co2Sample {
@@ -99,6 +113,12 @@ export interface DiagSample {
   magErrDeg: number;
   /** Estimated gyroscope zero-rate offset per axis, in dps. */
   gyroBiasDps: [number, number, number];
+  /**
+   * Connection interval granted by this browser's Bluetooth stack, in ms (0 =
+   * unknown). The firmware asks for 7.5-15 ms; this is what it got. It caps every
+   * notify rate: max notifications/s = (packets per connection event) / interval.
+   */
+  connItvlMs: number;
   startup: boolean;
   accelIgnored: boolean;
   magIgnored: boolean;
@@ -155,6 +175,7 @@ export function decodeImuPacket(dv: DataView): ImuSample | null {
   if (!header(dv, IMU_PACKET_SIZE, PKT_IMU)) return null;
   const q = (o: number) => dv.getInt16(o, true) / QUAT_SCALE;
   const flags = dv.getUint8(22);
+  const db = (o: number) => dv.getInt16(o, true) / 100;
   return {
     seq: dv.getUint16(2, true),
     tUs: dv.getUint32(4, true),
@@ -164,6 +185,9 @@ export function decodeImuPacket(dv: DataView): ImuSample | null {
     quatValid: (flags & IMU_FLAG_QUAT_VALID) !== 0,
     nineAxis: (flags & IMU_FLAG_NINE_AXIS) !== 0,
     moving: (flags & IMU_FLAG_MOVING) !== 0,
+    audioValid: (flags & IMU_FLAG_AUDIO_VALID) !== 0,
+    audioRmsDbfs: [db(23), db(25)],
+    audioPeakDbfs: [db(27), db(29)],
   };
 }
 
@@ -245,6 +269,7 @@ export function decodeDiagPacket(dv: DataView): DiagSample | null {
       dv.getInt16(28, true) / 100,
       dv.getInt16(30, true) / 100,
     ],
+    connItvlMs: dv.getUint16(32, true) / 10,
     startup: (ahrsFlags & AHRS_FLAG_STARTUP) !== 0,
     accelIgnored: (ahrsFlags & AHRS_FLAG_ACCEL_IGNORED) !== 0,
     magIgnored: (ahrsFlags & AHRS_FLAG_MAG_IGNORED) !== 0,

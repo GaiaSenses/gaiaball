@@ -7,6 +7,13 @@
 # Pure Data as FUDI text messages over UDP (consumed by the [gaiaball]
 # abstraction via [netreceive -u]).
 #
+# Audio reaches Pd as TREATED VARIABLES, never as samples: the "micenv" message
+# carries the per-channel RMS and peak in dBFS, measured by the firmware over a
+# 20 ms window (peak sampled at the full 16 kHz) and delivered at the
+# orientation rate. The raw 2 kHz stream (packet 0x05) is deliberately not
+# decoded here -- a Pd patch wants a control signal, not a waveform, and the
+# spectrum analysis (FFT) lives in the browser-based config-app.
+#
 # Cross-platform: Windows 10+, macOS 10.15+, Linux (BlueZ >= 5.43), via bleak.
 # Requires Python >= 3.9 and `pip install bleak`.
 #
@@ -35,7 +42,7 @@ VERSION = "1.0.0"
 SERVICE_UUID = "19b10000-e8f2-537e-4f6c-d104768a1214"
 CHAR_IMU = "19b10001-e8f2-537e-4f6c-d104768a1214"   # notify: ImuPacket (0x01)
 CHAR_CO2 = "19b10003-e8f2-537e-4f6c-d104768a1214"   # notify: Co2Packet (0x02)
-CHAR_DIAG = "19b10005-e8f2-537e-4f6c-d104768a1214"  # notify: Diag/Sensors/Audio
+CHAR_DIAG = "19b10005-e8f2-537e-4f6c-d104768a1214"  # notify: Diag/Sensors (0x03/0x04)
 
 PROTOCOL_VERSION = 1
 QUAT_SCALE = 16384.0          # int16 Q14
@@ -86,17 +93,15 @@ class Fudi:
 class Decoder:
     """Decodes Gaiaball packets and emits FUDI messages."""
 
-    def __init__(self, fudi: Fudi, imu_div: int, audio: bool, verbose: bool):
+    def __init__(self, fudi: Fudi, imu_div: int, verbose: bool):
         self.fudi = fudi
         self.imu_div = max(1, imu_div)
-        self.audio = audio
         self.verbose = verbose
         self.imu_count = 0
-        self.counts = {"imu": 0, "co2": 0, "sensors": 0, "diag": 0, "audio": 0}
-        self.audio_info = None  # (sampleRate, hp, lp, bpf) last announced
+        self.counts = {"imu": 0, "co2": 0, "sensors": 0, "diag": 0}
 
     def on_imu(self, data: bytes) -> None:
-        if len(data) < 23 or data[0] != PROTOCOL_VERSION or data[1] != 0x01:
+        if len(data) < 31 or data[0] != PROTOCOL_VERSION or data[1] != 0x01:
             return
         self.counts["imu"] += 1
         self.imu_count += 1
@@ -106,10 +111,18 @@ class Decoder:
         w, x, y, z = (qw / QUAT_SCALE, qx / QUAT_SCALE,
                       qy / QUAT_SCALE, qz / QUAT_SCALE)
         roll, pitch, yaw = euler_legacy(w, x, y, z)
-        self.fudi.send(
-            f"euler {roll:.2f} {pitch:.2f} {yaw:.2f};\n"
-            f"quat {w:.5f} {x:.5f} {y:.5f} {z:.5f};\n"
-            f"accel {ax} {ay} {az};\n")
+        msg = (f"euler {roll:.2f} {pitch:.2f} {yaw:.2f};\n"
+               f"quat {w:.5f} {x:.5f} {y:.5f} {z:.5f};\n"
+               f"accel {ax} {ay} {az};\n")
+        # Microphone envelope measured by the firmware over the 20 ms window that
+        # ended with this sample (RMS in AES17 dBFS, peak in amplitude dBFS). It
+        # arrives at the orientation rate, so it is the signal to use for breath
+        # control -- the 5 Hz "mics" message is only a slow readout.
+        if data[22] & 0x08:
+            rms_l, rms_r, pk_l, pk_r = struct.unpack_from("<4h", data, 23)
+            msg += ("micenv {:.2f} {:.2f} {:.2f} {:.2f};\n".format(
+                rms_l / 100.0, rms_r / 100.0, pk_l / 100.0, pk_r / 100.0))
+        self.fudi.send(msg)
 
     def on_co2(self, data: bytes) -> None:
         if len(data) < 12 or data[0] != PROTOCOL_VERSION or data[1] != 0x02:
@@ -122,7 +135,14 @@ class Decoder:
         self.fudi.send(f"co2 {ppm} {valid} {stale} {virtual} {age_s};\n")
 
     def on_diag_char(self, data: bytes) -> None:
-        """The diag characteristic multiplexes types 0x03, 0x04 and 0x05."""
+        """The diag characteristic multiplexes several packet types.
+
+        Only 0x03 (diagnostics) and 0x04 (live levels) are forwarded. The raw
+        audio stream (0x05) and the magnetometer capture (0x06) are ignored on
+        purpose: Pd gets the TREATED audio variables (RMS and peak, in the
+        "micenv" message, at the orientation rate) and never the samples. The
+        spectrum belongs to the browser, which is where the FFT runs.
+        """
         if len(data) < 2 or data[0] != PROTOCOL_VERSION:
             return
         ptype = data[1]
@@ -130,8 +150,6 @@ class Decoder:
             self._diag(data)
         elif ptype == 0x04:
             self._sensors(data)
-        elif ptype == 0x05 and self.audio:
-            self._audio(data)
 
     def _diag(self, data: bytes) -> None:
         if len(data) < 23:
@@ -159,20 +177,6 @@ class Decoder:
         self.fudi.send(
             f"mics {dbfs(rms_l):.1f} {dbfs(rms_r):.1f} {rms_l} {rms_r} {filtered};\n"
             f"pot {percent:.1f} {pot_raw} {threshold} {controls};\n")
-
-    def _audio(self, data: bytes) -> None:
-        if len(data) < 208:
-            return
-        self.counts["audio"] += 1
-        sample_rate, count, flags, hp_hz, lp_hz = struct.unpack_from("<HBBHH", data, 8)
-        count = min(count, 96)
-        info = (sample_rate, hp_hz, lp_hz, flags & 1)
-        if info != self.audio_info:
-            self.audio_info = info
-            self.fudi.send(
-                f"audioinfo {sample_rate} {hp_hz} {lp_hz} {flags & 1};\n")
-        samples = struct.unpack_from(f"<{count}h", data, 16)
-        self.fudi.send("audio " + " ".join(str(s) for s in samples) + ";\n")
 
     def report(self) -> str:
         line = "  ".join(f"{k}:{v}" for k, v in self.counts.items())
@@ -205,7 +209,7 @@ async def list_devices(timeout: float) -> None:
 
 async def run(args) -> None:
     fudi = Fudi(args.host, args.port)
-    dec = Decoder(fudi, args.imu_div, args.audio, args.verbose)
+    dec = Decoder(fudi, args.imu_div, args.verbose)
     fudi.send(f"status bridge {VERSION};\n")
     print(f"[gaiaball-bridge {VERSION}] FUDI/UDP -> {args.host}:{args.port}"
           f"  (alvo: {args.address or args.name})")
@@ -268,8 +272,6 @@ def main() -> None:
                    help="porta UDP do Pd (padrao: 9478, a mesma do [gaiaball])")
     p.add_argument("--imu-div", type=int, default=1, metavar="N",
                    help="encaminha 1 a cada N pacotes de IMU (padrao: 1 = todos)")
-    p.add_argument("--audio", action="store_true",
-                   help="encaminha tambem o audio cru decimado (2 kHz, ~21 msg/s)")
     p.add_argument("--timeout", type=float, default=10.0,
                    help="timeout de scan em segundos (padrao: 10)")
     p.add_argument("--list", action="store_true",

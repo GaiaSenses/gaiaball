@@ -22,6 +22,19 @@ constexpr const char *kConfigUuid = "19b10004-e8f2-537e-4f6c-d104768a1214";
 constexpr const char *kDiagUuid = "19b10005-e8f2-537e-4f6c-d104768a1214";
 
 constexpr uint16_t kPreferredMtu = 247;
+// Connection parameters requested from the central as soon as it connects.
+//
+// WHY: no notify rate above ~60 Hz is reachable without this. A notification can only
+// be delivered inside a connection event, so the ceiling is (packets per event) /
+// (connection interval) -- and a host that defaults to a 30-50 ms interval caps the
+// link at 60-100 notifications per second no matter how fast the firmware produces
+// them. 7.5-15 ms is the window both Apple's and Android's accessory guidelines
+// accept. The central is free to refuse or to pick anything inside the range, which is
+// why the granted interval is published in the diagnostics packet instead of assumed.
+constexpr uint16_t kConnItvlMinUnits = 6;    // x 1.25 ms = 7.5 ms
+constexpr uint16_t kConnItvlMaxUnits = 12;   // x 1.25 ms = 15 ms
+constexpr uint16_t kConnLatency = 0;         // never skip an event: this is a live link
+constexpr uint16_t kConnTimeoutUnits = 400;  // x 10 ms = 4 s supervision timeout
 constexpr uint16_t kNoHandle = 0xFFFF;  // == BLE_HS_CONN_HANDLE_NONE
 constexpr size_t kConfigReadBuf = 384;  // see ConfigStore kTlvBufCap
 // onSubscribe() subValue bit for notifications (NimBLE-Arduino 1.4.3 keeps its
@@ -44,8 +57,12 @@ class BleService::ServerCb : public NimBLEServerCallbacks {
       server->disconnect(desc->conn_handle);
       return;
     }
-    GB_LOGI(kTag, "conn %u -> slot %u (%u connected)", desc->conn_handle, slot,
-            s_.connCount_.load());
+    GB_LOGI(kTag, "conn %u -> slot %u (%u connected, itvl %u.%u ms)", desc->conn_handle,
+            slot, s_.connCount_.load(), desc->conn_itvl * 5 / 4, (desc->conn_itvl * 25 / 2) % 10);
+    // Ask for a fast, low-latency interval. Asynchronous: the result shows up in the
+    // diag packet's connItvlMsX10, not here.
+    server->updateConnParams(desc->conn_handle, kConnItvlMinUnits, kConnItvlMaxUnits,
+                             kConnLatency, kConnTimeoutUnits);
     s_.restartAdvertisingIfRoom();
   }
 
@@ -188,6 +205,15 @@ void BleService::notifySensors(const SensorsPacket &p) { notify(kIdxDiag, &p, si
 void BleService::notifyAudioChunk(const AudioChunkPacket &p) { notify(kIdxDiag, &p, sizeof(p)); }
 void BleService::notifyMagChunk(const MagChunkPacket &p) { notify(kIdxDiag, &p, sizeof(p)); }
 
+uint16_t BleService::connIntervalMsX10() const {
+  const uint16_t handle = liveHandle_.load();
+  if (handle == kNoHandle) return 0;
+  ble_gap_conn_desc d;
+  if (ble_gap_conn_find(handle, &d) != 0) return 0;
+  // conn_itvl is in 1.25 ms units -> 0.1 ms units.
+  return (uint16_t)(((uint32_t)d.conn_itvl * 25u) / 2u);
+}
+
 void BleService::notify(uint8_t idx, const void *data, size_t len) {
   NimBLECharacteristic *chr = notifyChars_[idx];
   if (!chr || subMask_[idx].load() == 0) return;
@@ -216,12 +242,17 @@ uint8_t BleService::claimSlot(uint16_t connHandle) {
   uint8_t slot = slotOf(kNoHandle);
   if (slot == kNoSlot) return kNoSlot;
   connHandles_[slot] = connHandle;
+  liveHandle_.store(connHandle);
   connCount_.fetch_add(1);
   return slot;
 }
 
 void BleService::releaseSlot(uint8_t slot) {
   connHandles_[slot] = kNoHandle;
+  uint16_t stillUp = kNoHandle;
+  for (uint8_t i = 0; i < kMaxConns; i++)
+    if (connHandles_[i] != kNoHandle) stillUp = connHandles_[i];
+  liveHandle_.store(stillUp);
   connCount_.fetch_sub(1);
   // The host may tear the connection down before (or without) delivering the
   // unsubscribe events, so clear this slot's subscriptions explicitly.

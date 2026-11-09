@@ -2,6 +2,8 @@
 #include <cmath>
 #include <vector>
 #include "../../Gaiaball/src/logic/AudioBlock.h"
+#include "../../Gaiaball/src/logic/AudioDecimator.h"
+#include "../../Gaiaball/src/logic/AudioFeatures.h"
 #include "../../Gaiaball/src/logic/PeakDetector.h"
 
 using namespace gaia;
@@ -124,12 +126,121 @@ void test_debounce_wraparound() {
   TEST_ASSERT_TRUE(d.update(5000.f, 1000.f, n + 400));
 }
 
+// --- RMS accumulator precision (float, not double) -------------------------
+// A full-scale sine is the worst case for a float sum of squares: 256 terms of up to
+// 2^46. If the accumulator is adequate the error stays far below the 0.01 dB
+// resolution of the wire format (0.115 % in amplitude).
+void test_rms_float_accumulator_precision() {
+  const double amp = 8388607.0;  // 2^23 - 1
+  auto b = makeBlock(amp, 0, amp, 0);
+  StereoRms r = computeStereoRms(b.data(), b.size());
+  const float expect = (float)(amp / std::sqrt(2.0));
+  TEST_ASSERT_FLOAT_WITHIN(expect * 0.0005f, expect, r.left);
+  TEST_ASSERT_FLOAT_WITHIN(expect * 0.0005f, expect, r.right);
+}
+
+// --- dBFS encoding ---------------------------------------------------------
+void test_rms_dbfs_is_aes17() {
+  // RMS of a full-scale sine reads 0.00 dBFS, not -3.01.
+  TEST_ASSERT_EQUAL_INT16(0, rmsToDbfsX100(kAudioFullScale / std::sqrt(2.0f)));
+  TEST_ASSERT_EQUAL_INT16(-2000, rmsToDbfsX100(kAudioFullScale / std::sqrt(2.0f) / 10.0f));
+  TEST_ASSERT_EQUAL_INT16(-6000, rmsToDbfsX100(kAudioFullScale / std::sqrt(2.0f) / 1000.0f));
+}
+
+void test_peak_dbfs_is_amplitude() {
+  TEST_ASSERT_EQUAL_INT16(0, peakToDbfsX100(kAudioFullScale));
+  TEST_ASSERT_EQUAL_INT16(-602, peakToDbfsX100(kAudioFullScale / 2.0f));
+  TEST_ASSERT_EQUAL_INT16(-6000, peakToDbfsX100(kAudioFullScale / 1000.0f));
+}
+
+void test_dbfs_floor_and_saturation() {
+  TEST_ASSERT_EQUAL_INT16(kAudioDbFloorX100, rmsToDbfsX100(0.0f));
+  TEST_ASSERT_EQUAL_INT16(kAudioDbFloorX100, rmsToDbfsX100(-5.0f));
+  TEST_ASSERT_EQUAL_INT16(kAudioDbFloorX100, rmsToDbfsX100(NAN));
+  TEST_ASSERT_EQUAL_INT16(kAudioDbFloorX100, peakToDbfsX100(INFINITY * 0.0f));
+  TEST_ASSERT_EQUAL_INT16(kAudioDbFloorX100, rmsToDbfsX100(1e-9f));  // below the floor
+  TEST_ASSERT_EQUAL_INT16(kAudioDbCeilX100, peakToDbfsX100(kAudioFullScale * 1e6f));
+}
+
+// --- sliding level window --------------------------------------------------
+static void pushBlock(AudioLevelWindow &w, float ampL, float ampR, uint16_t frames) {
+  const float sumSq[2] = {frames * ampL * ampL, frames * ampR * ampR};
+  const float peak[2] = {ampL, ampR};
+  w.push(sumSq, peak, frames);
+}
+
+void test_window_pools_blocks_into_one_rms() {
+  AudioLevelWindow w;
+  for (int i = 0; i < AudioLevelWindow::kBlocks; i++) pushBlock(w, 100.f, 50.f, 80);
+  AudioLevels l = w.levels();
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 100.f, l.rms[0]);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 50.f, l.rms[1]);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 100.f, l.peak[0]);
+}
+
+void test_window_slides_oldest_block_out() {
+  AudioLevelWindow w;
+  for (int i = 0; i < AudioLevelWindow::kBlocks; i++) pushBlock(w, 10.f, 10.f, 80);
+  pushBlock(w, 0.f, 0.f, 80);  // 5th block evicts the 1st
+  AudioLevels l = w.levels();
+  // 3 blocks at 10 + 1 silent block -> sqrt(3/4) * 10
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 8.660f, l.rms[0]);
+}
+
+void test_window_peak_ages_out() {
+  AudioLevelWindow w;
+  pushBlock(w, 1000.f, 1000.f, 80);
+  for (int i = 0; i < AudioLevelWindow::kBlocks - 1; i++) pushBlock(w, 10.f, 10.f, 80);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 1000.f, w.levels().peak[0]);  // still inside the window
+  pushBlock(w, 10.f, 10.f, 80);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 10.f, w.levels().peak[0]);  // evicted
+}
+
+void test_window_empty_and_reset() {
+  AudioLevelWindow w;
+  AudioLevels l = w.levels();
+  TEST_ASSERT_EQUAL_FLOAT(0.f, l.rms[0]);
+  TEST_ASSERT_EQUAL_FLOAT(0.f, l.peak[1]);
+  pushBlock(w, 500.f, 500.f, 80);
+  pushBlock(w, 500.f, 500.f, 0);  // empty block ignored, must not divide by zero
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 500.f, w.levels().rms[0]);
+  w.reset();
+  TEST_ASSERT_EQUAL_FLOAT(0.f, w.levels().rms[0]);
+  TEST_ASSERT_EQUAL_FLOAT(0.f, w.levels().peak[0]);
+}
+
+// --- decimator reset -------------------------------------------------------
+// The raw stream is now switchable, so the decimator can be paused mid-chunk. On
+// resume the stale half must be gone instead of being published as fresh audio.
+void test_decimator_reset_drops_partial_chunk() {
+  AudioDecimator d;
+  // 8 feeds = 1 output sample; fill half a chunk with a recognizable value.
+  for (size_t i = 0; i < AudioDecimator::kChunkSamples / 2; i++)
+    for (int k = 0; k < AudioDecimator::kDecim; k++) TEST_ASSERT_FALSE(d.feed(256000.f));
+  d.reset();
+  bool ready = false;
+  for (size_t i = 0; i < AudioDecimator::kChunkSamples; i++)
+    for (int k = 0; k < AudioDecimator::kDecim; k++) ready = d.feed(0.0f);
+  TEST_ASSERT_TRUE(ready);  // a full chunk is needed again after the reset
+  for (size_t i = 0; i < AudioDecimator::kChunkSamples; i++)
+    TEST_ASSERT_EQUAL_INT16(0, d.chunk()[i]);  // and it holds no pre-reset samples
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_rms_dc_removal);
   RUN_TEST(test_rms_stereo_split);
   RUN_TEST(test_rms_degenerate);
   RUN_TEST(test_rms_odd_trailing_ignored);
+  RUN_TEST(test_rms_float_accumulator_precision);
+  RUN_TEST(test_rms_dbfs_is_aes17);
+  RUN_TEST(test_peak_dbfs_is_amplitude);
+  RUN_TEST(test_dbfs_floor_and_saturation);
+  RUN_TEST(test_window_pools_blocks_into_one_rms);
+  RUN_TEST(test_window_slides_oldest_block_out);
+  RUN_TEST(test_window_peak_ages_out);
+  RUN_TEST(test_window_empty_and_reset);
+  RUN_TEST(test_decimator_reset_drops_partial_chunk);
   RUN_TEST(test_peak_fires_and_debounces);
   RUN_TEST(test_hysteresis_rearm);
   RUN_TEST(test_baseline_adapts);

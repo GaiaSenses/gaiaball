@@ -330,6 +330,23 @@ void test_imu_fusion_defaults() {
   TEST_ASSERT_EQUAL(kMagSoftIronOne, c.magSoftIron[8]);
 }
 
+// The raw 2 kHz audio stream is now opt-in: it is the single most expensive thing on
+// the link (~45 ms/s of air time, 53 % of the total before this change), so it must
+// default to off and survive a reboot once the user turns it on.
+void test_raw_audio_stream_defaults_off_and_roundtrips() {
+  GaiaConfig c;
+  TEST_ASSERT_EQUAL(0, c.audioRawStream);
+  const uint8_t on[] = {0x1F, 1, 1};
+  TEST_ASSERT_TRUE(tlvApply(c, on, sizeof on));
+  TEST_ASSERT_EQUAL(1, c.audioRawStream);
+  const uint8_t bad[] = {0x1F, 1, 2};  // boolean register: only 0/1
+  TEST_ASSERT_FALSE(tlvApply(c, bad, sizeof bad));
+  TEST_ASSERT_EQUAL(1, c.audioRawStream);  // rejected write changes nothing
+  const uint8_t off[] = {0x1F, 1, 0};
+  TEST_ASSERT_TRUE(tlvApply(c, off, sizeof off));
+  TEST_ASSERT_EQUAL(0, c.audioRawStream);
+}
+
 void test_imu_fusion_registers_roundtrip() {
   const uint8_t buf[] = {
       0x05, 1, 4,           // imuDlpfMode = 4 (20 Hz)
@@ -444,6 +461,7 @@ int main(int, char **) {
   RUN_TEST(test_lenient_stops_at_truncation);
   RUN_TEST(test_lenient_restores_cross_field_invariants);
   RUN_TEST(test_imu_fusion_defaults);
+  RUN_TEST(test_raw_audio_stream_defaults_off_and_roundtrips);
   RUN_TEST(test_imu_fusion_registers_roundtrip);
   RUN_TEST(test_imu_fusion_registers_reject_out_of_range);
   RUN_TEST(test_mag_calibration_roundtrip);

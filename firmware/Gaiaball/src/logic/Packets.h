@@ -1,6 +1,8 @@
 #pragma once
 #include <stdint.h>
 
+#include "AudioFeatures.h"
+
 // Binary BLE wire protocol v1. Little-endian, packed. See firmware/docs/protocol.md.
 namespace gaia {
 
@@ -19,6 +21,7 @@ enum class PacketType : uint8_t {
 constexpr uint8_t kImuQuatValid = 1u << 0;
 constexpr uint8_t kImuNineAxis = 1u << 1;
 constexpr uint8_t kImuMoving = 1u << 2;
+constexpr uint8_t kImuAudioValid = 1u << 3;  // the appended microphone levels are live
 
 // Co2Packet.flags
 constexpr uint8_t kCo2Valid = 1u << 0;
@@ -63,6 +66,17 @@ struct __attribute__((packed)) ImuPacket {
   int16_t quatW, quatX, quatY, quatZ;
   int16_t accX, accY, accZ;  // raw MPU-9250 counts (±4 g full scale, 8192 LSB/g)
   uint8_t flags;
+  // Appended in v8 (packet grew 23 -> 31 B): the microphone envelope, pooled over the
+  // 20 ms window that ended with this orientation sample. [0] = left, [1] = right.
+  //
+  // WHY it rides on the orientation packet instead of its own: at 100-200 Hz the cost
+  // of a BLE notification is dominated by the packet slot, not by its length (a 31-byte
+  // notification occupies 764 us of air time against 700 us for a 23-byte one), and the
+  // connection-event budget is the scarce resource. One packet per tick also means the
+  // envelope and the orientation always share a timestamp. Valid only when
+  // kImuAudioValid is set; otherwise both fields read kAudioDbFloorX100.
+  int16_t audioRmsDbX100[2];   // AES17 dBFS x100 (0 dBFS = full-scale sine)
+  int16_t audioPeakDbX100[2];  // peak dBFS x100 (0 dBFS = full-scale sample)
 };
 
 struct __attribute__((packed)) Co2Packet {
@@ -88,6 +102,11 @@ struct __attribute__((packed)) DiagPacket {
   uint8_t accelErrDeg;        // inclination disagreement, 0..90 deg (saturating)
   uint8_t magErrDeg;          // heading disagreement, 0..90 deg (saturating)
   int16_t gyroBiasX100[3];    // estimated zero-rate offset, 0.01 dps per LSB
+  // Appended in v8 (32 -> 34 B): the connection interval the central actually granted
+  // after the firmware's request, in 0.1 ms per LSB (0 = not connected / unknown).
+  // Without it there is no way to tell a granted 7.5 ms interval from a refused one,
+  // and that single number is what caps every notify rate above ~60 Hz.
+  uint16_t connItvlMsX10;
 };
 
 // Raw magnetometer capture, notified on the diag characteristic while a calibration
@@ -138,9 +157,9 @@ struct __attribute__((packed)) AudioChunkPacket {
   int16_t samples[96];
 };
 
-static_assert(sizeof(ImuPacket) == 23, "ImuPacket size");
+static_assert(sizeof(ImuPacket) == 31, "ImuPacket size");
 static_assert(sizeof(Co2Packet) == 12, "Co2Packet size");
-static_assert(sizeof(DiagPacket) == 32, "DiagPacket size");
+static_assert(sizeof(DiagPacket) == 34, "DiagPacket size");
 static_assert(sizeof(SensorsPacket) == 23, "SensorsPacket size");
 static_assert(sizeof(AudioChunkPacket) == 208, "AudioChunkPacket size");
 static_assert(sizeof(MagChunkPacket) == 106, "MagChunkPacket size");

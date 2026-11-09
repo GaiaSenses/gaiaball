@@ -325,7 +325,7 @@ footer .wrap { display: grid; gap: 6px; }
       <span><b>Código novo:</b> firmware/Gaiaball (multiarquivo, FreeRTOS, NimBLE)</span>
       <span><b>Branch:</b> feature/firmware-v2</span>
     </div>
-    <p class="status-note"><strong>Estado:</strong> todas as correções estão implementadas e compilam nos dois toolchains (PlatformIO e Arduino IDE), com 120 testes de unidade da lógica pura passando no host. Em 08/11/2026 entrou a revisão do <a href="#pipeline">pipeline do IMU</a> (fusão nova, bias, anti-serrilhamento, calibração magnética e suavização adaptativa). <strong>Nada foi medido em hardware ainda.</strong> Taxas, latência e estabilidade citadas aqui são metas de projeto, a confirmar com o <a href="#bancada">checklist de bancada</a>.</p>
+    <p class="status-note"><strong>Estado:</strong> todas as correções estão implementadas e compilam nos dois toolchains (PlatformIO e Arduino IDE), com 131 testes de unidade da lógica pura passando no host. Em 08/11/2026 entrou a revisão do <a href="#pipeline">pipeline do IMU</a> (fusão nova, bias, anti-serrilhamento, calibração magnética e suavização adaptativa); em 09/11/2026, a revisão do caminho de áudio — RMS e pico medidos no firmware e enviados na taxa de orientação, stream de áudio cru opcional, parâmetros de conexão BLE pedidos na conexão — que deixou o enlace em <a href="#protocolo">−70 % de bytes por segundo</a>. <strong>Nada foi medido em hardware ainda.</strong> Taxas, latência e estabilidade citadas aqui são metas de projeto, a confirmar com o <a href="#bancada">checklist de bancada</a>.</p>
   </div>
 </header>
 
@@ -625,7 +625,7 @@ if (deviceConnected) {
 }</code></pre></figure>
     </div>
     <dl class="facts">
-      <dt>Correção</dt><dd>Pacote binário fixo de 23 bytes (ver <a href="#protocolo">Protocolo</a>), sem nenhuma alocação em regime. Só sai notificação quando há amostra nova, quando a taxa configurada permite (padrão 50 Hz) e quando alguém assinou a característica. O firmware pede MTU 247 (NimBLE).</dd>
+      <dt>Correção</dt><dd>Pacote binário fixo de 31 bytes (ver <a href="#protocolo">Protocolo</a>), sem nenhuma alocação em regime. Só sai notificação quando há amostra nova, quando a taxa configurada permite (padrão 50 Hz) e quando alguém assinou a característica. O firmware pede MTU 247 (NimBLE).</dd>
       <dt>Impacto esperado</dt><dd>Cerca de 9× menos bytes por amostra de orientação, heap estável por tempo indeterminado e rádio menos congestionado. É a mudança com mais chance de estabilizar a conexão.</dd>
       <dt>Validar na bancada</dt><dd>Diagnóstico a 1 Hz: <code>freeHeapKb</code> e <code>minFreeHeapKb</code> devem ficar estáveis ao longo de horas. No config-app, a taxa medida deve ficar perto da configurada.</dd>
     </dl>
@@ -656,12 +656,12 @@ somaRight += (double)sRight;
 ⋮
 micDeltaFilt = (MIC_IIR_ALPHA * micDeltaFilt) + ((1.0f - MIC_IIR_ALPHA) * micDeltaRaw);</code></pre></figure>
       <figure class="after"><figcaption>Depois · src/logic/AudioBlock.cpp e PeakDetector.cpp</figcaption>
-<pre><code>const double meanL = (double)sumL / (double)frames;
-⋮
-const double dl = (double)(interleaved[2 * i] &gt;&gt; 8) - meanL;
+<pre><code>const float meanL = (float)sumL / (float)frames;   // float: a FPU do LX6
+⋮                                                  // nao tem precisao dupla
+const float dl = (float)(interleaved[2 * i] &gt;&gt; 8) - meanL;
 accL += dl * dl;
 ⋮
-return {(float)sqrt(accL / (double)frames), (float)sqrt(accR / (double)frames)};
+return {sqrtf(accL / (float)frames), sqrtf(accR / (float)frames)};
 
 // PeakDetector::update
 fast_ += fastAlpha_ * (rms - fast_);
@@ -669,7 +669,7 @@ slow_ = slowAlpha_ * slow_ + (1.0f - slowAlpha_) * rms;
 const float level = fast_ - slow_;</code></pre></figure>
     </div>
     <dl class="facts">
-      <dt>Correção</dt><dd>Tarefa de áudio própria (core 1, prioridade 2), bloqueando só nela mesma. RMS por canal com remoção de DC. Dois filtros: um rápido (α 0,25 por bloco de 16 ms, constante de tempo ≈ 56 ms) para detectar o pico e um lento (α 0,995, ≈ 3 s) como linha de base adaptativa, mais histerese (rearma abaixo de 70% do limiar) e debounce. Sem calibração bloqueante no boot. Todos os parâmetros são ajustáveis pelo config-app.</dd>
+      <dt>Correção</dt><dd>Tarefa de áudio própria (core 1, prioridade 2), bloqueando só nela mesma. RMS por canal com remoção de DC, mais o pico amostrado a 16 kHz, agrupados numa janela de energia de 20 ms que se renova a cada bloco de 5 ms (v8). Dois filtros: um rápido (α 0,25 por atualização, a cada 15 ms, constante de tempo ≈ 52 ms) para detectar o pico e um lento (α 0,995, ≈ 3 s) como linha de base adaptativa, mais histerese (rearma abaixo de 70% do limiar) e debounce. A cadência do detector é mantida em ~15 ms de propósito: seus coeficientes são por atualização, então mudar o tamanho do bloco sem compensar reescalaria em 3,2× os tempos já ajustados na bancada. Sem calibração bloqueante no boot. Todos os parâmetros são ajustáveis pelo config-app.</dd>
       <dt>Impacto esperado</dt><dd>Picos de som detectados em dezenas de ms, não em segundos; a linha de base acompanha o ruído da sala ao longo da exposição. O áudio deixa de atrasar a IMU.</dd>
       <dt>Validar na bancada</dt><dd>Palma a ~1 m: o LED de som deve piscar na hora. Repetir com ruído de fundo alto (sala cheia simulada) e ajustar o limiar pelo potenciômetro.</dd>
     </dl>
@@ -1070,7 +1070,7 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
         <text x="212" y="102" class="d-s">fusão Madgwick · 2–5 ms</text>
         <rect x="200" y="190" width="170" height="56" rx="5" class="d-task"/>
         <text x="212" y="214" class="d-t">audio · prio 2</text>
-        <text x="212" y="232" class="d-s">RMS + detector de pico</text>
+        <text x="212" y="232" class="d-s">RMS, pico + detector</text>
         <rect x="200" y="320" width="170" height="56" rx="5" class="d-task"/>
         <text x="212" y="344" class="d-t">co2 · prio 1</text>
         <text x="212" y="362" class="d-s">parser byte a byte</text>
@@ -1134,7 +1134,7 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
 
     <h3 style="margin:28px 0 8px">Zoom: dentro de cada núcleo</h3>
     <p>Detalhe dos componentes e da sequência de execução em cada núcleo do ESP32 — o interior das caixas do diagrama acima.</p>
-    <div class="diagram" role="img" aria-label="Diagrama detalhado por núcleo: no núcleo 1, as tarefas imu (leitura, viés, fusão Madgwick, montagem, zero, slerp, fila), audio (DC, decimador, biquads, RMS, detector) e co2 (consulta Modbus, parser, EMA); a tarefa app consome tudo numa sequência numerada e notifica o NimBLE no núcleo 0, que atende as duas centrais.">
+    <div class="diagram" role="img" aria-label="Diagrama detalhado por núcleo: no núcleo 1, as tarefas imu (leitura, viés, fusão Madgwick, montagem, zero, slerp, fila), audio (DC, decimador opcional, biquads, energia e pico, janela de 20 ms, detector) e co2 (consulta Modbus, parser, EMA); a tarefa app consome tudo numa sequência numerada e notifica o NimBLE no núcleo 0, que atende as duas centrais.">
       <svg viewBox="0 0 1060 640" xmlns="http://www.w3.org/2000/svg">
         <!-- frames -->
         <rect x="20" y="20" width="660" height="600" rx="8" class="d-frame"/>
@@ -1155,12 +1155,12 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
         <!-- audio task -->
         <rect x="40" y="236" width="300" height="150" rx="6" class="d-task"/>
         <text x="54" y="260" class="d-t">audio · prio 2 · bloqueia no i2s_read</text>
-        <text x="54" y="282" class="d-m">1 bloco 256 quadros → remove DC</text>
-        <text x="54" y="300" class="d-m">2 mix mono → decimador ÷8 → chunk 48 ms</text>
+        <text x="54" y="282" class="d-m">1 bloco 80 quadros (5 ms) → remove DC</text>
+        <text x="54" y="300" class="d-m">2 mix mono → decimador ÷8 (se ligado)</text>
         <text x="54" y="318" class="d-m">3 biquads HP/LP (se ligados)</text>
-        <text x="54" y="336" class="d-m">4 RMS esq/dir → detector de pico</text>
-        <text x="54" y="354" class="d-m">5 pico → flag atômica p/ app</text>
-        <text x="54" y="372" class="d-m">(limiar vem do app, atômico)</text>
+        <text x="54" y="336" class="d-m">4 soma de quadrados + pico (16 kHz)</text>
+        <text x="54" y="354" class="d-m">5 janela 20 ms → RMS/pico atômicos</text>
+        <text x="54" y="372" class="d-m">6 a cada 3º bloco → detector de pico</text>
 
         <!-- co2 task -->
         <rect x="40" y="406" width="300" height="110" rx="6" class="d-task"/>
@@ -1223,7 +1223,7 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
         <thead><tr><th>Tarefa</th><th>Núcleo</th><th>Prioridade</th><th>Acorda com</th><th>Responsável por</th></tr></thead>
         <tbody>
           <tr><td><code>imu</code></td><td>1</td><td>3</td><td>a cada 2–5 ms (¼ do período de amostragem — o pino INT do GY-91 não é roteado na placa)</td><td>MPU-9250 (I²C), viés do gyro, fusão Madgwick, montagem e zero</td></tr>
-          <tr><td><code>audio</code></td><td>1</td><td>2</td><td><code>i2s_read</code> (256 quadros = 16 ms)</td><td>I²S, decimador 2 kHz, biquads HP/LP, RMS, detector de pico</td></tr>
+          <tr><td><code>audio</code></td><td>1</td><td>2</td><td><code>i2s_read</code> (80 quadros = 5 ms)</td><td>I²S, decimador 2 kHz (opcional), biquads HP/LP, energia e pico, janela de 20 ms, detector de pico</td></tr>
           <tr><td><code>app</code></td><td>1</td><td>2</td><td>fila da IMU (timeout 20 ms)</td><td>envio BLE (IMU/CO₂/sensores/áudio/diag), LEDs, potenciômetro, pulso de CO₂ virtual, NVS</td></tr>
           <tr><td><code>co2</code></td><td>1</td><td>1</td><td>a cada 20 ms</td><td>UART1 RX (somente escuta), parser de quadros do SC8, EMA</td></tr>
           <tr><td>NimBLE host</td><td>0</td><td>(biblioteca)</td><td>eventos BLE</td><td>GATT, desbloqueio por PIN, aplicação da config</td></tr>
@@ -1243,13 +1243,13 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
   <div class="wrap">
     <div class="section-head">
       <span class="eyebrow">4 · Protocolo binário</span>
-      <h2>23 bytes em vez de ~200</h2>
+      <h2>31 bytes em vez de ~200 — e com o som incluído</h2>
       <p>Pacotes little-endian de tamanho fixo, com a versão do protocolo no primeiro byte. A especificação completa, com vetores de teste em hexadecimal, está em <code>firmware/docs/protocol.md</code>.</p>
     </div>
 
     <div class="packet">
-      <h3>IMU <small>característica …0001 · notify · 23 bytes · 50 Hz padrão</small></h3>
-      <div class="strip-wrap"><div class="strip" style="grid-template-columns: 1fr 1fr 2fr 4fr 2fr 2fr 2fr 2fr 2fr 2fr 2fr 1fr; grid-auto-flow: row;">
+      <h3>IMU <small>característica …0001 · notify · 31 bytes · 50 Hz padrão</small></h3>
+      <div class="strip-wrap"><div class="strip" style="grid-template-columns: 1fr 1fr 2fr 4fr 2fr 2fr 2fr 2fr 2fr 2fr 2fr 1fr 2fr 2fr 2fr 2fr; grid-auto-flow: row;">
         <div class="fld k-hdr">ver<small>u8</small></div>
         <div class="fld k-hdr">tipo<small>u8</small></div>
         <div class="fld k-time">seq<small>u16</small></div>
@@ -1262,8 +1262,12 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
         <div class="fld k-data">accY<small>i16</small></div>
         <div class="fld k-data">accZ<small>i16</small></div>
         <div class="fld k-flag">flags<small>u8</small></div>
+        <div class="fld k-data">RMS E<small>i16 dB×100</small></div>
+        <div class="fld k-data">RMS D<small>i16 dB×100</small></div>
+        <div class="fld k-data">pico E<small>i16 dB×100</small></div>
+        <div class="fld k-data">pico D<small>i16 dB×100</small></div>
       </div></div>
-      <p class="result-line">Quaternion em Q14 (valor × 16384); aceleração em contagens brutas do DMP, igual ao legado. Flags: bit0 quaternion válido, bit1 modo 9 eixos, bit2 em movimento.</p>
+      <p class="result-line">Quaternion em Q14 (valor × 16384); aceleração em contagens brutas do DMP, igual ao legado. Flags: bit0 quaternion válido, bit1 modo 9 eixos, bit2 em movimento, bit3 envelope de áudio válido. <b>Os 8 bytes finais entraram na v8:</b> o envelope dos microfones (RMS e pico por canal, em dBFS × 100), medido no firmware na janela de 20 ms que termina nessa amostra de orientação, com o pico amostrado nos 16 kHz cheios. Antes esse número chegava a 5 Hz ou era recalculado no navegador a partir do áudio decimado — isto é, 200 ms atrasado, ou errado.</p>
     </div>
 
     <div class="packet">
@@ -1281,22 +1285,29 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
     </div>
 
     <div class="packet">
-      <h3>Diagnóstico <small>característica …0005 · notify · 23 bytes · 1 Hz</small></h3>
-      <div class="strip-wrap"><div class="strip" style="grid-template-columns: 1fr 1fr 2fr 4fr 2fr 2fr 2fr 2fr 2fr 2fr 2fr 1fr; grid-auto-flow: row;">
+      <h3>Diagnóstico <small>característica …0005 · notify · 34 bytes · 1 Hz</small></h3>
+      <div class="strip-wrap"><div class="strip" style="grid-template-columns: 1fr 1fr 2fr 4fr 2fr 2fr 2fr 2fr 2fr 2fr 2fr 1fr 1fr 1fr 1fr 2fr 2fr 2fr 2fr; grid-auto-flow: row;">
         <div class="fld k-hdr">ver<small>u8</small></div>
         <div class="fld k-hdr">tipo<small>u8</small></div>
         <div class="fld k-time">seq<small>u16</small></div>
         <div class="fld k-time">uptime (s)<small>u32</small></div>
         <div class="fld k-data">IMU Hz×10<small>u16</small></div>
         <div class="fld k-data">notify Hz×10<small>u16</small></div>
-        <div class="fld k-data">FIFO ovf<small>u16</small></div>
+        <div class="fld k-data">erros I²C<small>u16</small></div>
         <div class="fld k-data">erros I²S<small>u16</small></div>
         <div class="fld k-data">erros UART<small>u16</small></div>
         <div class="fld k-data">heap kB<small>u16</small></div>
         <div class="fld k-data">heap mín<small>u16</small></div>
         <div class="fld k-flag">flags<small>u8</small></div>
+        <div class="fld k-flag">AHRS<small>u8</small></div>
+        <div class="fld k-data">err incl<small>u8 °</small></div>
+        <div class="fld k-data">err rumo<small>u8 °</small></div>
+        <div class="fld k-data">bias X<small>i16 ×100</small></div>
+        <div class="fld k-data">bias Y<small>i16 ×100</small></div>
+        <div class="fld k-data">bias Z<small>i16 ×100</small></div>
+        <div class="fld k-data">intervalo<small>u16 ×0,1 ms</small></div>
       </div></div>
-      <p class="result-line">Flags: bit0 IMU ok, bit1 áudio ok, bit2 CO₂ ok.</p>
+      <p class="result-line">Flags: bit0 IMU ok, bit1 áudio ok, bit2 CO₂ ok. O byte <b>AHRS</b> e os campos de erro e bias entraram na v7 (ver <a href="#pipeline">§5</a>) para tornar o pipeline observável. O <b>intervalo</b> entrou na v8: é o intervalo de conexão que o navegador concedeu, em décimos de milissegundo. O firmware pede 7,5–15 ms em cada conexão, mas quem decide é o sistema operacional do PC — e esse número é o teto de qualquer taxa de notificação. Sem publicá-lo, um pedido aceito e um pedido recusado têm exatamente a mesma aparência.</p>
     </div>
 
     <div class="packet">
@@ -1316,7 +1327,7 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
     </div>
 
     <div class="packet">
-      <h3>Áudio bruto <small>característica …0005 · notify · 208 bytes · ~21 Hz</small></h3>
+      <h3>Áudio bruto <small>característica …0005 · notify · 208 bytes · ~21 Hz · opcional, desligado por padrão</small></h3>
       <div class="strip-wrap"><div class="strip" style="grid-template-columns: 1fr 1fr 2fr 4fr 2fr 1fr 1fr 2fr 2fr 8fr; grid-auto-flow: row;">
         <div class="fld k-hdr">ver<small>u8</small></div>
         <div class="fld k-hdr">tipo<small>u8</small></div>
@@ -1329,14 +1340,74 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
         <div class="fld k-data">LP (Hz)<small>u16</small></div>
         <div class="fld k-data">amostras ×96<small>i16</small></div>
       </div></div>
-      <p class="result-line">Áudio <b>cru</b> decimado (mix mono, 16 kHz → 2 kHz por média de 8, int16) para o analisador de espectro do config-app — <b>o FFT roda no navegador</b>, não no ESP32. Os cortes HP/LP configurados viajam no pacote para a UI desenhar as marcações. Enviado só quando a característica tem assinante (~4,4 kB/s). Exige MTU ≥ 211.</p>
+      <p class="result-line">Áudio <b>cru</b> decimado (mix mono, 16 kHz → 2 kHz por média de 8, int16) para o analisador de espectro do config-app — <b>o FFT roda no navegador</b>, não no ESP32. Os cortes HP/LP configurados viajam no pacote para a UI desenhar as marcações. Exige MTU ≥ 211. <b>Desde a v8 ele é opcional (registro 0x1F) e vem desligado:</b> ligado, consome ~4,3 kB/s e ~45 ms de tempo de ar por segundo — mais que todos os outros pacotes somados. Nada mais depende dele; o RMS e o pico que a aplicação usa chegam medidos no pacote de orientação. Liga-se para ajustar os cortes do passa-banda contra o espectro, e desliga-se depois.</p>
+    </div>
+
+    <div class="section-head" style="margin-top:44px">
+      <span class="eyebrow">4.1 · Orçamento de bytes</span>
+      <h2>Quanto cada item custa no ar</h2>
+      <p>Tudo abaixo é aritmética sobre os tamanhos dos pacotes e o enquadramento do enlace BLE 4.2 — <b>nada disso foi medido em hardware ainda</b>. O tempo de ar de uma notificação, no PHY de 1 Mbit/s e com o enlace sem cifra (o PIN é da aplicação, não há pareamento), contando o pacote vazio obrigatório do central e os dois espaços entre quadros:</p>
+    </div>
+
+    <div class="diagram" aria-label="Cálculo do tempo de ar de uma notificação BLE"><pre style="margin:0;font-size:0.78rem;line-height:1.5"><code>bytes no enlace = 1 (preâmbulo) + 4 (endereço de acesso) + 2 (cabeçalho LL)
+                + payload + 3 (CRC) + 7 (L2CAP 4 + ATT 3)        =  P + 17
+tempo de ar     = (P + 17) × 8 µs  +  80 µs (pacote vazio)  +  300 µs (2 × T_IFS)</code></pre></div>
+
+    <p>Um pacote de 23 bytes custa ~700 µs; um de 208 bytes, ~2180 µs. <b>O recurso escasso são as vagas de pacote, não os bytes:</b> acrescentar 8 bytes a um pacote que já ia ser enviado custa 64 µs, enquanto os mesmos 8 bytes num pacote próprio custam ~660 µs — dez vezes mais. É por isso que o envelope dos microfones viaja dentro do pacote de orientação.</p>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>#</th><th>Item da v8</th><th>Bytes no protocolo</th><th>Payload/s</th><th>Tempo de ar/s</th><th>CPU</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><b>RMS por canal</b> em cada pacote de orientação</td><td>+4 B/pacote (2 × i16, 0,01 dBFS)</td><td>+200 B/s</td><td>+1,6 ms</td><td>~0 — já era calculado</td></tr>
+          <tr><td>2</td><td><b>Pico por canal</b>, amostrado a 16 kHz</td><td>+4 B/pacote (2 × i16, 0,01 dBFS)</td><td>+200 B/s</td><td>+1,6 ms</td><td>+1 comparação por amostra por canal ≈ 0,01 % de um núcleo</td></tr>
+          <tr><td>3</td><td><b>Intervalo de conexão</b> concedido, no diagnóstico</td><td>+2 B/pacote (u16, 0,1 ms)</td><td>+2 B/s</td><td>+0,02 ms</td><td>0</td></tr>
+          <tr><td>4</td><td><b>Stream de áudio cru</b> passa a opcional (0x1F)</td><td>−208 B/pacote × −20,8 pacotes/s</td><td><b>−4333 B/s</b></td><td><b>−45,4 ms</b></td><td>−1 alimentação do decimador por amostra ≈ −0,1 % de um núcleo</td></tr>
+          <tr><td>5</td><td><code>double</code> → <code>float</code> nos acumuladores de RMS</td><td>0</td><td>0</td><td>0</td><td><b>−1,7 % de um núcleo</b> — a FPU do LX6 é só de precisão simples, então cada operação <code>double</code> era emulada em software</td></tr>
+          <tr><td colspan="2"><b>Total</b> (configuração padrão: 50 Hz, stream desligado)</td><td>IMU 23 → 31 B · diagnóstico 32 → 34 B</td><td><b>−3931 B/s (−70 %)</b></td><td><b>−42,2 ms (−49 %)</b></td><td>≈ −1,8 % de um núcleo</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>Os itens 1 e 2 são, juntos, os 8 bytes acrescentados ao pacote de orientação; aparecem separados porque respondem a perguntas diferentes (a energia na janela <em>versus</em> o transiente dentro dela) e porque só o pico exigiu trabalho novo por amostra.</p>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Cenário</th><th>Pacotes/s</th><th>Payload</th><th>Tempo de ar</th><th>Ocupação do rádio</th></tr></thead>
+        <tbody>
+          <tr><td>v7 — 50 Hz, stream sempre ligado</td><td>77,8</td><td>5642 B/s</td><td>85,3 ms/s</td><td>8,5 %</td></tr>
+          <tr><td><b>v8 padrão — 50 Hz, stream desligado</b></td><td><b>57</b></td><td><b>1711 B/s</b></td><td><b>43,1 ms/s</b></td><td><b>4,3 %</b></td></tr>
+          <tr><td>v8 — 100 Hz, stream desligado</td><td>107</td><td>3261 B/s</td><td>81,3 ms/s</td><td>8,1 %</td></tr>
+          <tr><td>v8 — 200 Hz, stream desligado</td><td>207</td><td>6361 B/s</td><td>157,7 ms/s</td><td>15,8 %</td></tr>
+          <tr><td>v8 — 100 Hz durante o ajuste (stream ligado)</td><td>128</td><td>7594 B/s</td><td>126,7 ms/s</td><td>12,7 %</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Pacote (v8 padrão)</th><th>Payload</th><th>Taxa</th><th>Payload/s</th><th>Tempo de ar/s</th></tr></thead>
+        <tbody>
+          <tr><td>IMU — orientação + envelope</td><td>31 B</td><td>50 Hz</td><td>1550 B/s</td><td>38,2 ms</td></tr>
+          <tr><td>Sensores — limiar, pot, saúde</td><td>23 B</td><td>5 Hz</td><td>115 B/s</td><td>3,5 ms</td></tr>
+          <tr><td>Diagnóstico</td><td>34 B</td><td>1 Hz</td><td>34 B/s</td><td>0,8 ms</td></tr>
+          <tr><td>CO₂</td><td>12 B</td><td>1 Hz</td><td>12 B/s</td><td>0,6 ms</td></tr>
+          <tr><td>Áudio bruto — opcional</td><td>208 B</td><td>0 (20,8 Hz quando ligado)</td><td>0 (4333 B/s)</td><td>0 (45,4 ms)</td></tr>
+          <tr><td><b>Total</b></td><td></td><td></td><td><b>1711 B/s</b></td><td><b>43,1 ms</b></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <h3>Por que o FFT continua no navegador</h3>
+      <p>Um espectro de 512 pontos do stream de 2 kHz tem 256 raias. A um byte por raia, são 256 B por canal por quadro — <b>mais</b> que os 192 bytes de áudio de onde ele saiu, e os 520 B de um quadro estéreo não caberiam no MTU de 247. Enviar espectros na resolução que o config-app mostra hoje custaria ~2,6× o tempo de ar de enviar o próprio áudio; e a 100 Hz os quadros ficariam 96 % sobrepostos — a mesma janela de 256 ms retransmitida 25 vezes. O FFT em si é barato (~37 mil ciclos por quadro por canal, ≈ 3 % de um núcleo a 100 Hz em estéreo): a decisão é de banda e de informação, não de CPU. Se um dia a aplicação quiser bandas grossas, um banco de ~24 biquads custa ~0,3 % de um núcleo e não tem a latência da janela — um FFT de 256 ms atrasa o resultado em ~128 ms.</p>
     </div>
 
     <div class="two-col">
       <div>
         <h3>Tamanho por amostra de orientação</h3>
-        <p class="size-stat"><span><b>~200 B</b> JSON legado (estimado)</span><span><b>23 B</b> binário v2</span></p>
-        <p>O tamanho do JSON varia com o número de dígitos de cada valor; ~200 B é a ordem de grandeza de <code>{"quat":{…},"euler":{…},"acc":{…}}</code> com números de ponto flutuante. Uma notificação BLE carrega até MTU − 3 bytes: os 23 B do pacote IMU exigem MTU ≥ 26. O firmware pede 247; navegadores atuais costumam negociar valores dessa ordem.</p>
+        <p class="size-stat"><span><b>~200 B</b> JSON legado (estimado)</span><span><b>31 B</b> binário v2</span></p>
+        <p>O tamanho do JSON varia com o número de dígitos de cada valor; ~200 B é a ordem de grandeza de <code>{"quat":{…},"euler":{…},"acc":{…}}</code> com números de ponto flutuante. Uma notificação BLE carrega até MTU − 3 bytes: os 31 B do pacote IMU exigem MTU ≥ 34. O firmware pede 247; navegadores atuais costumam negociar valores dessa ordem.</p>
       </div>
       <div>
         <h3>Sequência e tempo</h3>
@@ -1523,6 +1594,7 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
           <tr><td>Áudio</td><td>0x18</td><td><code>audioHpQX100</code></td><td>10–2000</td><td>500</td><td>Q ×100 (500 = 5,00). Q &gt; 0,71 cria pico ressonante de ~20·log₁₀(Q) dB no corte.</td></tr>
           <tr><td>Áudio</td><td>0x19</td><td><code>audioLpHz</code></td><td>1–7000</td><td>200</td><td>Corte do low-pass. Deve ficar acima do high-pass (validado no estado final).</td></tr>
           <tr><td>Áudio</td><td>0x1A</td><td><code>audioLpQX100</code></td><td>10–2000</td><td>500</td><td>Q ×100 do low-pass.</td></tr>
+          <tr><td>Áudio</td><td>0x1F</td><td><code>audioRawStream</code></td><td>0 ou 1</td><td>0</td><td><b>v8.</b> Liga o stream de áudio cru de 2 kHz, necessário só para desenhar o espectro no config-app. Vem desligado: ligado custa ~4,3 kB/s e ~45 ms de tempo de ar por segundo — mais que todos os outros pacotes somados (ver <a href="#protocolo">§4.1</a>).</td></tr>
           <tr><td>Áudio</td><td>0x1B</td><td><code>potEmaAlphaX1000</code></td><td>1–1000</td><td>300</td><td>Suavização (EMA) do potenciômetro.</td></tr>
           <tr><td>CO₂</td><td>0x28</td><td><code>co2EmaAlphaX1000</code></td><td>1–1000</td><td>1000</td><td>Suavização (EMA) das leituras aceitas (1000 = desligada).</td></tr>
           <tr><td>LEDs</td><td>0x30</td><td><code>soundLedPin</code></td><td>GPIO 0–33</td><td>2</td><td>Pino do LED de som (D2 na placa). Distinto do LED de CO₂. Sem campo na UI: segue fixo na placa. <span class="reboot">requer reinício</span></td></tr>
@@ -1552,10 +1624,11 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
         <ul>
           <li>Vista 3D da orientação: o quaternion tratado, exatamente como chega por BLE — a suavização é configurada só no próprio firmware (slerp), e o efeito aparece na vista.</li>
           <li>Tooltips didáticos (ⓘ) em todos os parâmetros — descrição em português + unidade de medida —, tema claro/escuro e layout responsivo (desktop, tablet e celular).</li>
-          <li><b>Básico e Avançado em abas</b>: a aba de entrada traz os 14 parâmetros de operação (modo, taxa, sopro, CO₂ virtual, nome, PIN) e a segunda guarda os 25 de afinação da cadeia de sinais. Todos os campos já abrem preenchidos com os padrões de fábrica, e a contagem na aba Avançado acende quando algum deles está fora do padrão — a pergunta “tem algo afinado aqui?” se responde sem abrir a aba.</li>
+          <li><b>Básico e Avançado em abas</b>: a aba de entrada traz os 14 parâmetros de operação (modo, taxa, sopro, CO₂ virtual, nome, PIN) e a segunda guarda os 26 de afinação da cadeia de sinais. Todos os campos já abrem preenchidos com os padrões de fábrica, e a contagem na aba Avançado acende quando algum deles está fora do padrão — a pergunta “tem algo afinado aqui?” se responde sem abrir a aba.</li>
           <li>Métricas do fluxo: taxa (Hz), perda por <code>seq</code> e jitter.</li>
           <li><b>Sensores em tempo real</b>: valor atual de cada sensor com a unidade correta (orientação em °, aceleração em g, microfones em dBFS + dB SPL estimado, CO₂ em ppm, potenciômetro em %) e gráficos de linha (Plotly.js) empilhados verticalmente, um por sensor, cada um com sua cor, todos <b>compartilhando o mesmo eixo X (tempo)</b> — janela de 120 s a 10 Hz, com zoom.</li>
-          <li><b>Analisador de espectro do sopro</b>: a bola transmite o áudio bruto decimado (2 kHz, int16) e o <b>FFT roda no navegador</b> (512 pontos, bins de ~3,9 Hz, 0–1000 Hz), com as linhas dos cortes HP/LP sobrepostas — sopre na bola e ajuste o passa-banda vendo quais frequências sobem.</li>
+          <li><b>Analisador de espectro do sopro</b>: a bola transmite o áudio bruto decimado (2 kHz, int16) e o <b>FFT roda no navegador</b> (512 pontos, bins de ~3,9 Hz, 0–1000 Hz), com as linhas dos cortes HP/LP sobrepostas — sopre na bola e ajuste o passa-banda vendo quais frequências sobem. Desde a v8 esse stream é opcional e vem desligado (registro <code>0x1F</code>, na aba Avançado): enquanto está desligado o gráfico diz isso em vez de ficar vazio, e o RMS e o pico dos microfones continuam chegando, medidos no firmware.</li>
+          <li><b>Estado do enlace BLE</b>: o painel Métricas mostra o intervalo de conexão que o navegador concedeu e o teto de notificações por segundo que ele implica. É a primeira coisa a olhar quando a taxa não sobe — o limite costuma estar no sistema operacional do PC, não no firmware.</li>
           <li><b>Filtros por sensor, ajustáveis a quente e persistentes</b>: passa-banda do sopro (HP/LP + Q), EMA da aceleração, slerp do quaternion, EMA do potenciômetro e do CO₂, e a taxa da IMU (10–200 Hz, reconfigura o divisor de amostragem do MPU-9250). "Aplicar" confere a aceitação e já grava na NVS <em>como TLV</em> (ids estáveis): as configurações sobrevivem a desligar/reiniciar e a atualizações de firmware.</li>
           <li>Formulário com todos os parâmetros; “Aplicar” envia só o que mudou e relê para conferir.</li>
           <li>Presets com nome, exportação e importação em JSON. O PIN nunca entra num preset.</li>
@@ -1565,7 +1638,8 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
         <h3>Objeto Pure Data <code>[gaiaball]</code></h3>
         <p>Em <code>gaiaball/pd-gaiaball/</code>: abstração Pd 100&nbsp;% vanilla + ponte BLE→UDP multiplataforma (Python/<code>bleak</code>) — leitura de todos os dados da bola direto num patch Pd, em Windows, Linux e macOS, sem compilar nada.</p>
         <ul>
-          <li>9 outlets já decodificados: euler (convenção legada, a mesma do site), quaternion, aceleração, CO₂ (ppm + flags), microfones (dBFS/RMS), potenciômetro, diagnóstico, áudio cru opcional e status da conexão.</li>
+          <li>9 outlets já decodificados: euler (convenção legada, a mesma do site), quaternion, aceleração, CO₂ (ppm + flags), microfones a 5 Hz (dBFS/RMS), potenciômetro, diagnóstico, <code>micenv</code> e status da conexão.</li>
+          <li><b>Áudio chega tratado, nunca em amostras</b>: o outlet <code>micenv</code> entrega RMS e pico por canal em dBFS, na taxa de orientação — é o que um patch usa como sinal de controle. O stream de áudio cru foi <b>removido</b> da ponte (eram ~2000 floats/s para o patch calcular janela, RMS e pico por conta própria, sobre um sinal decimado que já tinha perdido os transientes). O espectro fica só no navegador: mandar FFT pelo BLE custaria mais banda que mandar o próprio áudio (ver <a href="#protocolo">§4.1</a>).</li>
           <li>Somente leitura (nunca escreve na bola; dispensa PIN) e reconexão automática. README próprio com instalação por SO, referência de outlets com unidades e solução de problemas.</li>
         </ul>
       </div>
@@ -1597,7 +1671,7 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
       <p>Na ordem em que vale a pena executar. As marcações ficam salvas só neste navegador.</p>
     </div>
     <div class="check-head">
-      <span class="progress" id="checkProgress">0 de 15 concluídos</span>
+      <span class="progress" id="checkProgress">0 de 19 concluídos</span>
       <button type="button" class="ghost-btn" id="checkReset">Desmarcar tudo</button>
     </div>
     <div class="progress-bar" aria-hidden="true"><i id="checkBar"></i></div>
@@ -1616,7 +1690,10 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
       <li><label for="c12"><span class="n"></span><input type="checkbox" id="c12" data-key="pin"><span class="txt"><b>Bloqueio do PIN</b><span>5 PINs errados seguidos: o desbloqueio deve ser recusado por 30 s, mesmo com o PIN certo.</span></span></label></li>
       <li><label for="c13"><span class="n"></span><input type="checkbox" id="c13" data-key="noimu"><span class="txt"><b>Ligar sem a IMU</b><span>BLE sobe e o diagnóstico mostra <code>imuOk = 0</code> no config-app (<a href="#f09">F09</a>).</span></span></label></li>
       <li><label for="c14"><span class="n"></span><input type="checkbox" id="c14" data-key="soak"><span class="txt"><b>24 h ligado</b><span><code>uptimeS</code> contínuo (sem reinício), <code>minFreeHeapKb</code> estável, <code>fifoOverflows</code> e erros de UART sem crescer.</span></span></label></li>
-      <li><label for="c16"><span class="n"></span><input type="checkbox" id="c16" data-key="sopro"><span class="txt"><b>Calibrar o passa-banda do sopro</b><span>Soprar na bola olhando o espectro (painel Sensores), ajustar HP/LP até a banda cobrir o sopro e cortar voz/ambiente; Aplicar (já grava). Conferir que o pulso virtual dispara com sopro e não com conversa.</span></span></label></li>
+      <li><label for="c16"><span class="n"></span><input type="checkbox" id="c16" data-key="sopro"><span class="txt"><b>Calibrar o passa-banda do sopro</b><span>Ligar o <b>Stream de áudio cru</b> (Configuração › Avançado › Áudio — vem desligado) e aplicar; soprar na bola olhando o espectro (painel Sensores), ajustar HP/LP até a banda cobrir o sopro e cortar voz/ambiente; Aplicar (já grava). Conferir que o pulso virtual dispara com sopro e não com conversa. <b>Desligar o stream ao final.</b></span></span></label></li>
+      <li><label for="c17"><span class="n"></span><input type="checkbox" id="c17" data-key="connitvl"><span class="txt"><b>Intervalo de conexão concedido entre 7,5 e 15 ms</b><span>Painel Métricas › Firmware › <b>Intervalo de conexão</b>. O firmware pede essa faixa em cada conexão, mas quem decide é o sistema operacional do PC. Se vier 30 ms, nenhuma taxa acima de ~100 Hz é alcançável — e a causa não está no firmware. Repetir com o navegador em Windows, Linux e macOS, se possível, e anotar cada valor.</span></span></label></li>
+      <li><label for="c18"><span class="n"></span><input type="checkbox" id="c18" data-key="envelope"><span class="txt"><b>Envelope dos microfones na taxa de orientação</b><span>Cartões dos microfones no painel Sensores: o valor deve acompanhar o som sem o degrau de 200 ms que existia a 5 Hz; o pico fica alguns dB acima do RMS (se ficar igual, o sinal saturou); uma palma seca move o pico bem mais que o RMS. Tapar um microfone deve derrubar só aquele canal.</span></span></label></li>
+      <li><label for="c19"><span class="n"></span><input type="checkbox" id="c19" data-key="rate200"><span class="txt"><b>Taxa de 100 Hz e 200 Hz com o stream desligado</b><span>Subir <code>imuNotifyHz</code> para 100 e depois 200 (aba Básico) e conferir <b>Taxa</b> e <b>Perda</b>. Esperado pela aritmética de tempo de ar (<a href="#protocolo">§4.1</a>): 8,1 % de ocupação do rádio a 100 Hz e 15,8 % a 200 Hz. Nada disso foi medido — é este item que fecha a conta.</span></span></label></li>
       <li><label for="c15"><span class="n"></span><input type="checkbox" id="c15" data-key="newpin"><span class="txt"><b>Trocar o PIN padrão antes da exposição</b><span>TLV 0x41 com 4 dígitos novos e comando <code>0x11</code> para gravar.</span></span></label></li>
     </ol>
   </div>

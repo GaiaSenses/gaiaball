@@ -69,6 +69,10 @@ struct GaiaConfig {
   // peak detector. Q is x100 (500 = 5.00). NOTE: Q > 0.707 adds a resonant peak of
   // ~20*log10(Q) dB at the cutoff; validation enforces lpHz > hpHz.
   uint8_t audioBpfEnabled = 1;
+  // Raw 2 kHz audio stream (AudioChunkPacket). Off by default: it is only needed to
+  // tune the band-pass against the live spectrum, and while on it costs ~45 ms/s of
+  // BLE air time -- more than every other packet on the link put together.
+  uint8_t audioRawStream = 0;
   uint16_t audioHpHz = 10;      // 1..7000
   uint16_t audioHpQX100 = 500;  // 10..2000
   uint16_t audioLpHz = 200;     // 1..7000
