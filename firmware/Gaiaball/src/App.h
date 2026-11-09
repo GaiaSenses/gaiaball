@@ -52,6 +52,7 @@ class App {
   void sendDiag(uint32_t nowMs);
   void sendSensors(uint32_t nowMs);
   void maybeSendAudioChunk(uint32_t nowMs);
+  void maybeSendMagChunk(uint32_t nowMs);
   void drainCommands();
   void dispatch(const BleCommand &cmd);
   void persistCapturedMounting();
@@ -92,6 +93,7 @@ class App {
   uint16_t diagSeq_ = 0;
   uint16_t sensorsSeq_ = 0;
   uint16_t audioChunkSeq_ = 0;
+  uint16_t magChunkSeq_ = 0;
   uint32_t imuNotifiesInWindow_ = 0;
   uint32_t diagWindowStartMs_ = 0;
   uint32_t lastPotMs_ = 0;

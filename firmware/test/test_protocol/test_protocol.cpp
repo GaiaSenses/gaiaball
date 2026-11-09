@@ -8,7 +8,7 @@ using namespace gaia;
 
 static_assert(sizeof(ImuPacket) == 23, "ImuPacket must be 23 bytes");
 static_assert(sizeof(Co2Packet) == 12, "Co2Packet must be 12 bytes");
-static_assert(sizeof(DiagPacket) == 23, "DiagPacket must be 23 bytes");
+static_assert(sizeof(DiagPacket) == 32, "DiagPacket must be 32 bytes");
 static_assert(sizeof(SensorsPacket) == 23, "SensorsPacket must be 23 bytes");
 
 void setUp() {}
@@ -17,7 +17,8 @@ void tearDown() {}
 void test_packet_sizes() {
   TEST_ASSERT_EQUAL(23, sizeof(ImuPacket));
   TEST_ASSERT_EQUAL(12, sizeof(Co2Packet));
-  TEST_ASSERT_EQUAL(23, sizeof(DiagPacket));
+  TEST_ASSERT_EQUAL(32, sizeof(DiagPacket));
+  TEST_ASSERT_EQUAL(106, sizeof(MagChunkPacket));
   TEST_ASSERT_EQUAL(23, sizeof(SensorsPacket));
 }
 
@@ -106,10 +107,45 @@ void test_diag_layout_golden() {
   p.freeHeapKb = 200;
   p.minFreeHeapKb = 150;
   p.flags = kDiagImuOk | kDiagAudioOk | kDiagCo2Ok;
-  const uint8_t expected[23] = {0x01, 0x03, 0x01, 0x00, 0x03, 0x02, 0x01, 0x00,
+  p.ahrsFlags = kAhrsStartup | kAhrsBiasAtRest;
+  p.accelErrDeg = 3;
+  p.magErrDeg = 12;
+  p.gyroBiasX100[0] = 150;   // +1.50 dps
+  p.gyroBiasX100[1] = -75;   // -0.75 dps
+  p.gyroBiasX100[2] = 0;
+  const uint8_t expected[32] = {0x01, 0x03, 0x01, 0x00, 0x03, 0x02, 0x01, 0x00,
                                 0xF4, 0x01, 0xF4, 0x01, 0x01, 0x00, 0x02, 0x00,
-                                0x03, 0x00, 0xC8, 0x00, 0x96, 0x00, 0x07};
-  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, reinterpret_cast<const uint8_t *>(&p), 23);
+                                0x03, 0x00, 0xC8, 0x00, 0x96, 0x00, 0x07, 0x11,
+                                0x03, 0x0C, 0x96, 0x00, 0xB5, 0xFF, 0x00, 0x00};
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, reinterpret_cast<const uint8_t *>(&p), 32);
+}
+
+
+void test_mag_chunk_encode_golden() {
+  const int16_t samples[6] = {100, -200, 300, 101, -201, 301};
+  const MagChunkPacket p = makeMagChunkPacket(9, 0x01020304u, samples, 2, kMagChunkCalibrated);
+  TEST_ASSERT_EQUAL(kProtocolVersion, p.version);
+  TEST_ASSERT_EQUAL(static_cast<uint8_t>(PacketType::MagChunk), p.type);
+  TEST_ASSERT_EQUAL_UINT16(9, p.seq);
+  TEST_ASSERT_EQUAL_UINT32(0x01020304u, p.timestampMs);
+  TEST_ASSERT_EQUAL(2, p.count);
+  TEST_ASSERT_EQUAL(kMagChunkCalibrated, p.flags);
+  for (int i = 0; i < 6; i++) TEST_ASSERT_EQUAL_INT16(samples[i], p.samples[i]);
+  // Unused slots are zeroed so the packet never leaks stale samples.
+  for (int i = 6; i < 3 * kMagChunkMaxSamples; i++) TEST_ASSERT_EQUAL_INT16(0, p.samples[i]);
+}
+
+void test_mag_chunk_clamps_count() {
+  int16_t samples[3 * kMagChunkMaxSamples];
+  for (int i = 0; i < 3 * kMagChunkMaxSamples; i++) samples[i] = static_cast<int16_t>(i);
+  const MagChunkPacket p = makeMagChunkPacket(1, 2, samples, kMagChunkMaxSamples + 5, 0);
+  TEST_ASSERT_EQUAL(kMagChunkMaxSamples, p.count);
+}
+
+void test_mag_chunk_size_fits_default_mtu() {
+  // 106 bytes: fits the 23-byte ATT header plus a 185-byte payload on any MTU that
+  // already carries the 208-byte audio chunk.
+  TEST_ASSERT_EQUAL(106, sizeof(MagChunkPacket));
 }
 
 int main(int, char **) {
@@ -122,5 +158,8 @@ int main(int, char **) {
   RUN_TEST(test_sensors_encode_saturation_and_nan);
   RUN_TEST(test_co2_layout_golden);
   RUN_TEST(test_diag_layout_golden);
+  RUN_TEST(test_mag_chunk_encode_golden);
+  RUN_TEST(test_mag_chunk_clamps_count);
+  RUN_TEST(test_mag_chunk_size_fits_default_mtu);
   return UNITY_END();
 }

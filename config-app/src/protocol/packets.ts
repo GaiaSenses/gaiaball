@@ -7,13 +7,18 @@ export const PKT_CO2 = 0x02;
 export const PKT_DIAG = 0x03;
 export const PKT_SENSORS = 0x04;
 export const PKT_AUDIO = 0x05;
+export const PKT_MAG = 0x06;
 
 export const IMU_PACKET_SIZE = 23;
 export const CO2_PACKET_SIZE = 12;
-export const DIAG_PACKET_SIZE = 23;
+export const DIAG_PACKET_SIZE = 32;
 export const SENSORS_PACKET_SIZE = 23;
 export const AUDIO_PACKET_SIZE = 208;
 export const AUDIO_CHUNK_SAMPLES = 96;
+export const MAG_PACKET_SIZE = 106;
+export const MAG_CHUNK_MAX_SAMPLES = 16;
+/** Magnetometer capture wire scale: int16 in 0.1 uT. */
+export const MAG_LSB_PER_UT = 10;
 
 export const QUAT_SCALE = 16384; // Q14
 /** MPU-9250 accel full scale is ±4 g -> 8192 LSB/g. */
@@ -35,6 +40,15 @@ export const CO2_FLAG_VIRTUAL_ACTIVE = 1 << 2;
 export const DIAG_FLAG_IMU_OK = 1 << 0;
 export const DIAG_FLAG_AUDIO_OK = 1 << 1;
 export const DIAG_FLAG_CO2_OK = 1 << 2;
+// DiagSample.ahrsFlags: the live state of the IMU pipeline (firmware logic/Ahrs.h).
+export const AHRS_FLAG_STARTUP = 1 << 0;
+export const AHRS_FLAG_OVERRANGE = 1 << 1;
+export const AHRS_FLAG_ACCEL_IGNORED = 1 << 2;
+export const AHRS_FLAG_MAG_IGNORED = 1 << 3;
+export const AHRS_FLAG_BIAS_AT_REST = 1 << 4;
+export const AHRS_FLAG_BIAS_ADAPTING = 1 << 5;
+export const AHRS_FLAG_MAG_CALIBRATED = 1 << 6;
+export const AHRS_FLAG_MAG_CAPTURE = 1 << 7;
 export const SENS_FLAG_AUDIO_OK = 1 << 0;
 export const SENS_FLAG_AUDIO_ENABLED = 1 << 1;
 export const SENS_FLAG_POT_CONTROLS = 1 << 2;
@@ -77,6 +91,29 @@ export interface DiagSample {
   imuOk: boolean;
   audioOk: boolean;
   co2Ok: boolean;
+  /** IMU pipeline state; see the AHRS_FLAG_* constants. */
+  ahrsFlags: number;
+  /** Disagreement between the estimated and measured inclination, in degrees. */
+  accelErrDeg: number;
+  /** Disagreement between the estimated and measured heading, in degrees. */
+  magErrDeg: number;
+  /** Estimated gyroscope zero-rate offset per axis, in dps. */
+  gyroBiasDps: [number, number, number];
+  startup: boolean;
+  accelIgnored: boolean;
+  magIgnored: boolean;
+  biasAtRest: boolean;
+  biasAdapting: boolean;
+  magCalibrated: boolean;
+  magCapturing: boolean;
+}
+
+export interface MagChunkSample {
+  seq: number;
+  tMs: number;
+  /** Raw (uncalibrated) magnetometer triplets in uT, chip frame. */
+  samples: [number, number, number][];
+  flags: number;
 }
 
 export interface SensorsSample {
@@ -185,6 +222,7 @@ export function decodeAudioChunkPacket(dv: DataView): AudioChunkSample | null {
 export function decodeDiagPacket(dv: DataView): DiagSample | null {
   if (!header(dv, DIAG_PACKET_SIZE, PKT_DIAG)) return null;
   const flags = dv.getUint8(22);
+  const ahrsFlags = dv.getUint8(23);
   return {
     seq: dv.getUint16(2, true),
     uptimeS: dv.getUint32(4, true),
@@ -199,5 +237,37 @@ export function decodeDiagPacket(dv: DataView): DiagSample | null {
     imuOk: (flags & DIAG_FLAG_IMU_OK) !== 0,
     audioOk: (flags & DIAG_FLAG_AUDIO_OK) !== 0,
     co2Ok: (flags & DIAG_FLAG_CO2_OK) !== 0,
+    ahrsFlags,
+    accelErrDeg: dv.getUint8(24),
+    magErrDeg: dv.getUint8(25),
+    gyroBiasDps: [
+      dv.getInt16(26, true) / 100,
+      dv.getInt16(28, true) / 100,
+      dv.getInt16(30, true) / 100,
+    ],
+    startup: (ahrsFlags & AHRS_FLAG_STARTUP) !== 0,
+    accelIgnored: (ahrsFlags & AHRS_FLAG_ACCEL_IGNORED) !== 0,
+    magIgnored: (ahrsFlags & AHRS_FLAG_MAG_IGNORED) !== 0,
+    biasAtRest: (ahrsFlags & AHRS_FLAG_BIAS_AT_REST) !== 0,
+    biasAdapting: (ahrsFlags & AHRS_FLAG_BIAS_ADAPTING) !== 0,
+    magCalibrated: (ahrsFlags & AHRS_FLAG_MAG_CALIBRATED) !== 0,
+    magCapturing: (ahrsFlags & AHRS_FLAG_MAG_CAPTURE) !== 0,
   };
+}
+
+/** Raw magnetometer capture (diag characteristic, only while a calibration runs). */
+export function decodeMagChunkPacket(dv: DataView): MagChunkSample | null {
+  if (!header(dv, MAG_PACKET_SIZE, PKT_MAG)) return null;
+  const count = dv.getUint8(8);
+  if (count > MAG_CHUNK_MAX_SAMPLES) return null;
+  const samples: [number, number, number][] = [];
+  for (let i = 0; i < count; i++) {
+    const o = 10 + 6 * i;
+    samples.push([
+      dv.getInt16(o, true) / MAG_LSB_PER_UT,
+      dv.getInt16(o + 2, true) / MAG_LSB_PER_UT,
+      dv.getInt16(o + 4, true) / MAG_LSB_PER_UT,
+    ]);
+  }
+  return { seq: dv.getUint16(2, true), tMs: dv.getUint32(4, true), samples, flags: dv.getUint8(9) };
 }

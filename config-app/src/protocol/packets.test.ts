@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeAudioChunkPacket, decodeCo2Packet, decodeDiagPacket, decodeImuPacket, decodeSensorsPacket, rmsToDbfs } from './packets';
+import { decodeAudioChunkPacket, decodeCo2Packet, decodeDiagPacket, decodeImuPacket, decodeMagChunkPacket, decodeSensorsPacket, rmsToDbfs } from './packets';
 import { TLV, VALID_OUTPUT_GPIOS, buildCommand, decodeTlv, encodeTlv } from './tlv';
 
 const hex = (s: string) => new DataView(new Uint8Array(s.trim().split(/\s+/).map((b) => parseInt(b, 16))).buffer);
@@ -7,7 +7,8 @@ const hex = (s: string) => new DataView(new Uint8Array(s.trim().split(/\s+/).map
 // Golden vectors copied verbatim from firmware/docs/protocol.md
 const IMU = '01 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 01 00 FE FF 03 00 03';
 const CO2 = '01 02 02 01 0D 0C 0B 0A E8 03 05 07';
-const DIAG = '01 03 01 00 03 02 01 00 F4 01 F4 01 01 00 02 00 03 00 C8 00 96 00 07';
+const DIAG = '01 03 01 00 03 02 01 00 F4 01 F4 01 01 00 02 00 03 00 C8 00 96 00 07 11 03 0C 96 00 B5 FF 00 00';
+const MAG = '01 06 09 00 04 03 02 01 02 00 64 00 38 FF 2C 01 65 00 37 FF 2D 01' + ' 00'.repeat(84);
 const SENSORS = '01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 07';
 
 describe('golden decode', () => {
@@ -30,8 +31,27 @@ describe('golden decode', () => {
     expect(s).toMatchObject({
       seq: 1, uptimeS: 0x00010203, imuHzX10: 500, notifyHzX10: 500, fifoOverflows: 1,
       i2sErrors: 2, uartFrameErrors: 3, freeHeapKb: 200, minFreeHeapKb: 150, flags: 7,
+      ahrsFlags: 0x11, accelErrDeg: 3, magErrDeg: 12,
     });
     expect([s.imuOk, s.audioOk, s.co2Ok]).toEqual([true, true, true]);
+    expect(s.gyroBiasDps[0]).toBeCloseTo(1.5, 6);
+    expect(s.gyroBiasDps[1]).toBeCloseTo(-0.75, 6);
+    expect(s.gyroBiasDps[2]).toBe(0);
+    expect([s.startup, s.biasAtRest]).toEqual([true, true]);
+    expect([s.accelIgnored, s.magIgnored, s.magCapturing]).toEqual([false, false, false]);
+  });
+
+  it('MagChunk', () => {
+    const s = decodeMagChunkPacket(hex(MAG))!;
+    expect(s.seq).toBe(9);
+    expect(s.tMs).toBe(0x01020304);
+    expect(s.samples).toHaveLength(2);
+    expect(s.samples[0][0]).toBeCloseTo(10, 6);
+    expect(s.samples[0][1]).toBeCloseTo(-20, 6);
+    expect(s.samples[0][2]).toBeCloseTo(30, 6);
+    // Cross-type safety on the shared diag characteristic.
+    expect(decodeMagChunkPacket(hex(DIAG))).toBeNull();
+    expect(decodeDiagPacket(hex(MAG))).toBeNull();
   });
 
   it('Sensors', () => {
@@ -108,7 +128,7 @@ describe('invalid input returns null', () => {
 
 describe('TLV', () => {
   it('registry ids', () => {
-    expect(Object.keys(TLV)).toHaveLength(29);
+    expect(Object.keys(TLV)).toHaveLength(43);
     expect(TLV.orientationMode).toBe(0x01);
     expect(TLV.imuNotifyHz).toBe(0x02);
     expect(TLV.slerpAmount).toBe(0x03);

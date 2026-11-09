@@ -14,19 +14,23 @@ Service `19b10000-e8f2-537e-4f6c-d104768a1214`.
 | `19b10002-e8f2-537e-4f6c-d104768a1214` | write | commands |
 | `19b10003-e8f2-537e-4f6c-d104768a1214` | notify | CO2 packets |
 | `19b10004-e8f2-537e-4f6c-d104768a1214` | read/write | config TLV |
-| `19b10005-e8f2-537e-4f6c-d104768a1214` | notify | diagnostics (0x03, 1 Hz), live-sensor (0x04, 5 Hz) and raw-audio (0x05, ~21 Hz) packets |
+| `19b10005-e8f2-537e-4f6c-d104768a1214` | notify | diagnostics (0x03, 1 Hz), live-sensor (0x04, 5 Hz), raw-audio (0x05, ~21 Hz) and raw-magnetometer (0x06, ~3 Hz while calibrating) packets |
 
 ## Scales
 
 - Quaternion: `int16 = round(float * 16384)` (Q14), saturating; `value / 16384` on decode.
 - Accel: raw MPU-9250 counts (±4 g, 8192 LSB/g), `int16` passthrough (no scaling).
+- Gyro: never on the wire. Its full scale is configurable (TLV 0x06) precisely because
+  no decoder depends on it.
+- Magnetometer (MagChunk only): `int16` in 0.1 µT, saturating.
+- Gyro bias (DiagPacket): `int16` in 0.01 °/s.
 - Non-finite quaternion input is encoded as identity (`W=16384`) with `quatValid` cleared.
 
 ## Packet type ids
 
 `0x01` ImuSample, `0x02` Co2Sample, `0x03` Diagnostics, `0x04` Sensors, `0x05`
-AudioChunk. The diag characteristic carries 0x03, 0x04 and 0x05; receivers must
-dispatch on the type byte.
+AudioChunk, `0x06` MagChunk. The diag characteristic carries 0x03, 0x04, 0x05 and
+0x06; receivers must dispatch on the type byte.
 
 ## ImuPacket (23 bytes)
 
@@ -66,7 +70,7 @@ reading when `co2Enabled=1`, or the constant **600** when `co2Enabled=0` — the
 legacy firmware's `CO2_NORMAL_VALUE`, kept so a disabled sensor still feeds the
 site's Pd patch a plausible baseline. The fallback is never flagged `valid`.
 
-## DiagPacket (23 bytes)
+## DiagPacket (32 bytes)
 
 | Offset | Size | Type | Field |
 |---|---|---|---|
@@ -82,8 +86,45 @@ site's Pd patch a plausible baseline. The fallback is never flagged `valid`.
 | 18 | 2 | u16 | freeHeapKb |
 | 20 | 2 | u16 | minFreeHeapKb |
 | 22 | 1 | u8 | flags |
+| 23 | 1 | u8 | ahrsFlags |
+| 24 | 1 | u8 | accelErrDeg (0–90, saturating) |
+| 25 | 1 | u8 | magErrDeg (0–90, saturating) |
+| 26 | 2 | i16 | gyroBiasX100[0] |
+| 28 | 2 | i16 | gyroBiasX100[1] |
+| 30 | 2 | i16 | gyroBiasX100[2] |
 
 Flags: bit0 `imuOk`, bit1 `audioOk`, bit2 `co2Ok`.
+
+`ahrsFlags` exposes the IMU pipeline's live state, so a bench run can tell a feature
+that is working from one that never triggered: bit0 `startup` (gain still ramping),
+bit1 `overrange` (gyro range exceeded, filter restarted), bit2 `accelIgnored`
+(acceleration rejection acting now), bit3 `magIgnored` (magnetic rejection acting now),
+bit4 `biasAtRest`, bit5 `biasAdapting`, bit6 `magCalibrated` (a hard/soft-iron record is
+loaded), bit7 `magCapture` (raw magnetometer streaming).
+
+The packet grew from 23 to 32 bytes in firmware v7; the protocol version byte stays `1`
+because the first 23 bytes are unchanged and every field is append-only. A decoder that
+checks `length == 23` must be updated (the config-app was).
+
+## MagChunkPacket (106 bytes, type 0x06, ~3 Hz while calibrating, diag characteristic)
+
+RAW (uncalibrated) magnetometer samples, streamed only between commands `0x15` and
+`0x16`. The hard/soft-iron fit runs in the config-app: the ESP32 would need hundreds of
+samples in RAM plus a least-squares solve, for no better result.
+
+| Offset | Size | Type | Field |
+|---|---|---|---|
+| 0 | 1 | u8 | version (1) |
+| 1 | 1 | u8 | type (0x06) |
+| 2 | 2 | u16 | seq |
+| 4 | 4 | u32 | timestampMs |
+| 8 | 1 | u8 | count (0–16) |
+| 9 | 1 | u8 | flags |
+| 10 | 96 | i16[48] | samples: x,y,z interleaved, 0.1 µT per LSB |
+
+Flags: bit0 `calibrated` (set only if the stream ever carries corrected values; the
+calibration capture always clears it). Samples beyond `count` are zero. Values are
+already remapped to the gyro/accel chip frame (AK8963 X↔Y swapped, Z inverted).
 
 ## SensorsPacket (23 bytes, type 0x04, 5 Hz, diag characteristic)
 
@@ -156,6 +197,8 @@ Requires MTU >= 211. Sent only while the diag characteristic has a subscriber.
 | `0x12` | factory reset |
 | `0x13` | reboot |
 | `0x14` | mounting calibration |
+| `0x15` | start raw magnetometer capture (streams 0x06 packets; auto-stops after 180 s) |
+| `0x16` | stop raw magnetometer capture |
 | `0x20` + ASCII PIN | unlock (PIN bytes follow the opcode) |
 
 Unlock is per connection and rate-limited: after 5 consecutive failed attempts the
@@ -182,6 +225,17 @@ TLV register and are persisted under their own NVS keys.
 | 0x02 | u8 | 50 | imuNotifyHz (10–200). Also sets the MPU-9250 sample-rate divisor (1 kHz base), applied live; the notify throttle paces the exact rate |
 | 0x03 | u8 | 0 | slerpAmount 0–100 (0=off) |
 | 0x04 | u16 | 0 | accelLpAlphaX1000 — EMA on published accel counts (0=off/raw) |
+| 0x05 | u8 | 0 | imuDlpfMode — MPU-9250 anti-alias filter. 0 = auto (widest DLPF below the output Nyquist: 50 Hz → 20 Hz), 1..7 force DLPF_CFG (1=184, 2=92, 3=41, 4=20, 5=10, 6=5, 7=3600 Hz) |
+| 0x06 | u8 | 2 | gyroFsSel — gyro full scale: 0=±250, 1=±500, 2=±1000, 3=±2000 dps (131/65.5/32.8/16.4 LSB/dps) |
+| 0x07 | u16 | 50 | fusionGainX100 — AHRS feedback gain ×100 (0–500); 0 = gyroscope only, which also disables the rejection features |
+| 0x08 | u8 | 10 | accelRejectionDeg — inclination disagreement above which the accelerometer is ignored (0–90; 0=off) |
+| 0x09 | u8 | 10 | magRejectionDeg — heading disagreement above which the magnetometer is ignored (0–90; 0=off) |
+| 0x0A | u8 | 5 | rejectionTimeoutS — recovery trigger timeout (0–60; 0 disables BOTH rejections) |
+| 0x0B | u16 | 200 | biasRestThDpsX100 — rest detected when the rate deviates from its own low-passed value by less than this (1–2000) |
+| 0x0C | u16 | 1000 | biasMaxDpsX100 — plausibility bound and clip for the gyro offset (1–5000) |
+| 0x0D | u8 | 4 | biasTauS — bias estimate time constant at rest, seconds (1–60) |
+| 0x0E | u8 | 0 | quatSmoothMode — 0=off, 1=fixed slerp (uses 0x03), 2=1-euro filter (uses 0x0F/0x1C) |
+| 0x0F | u16 | 100 | oneEuroFcMinX100 — 1-euro cut-off at rest, Hz ×100 (1–5000) |
 | 0x10 | u8 | 1 | audioEnabled |
 | 0x11 | u16 | 250 | audioFastAlphaX1000 |
 | 0x12 | u16 | 995 | audioSlowAlphaX1000 |
@@ -194,6 +248,9 @@ TLV register and are persisted under their own NVS keys.
 | 0x19 | u16 | 200 | audioLpHz (1–7000; must stay > audioHpHz — validated on the final state) |
 | 0x1A | u16 | 500 | audioLpQX100 (10–2000) |
 | 0x1B | u16 | 300 | potEmaAlphaX1000 — potentiometer EMA (300 = legacy 0.3) |
+| 0x1C | u16 | 20 | oneEuroBetaX1000 — 1-euro cut-off slope, Hz per dps ×1000 (0–10000) |
+| 0x1D | u8 | 0 | accelHampelKX10 — Hampel spike filter on the published accel, k ×10 (0=off, ≤100) |
+| 0x1E | i16[12] | identity | magCal — ONE 24-byte record: hard iron x/y/z in 0.1 µT, then the soft-iron matrix row-major in 1/4096. Default = `0,0,0` + `4096,0,0, 0,4096,0, 0,0,4096` |
 | 0x20 | u8 | 1 | co2Enabled |
 | 0x22 | u16 | 5000 | co2StaleTimeoutMs |
 | 0x23 | u16 | 2100 | virtualPeakPpm |
@@ -207,6 +264,13 @@ TLV register and are persisted under their own NVS keys.
 | 0x40 | char[≤16] | "Globo_1" | bleName |
 | 0x41 | char[4] | "1234" | pin (write-only: never serialized/readable) |
 | 0x50 | u8 | 0 | serialLogEnabled — USB serial logging master switch (default OFF: log formatting steals CPU) |
+
+The magnetometer calibration (0x1E) is the only multi-value register: writes must be
+exactly 24 bytes, and a record whose soft-iron **diagonal** contains a zero is rejected
+(it would silently zero the magnetometer and make Quat9 unusable).
+
+A full config read is now ~190 bytes, so a central that cannot do a long attribute read
+will truncate it; Web Bluetooth and NimBLE handle this transparently.
 
 The two LED pins (0x30, 0x31) are additionally validated **as a set**: a write
 whose resulting configuration puts both LED functions on the same GPIO is rejected
@@ -268,8 +332,17 @@ potRaw=2048, flags=0b111
 ```
 
 DiagPacket: seq=1, uptimeS=0x00010203, imuHzX10=500, notifyHzX10=500, fifoOverflows=1,
-i2sErrors=2, uartFrameErrors=3, freeHeapKb=200, minFreeHeapKb=150, flags=0b111
+i2sErrors=2, uartFrameErrors=3, freeHeapKb=200, minFreeHeapKb=150, flags=0b111,
+ahrsFlags=0x11 (startup+biasAtRest), accelErrDeg=3, magErrDeg=12,
+gyroBiasX100=(150,-75,0)
 
 ```
-01 03 01 00 03 02 01 00 F4 01 F4 01 01 00 02 00 03 00 C8 00 96 00 07
+01 03 01 00 03 02 01 00 F4 01 F4 01 01 00 02 00 03 00 C8 00 96 00 07 11 03 0C 96 00 B5 FF 00 00
+```
+
+MagChunkPacket: seq=9, timestampMs=0x01020304, count=2, flags=0, samples=(10,-20,30) and
+(10.1,-20.1,30.1) µT (the remaining 84 bytes are zero)
+
+```
+01 06 09 00 04 03 02 01 02 00 64 00 38 FF 2C 01 65 00 37 FF 2D 01 …00
 ```

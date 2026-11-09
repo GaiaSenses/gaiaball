@@ -1,6 +1,8 @@
 #pragma once
 #include <stdint.h>
 
+#include "MagCalibration.h"
+
 // Runtime configuration. Defaults are the legacy firmware values.
 // Wire format: see TlvCodec.h and firmware/docs/protocol.md.
 namespace gaia {
@@ -11,11 +13,48 @@ struct GaiaConfig {
   // the 4-byte-aligned array adds no padding.
   float mountQuat[4] = {1.0f, 0.0f, 0.0f, 0.0f};
 
+  // Magnetometer hard/soft-iron calibration (TLV 0x1E, one 24-byte record). Fixed
+  // point: hard iron in 0.1 uT, soft iron in 1/4096. Defaults = no calibration.
+  // Kept next to mountQuat so the int16 arrays stay naturally aligned.
+  int16_t magHardIron[3] = {0, 0, 0};
+  int16_t magSoftIron[9] = {kMagSoftIronOne, 0, 0, 0, kMagSoftIronOne, 0, 0, 0,
+                            kMagSoftIronOne};
+
   uint8_t orientationMode = 0;  // 0=Quat6 relative, 1=Quat9
   // Target output rate. Drives BOTH the notify throttle and the MPU-9250 sample
   // rate (SMPLRT_DIV picked so the chip samples at or just above this rate).
   uint8_t imuNotifyHz = 50;  // 10..200
-  uint8_t slerpAmount = 0;   // 0..100, 0=off
+  uint8_t slerpAmount = 0;   // 0..100, 0=off (used when quatSmoothMode == 1)
+
+  // --- IMU front-end -------------------------------------------------------
+  // Anti-alias filter of the MPU-9250. 0 = auto: the driver picks the widest DLPF
+  // whose cut-off still sits below 40 % of the output rate, so content that the
+  // SMPLRT_DIV decimation would fold back into the band is removed first.
+  // 1..7 force DLPF_CFG (1=184, 2=92, 3=41, 4=20, 5=10, 6=5, 7=3600 Hz).
+  uint8_t imuDlpfMode = 0;
+  // Gyroscope full scale: 0=+-250, 1=+-500, 2=+-1000, 3=+-2000 dps. Smaller is finer
+  // (0.0076 / 0.0153 / 0.0305 / 0.061 dps per LSB) but clips sooner; a spun ball
+  // easily passes 500 dps, so +-1000 is the default. The gyroscope is not on the
+  // wire, so this choice is invisible to clients.
+  uint8_t gyroFsSel = 2;
+
+  // --- fusion (revised Madgwick / x-io Fusion, logic/Ahrs.h) ---------------
+  uint16_t fusionGainX100 = 50;      // 0..500 -> gain 0.00..5.00 (0.50 default)
+  uint8_t accelRejectionDeg = 10;    // 0 = off
+  uint8_t magRejectionDeg = 10;      // 0 = off
+  uint8_t rejectionTimeoutS = 5;     // 0 = disables both rejection features
+
+  // --- gyroscope bias tracker (logic/GyroBias.h) ---------------------------
+  uint16_t biasRestThDpsX100 = 200;  // rest = deviation below 2.00 dps
+  uint16_t biasMaxDpsX100 = 1000;    // plausibility bound / clip: 10.00 dps
+  uint8_t biasTauS = 4;              // estimate time constant at rest
+
+  // --- orientation output smoothing (logic/QuatSmoother.h) -----------------
+  uint8_t quatSmoothMode = 0;        // 0=off, 1=fixed slerp (legacy), 2=1-euro
+  uint16_t oneEuroFcMinX100 = 100;   // 1.00 Hz cut-off while still
+  uint16_t oneEuroBetaX1000 = 20;    // 0.020 Hz per dps of angular speed
+  // Hampel spike filter on the published accelerometer, k x 10. 0 = off.
+  uint8_t accelHampelKX10 = 0;
   // EMA low-pass on the published accelerometer counts. 0 = off (raw passthrough);
   // 1..1000 = alpha*1000 (smaller = smoother).
   uint16_t accelLpAlphaX1000 = 0;

@@ -33,6 +33,12 @@ DiagPacket Diagnostics::collect(uint16_t seq, uint16_t notifyHzX10, const ImuSer
   p.uartFrameErrors = clamp16(co2.errorCount());
   p.freeHeapKb = clamp16(esp_get_free_heap_size() / 1024);
   p.minFreeHeapKb = clamp16(esp_get_minimum_free_heap_size() / 1024);
+  // IMU pipeline state (v7): makes the rejection features and the bias tracker
+  // observable from the config-app instead of having to infer them.
+  p.ahrsFlags = imu.ahrsFlags();
+  p.accelErrDeg = imu.accelErrDeg();
+  p.magErrDeg = imu.magErrDeg();
+  imu.gyroBiasX100(p.gyroBiasX100);
   uint8_t f = 0;
   if (imu.imuOk()) f |= kDiagImuOk;
   if (audio.ok()) f |= kDiagAudioOk;

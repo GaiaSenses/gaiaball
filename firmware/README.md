@@ -1,9 +1,11 @@
 # Gaiaball v2 firmware
 
-ESP32 firmware for the Gaiaball: GY-91 (MPU-9250) orientation via on-chip Madgwick fusion, stereo
-INMP441 sound-peak detection, UART CO2 sensor with a sound-triggered virtual CO2 pulse,
-two status LEDs, and a NimBLE GATT server streaming binary packets to up to two
+ESP32 firmware for the Gaiaball: GY-91 (MPU-9250 + AK8963) orientation fused on the MCU,
+stereo INMP441 sound-peak detection, UART CO2 sensor with a sound-triggered virtual CO2
+pulse, two status LEDs, and a NimBLE GATT server streaming binary packets to up to two
 centrals.
+
+- Why each processing stage exists, per sensor: [Signal processing chains](#signal-processing-chains)
 
 - Wire protocol (UUIDs, packets, opcodes, config TLV): [`docs/protocol.md`](docs/protocol.md)
 - Tasks, cores, priorities, data flow: [`docs/architecture.md`](docs/architecture.md)
@@ -27,8 +29,8 @@ firmware/
 Toolchain versions are pinned: **ESP32 Arduino core 2.0.17** and **NimBLE-Arduino
 1.4.3**. NimBLE 2.x and core 3.x are not supported (different APIs). The IMU driver
 (GY-91 module: MPU-9250 + AK8963) is register-level code in `src/services/Mpu9250.*`
-— no external IMU library, no DMP; the Madgwick fusion runs on the ESP32
-(`src/logic/Fusion.*`, host-tested).
+— no external IMU library, no DMP; the fusion runs on the ESP32 (`src/logic/Ahrs.*`,
+host-tested).
 
 ### PlatformIO (recommended)
 
@@ -39,7 +41,7 @@ pio run -d firmware -e esp32dev                       # build
 pio run -d firmware -e esp32dev -t upload             # build + flash (auto-detects the port)
 pio run -d firmware -e esp32dev -t upload --upload-port /dev/ttyUSB0
 pio device monitor -d firmware -e esp32dev            # serial log, 115200 baud
-pio test -d firmware -e native                        # host unit tests (81 cases)
+pio test -d firmware -e native                        # host unit tests (120 cases)
 ```
 
 `platformio.ini` pins `espressif32@6.12.0` (Arduino core 2.0.17) and
@@ -66,12 +68,12 @@ arduino-cli compile --fqbn esp32:esp32:esp32 firmware/Gaiaball
 arduino-cli upload  --fqbn esp32:esp32:esp32 -p /dev/ttyUSB0 firmware/Gaiaball
 ```
 
-### Resource usage (build of 2026-11-07)
+### Resource usage (build of 2026-11-08)
 
 | Toolchain | Flash (of 1 310 720 B) | Static RAM (of 327 680 B) |
 |---|---|---|
-| PlatformIO `esp32dev` | 805 693 B (61.5 %) | 52 116 B (15.9 %) |
-| arduino-cli `esp32:esp32:esp32` | 795 437 B (60 %) | 52 012 B (15 %) |
+| PlatformIO `esp32dev` | 811 969 B (61.9 %) | 52 684 B (16.1 %) |
+| arduino-cli `esp32:esp32:esp32` | 801 621 B (61 %) | 52 580 B (16 %) |
 
 Known build warnings (pre-existing, harmless, from the legacy IDF drivers kept on
 purpose for core 2.0.17): `'I2S_COMM_FORMAT_I2S' is deprecated` (AudioService) and
@@ -119,17 +121,25 @@ config write that lands both LED functions on the same GPIO is rejected atomical
   at 1 Hz, live sensor levels (SensorsPacket) at 5 Hz and raw decimated audio (2 kHz
   int16, for the config-app's frontend FFT) at ~21 pkt/s on the diag characteristic.
   Notifications are only sent to subscribers.
-- Per-sensor filters, all configurable from the config-app and persisted: quaternion
-  slerp, accel EMA, breath band-pass on the mics (HP 10 Hz / LP 200 Hz, Q 5.00 default
-  — tune against the live spectrum), potentiometer EMA, CO2 EMA.
+- Per-sensor filters, all configurable from the config-app and persisted: the IMU
+  anti-alias filter and gyro range, the AHRS gain and its acceleration/magnetic
+  rejection, the gyro-bias tracker, orientation smoothing (fixed slerp or the 1-euro
+  filter), the accel spike filter and EMA, the breath band-pass on the mics (HP 10 Hz /
+  LP 200 Hz, Q 5.00 default — tune against the live spectrum), the potentiometer EMA and
+  the CO2 EMA. See [Signal processing chains](#signal-processing-chains).
 - Wi-Fi is explicitly stopped at boot (BLE/Wi-Fi coexistence would wreck notify pacing).
 - USB serial logging is OFF by default (TLV `0x50`); the boot sequence (including the
   I2C identity probe below) always prints, the switch takes over afterwards.
 - The IMU is the **GY-91 module (MPU-9250 + AK8963 mag + BMP280 barometer)**. The
-  driver is register-level (`src/services/Mpu9250.*`), fusion is Madgwick on the ESP32
-  with a gyro-bias tracker that adapts only at rest. The BMP280 (I2C 0x76) is present
-  on the module but not read by this firmware. Builds for the older ICM-20948
-  prototype exist in the git history (before the GY-91 port).
+  driver is register-level (`src/services/Mpu9250.*`); the fusion is the revised
+  Madgwick filter (`src/logic/Ahrs.*`) with acceleration and magnetic rejection, fed by
+  a gyro-bias tracker whose rest detector works at any zero-rate offset
+  (`src/logic/GyroBias.*`). The BMP280 (I2C 0x76) is present on the module but not read
+  by this firmware. Builds for the older ICM-20948 prototype exist in the git history
+  (before the GY-91 port).
+- The magnetometer needs a one-off hard/soft-iron calibration before Quat9 is worth
+  using: command `0x15` streams raw samples, the config-app fits the ellipsoid and
+  writes the result back as TLV `0x1E`.
 - Sound LED (GPIO2): 100 ms flash per detected sound peak, held on while the virtual CO2
   pulse is active. Nothing else drives it.
 - CO2 LED (GPIO4): on while the real (non-stale) reading exceeds `co2AlertPpm` (default 2000).
@@ -140,6 +150,119 @@ config write that lands both LED functions on the same GPIO is rejected atomical
   on the header after any byte loss.
 - A sound peak triggers the virtual CO2 pulse: after `virtualDelayMs` (1 s) the reported
   ppm becomes `virtualPeakPpm` (2100) for `virtualHoldMs` (17 s).
+
+## Signal processing chains
+
+Every stage below exists because a raw sensor reading, sent straight to the wire, is
+wrong in a specific and predictable way. Each diagram is followed by what the stage
+defends against and what it buys; the order of the stages is itself part of the design
+and is noted where it matters.
+
+### Orientation (MPU-9250 + AK8963)
+
+```
+         ┌──────────── MPU-9250 / AK8963, polled over I2C at rate/4 ────────────┐
+         │  [1] on-chip DLPF — cut-off matched to the configured output rate    │
+         └───────┬────────────────────┬───────────────────────┬─────────────────┘
+            gyro (dps)           accel (g)                mag (uT)
+                 │                    │                        │
+      [2] gyro bias tracker          │             [3] hard/soft-iron calibration
+          rest-gated EMA             │                 m_c = S (m_u - h)
+                 │                    │                        │
+                 └──────────┬─────────┴────────────┬───────────┘
+                            │                      │
+                 [4] AHRS fusion — revised Madgwick complementary filter
+                     · acceleration rejection   · magnetic rejection
+                     · startup gain ramp        · overrange recovery
+                            │
+                 [5] frame: conj(qMount) then conj(qZero)
+                            │
+                 [6] output smoothing — off | fixed slerp | 1-euro
+                            │
+                     ImuPacket.quat ──────────────────────────────> BLE (notify)
+
+   Parallel path. The published accelerometer is a signal for the patch; the fusion
+   always reads the UNFILTERED accelerometer, so filtering here cannot affect orientation:
+
+     accel counts ──> [7] Hampel spike filter ──> [8] EMA ──> ImuPacket.acc
+```
+
+| # | Stage | What goes wrong without it | What it buys |
+|---|---|---|---|
+| 1 | On-chip DLPF, auto-matched to the rate (`imuDlpfMode`) | The internal rate is 1 kHz and `SMPLRT_DIV` only **decimates** it — no averaging. Anything the DLPF passes above half the output rate folds back into the band and is then indistinguishable from real motion. | Vibration and tapping stop appearing as slow tremble. At 50 Hz the auto mode picks 20 Hz instead of the old fixed 41 Hz, which was above Nyquist. |
+| — | Gyro full scale (`gyroFsSel`) | ±2000 dps quantises to 0.061 °/s per bit, and that quantisation is integrated straight into orientation drift. | ±1000 dps halves the noise floor while still leaving ~2.8 rev/s of headroom for a spun ball; the gyro never reaches the wire, so no decoder cares. |
+| 2 | Gyro bias tracker (`src/logic/GyroBias.*`) | The zero-rate offset is integrated: 1 °/s is 60° of heading per minute, and in Quat6 nothing pulls the heading back. The MPU-9250 is specified at ±5 °/s. | Rest is detected from the **deviation** of the rate around its own mean (offset-independent), gated by a plausibility bound and the accelerometer. The previous design tested the *corrected* rate against 2 °/s, so a unit whose real offset exceeded that never looked still and never got corrected — the worse the part, the less the correction worked. |
+| 3 | Hard/soft-iron calibration (`src/logic/MagCalibration.h`) | The speaker magnet, battery and board currents add a constant field (tens of µT against an earth field of 25–65 µT) and surrounding ferrous material stretches the field sphere into an ellipsoid. | Heading errors of tens of degrees disappear. Without it, 9-axis can be **worse** than magnetometer-free fusion. The fit itself runs in the config-app (command `0x15` streams raw samples). |
+| 4 | AHRS fusion (`src/logic/Ahrs.*`) | Gyro-only integration drifts without bound; accelerometer-only tilt is unusable during motion; magnetometer-only heading is unusable near metal. | A complementary filter whose corner frequency is the `gain`. The rejection features make it survive the two things a *ball* does constantly: being accelerated (the accelerometer stops pointing down) and being carried past metal. Prolonged disagreement triggers recovery, so a long disturbance cannot strand the filter on the gyroscope. The startup ramp converges from an unknown orientation in about a second. |
+| 5 | Mounting quaternion, then zero | The chip sits at a small angle to the board, the board at an angle to the ball, and the ball rests however it rests. All three appear as a permanent tilt. | `0x14` absorbs the whole chain into `qMount` (persisted in NVS); `0x10` sets the session datum. Roll/pitch survive a reboot; in Quat6 the heading datum is arbitrary by construction, which is what `0x10` is for. |
+| 6 | Output smoothing (`src/logic/QuatSmoother.*`) | The fused quaternion still carries the gyro noise floor: a fine tremble in a 3D view, a dithering control signal in a sound patch. | The legacy fixed slerp costs ~190 ms of lag at its heaviest. The 1-euro filter moves its cut-off with the angular speed — hard filtering while the ball is still, almost none while it moves — so the tremble goes without the rubbery response. |
+| 7 | Hampel spike filter (`Hampel5`, `src/logic/Filters.h`) | A dropped or corrupted I2C read is one wild sample. An EMA does not remove it; it smears it across the following samples. | The newest sample is compared with the median of the last five and replaced only if it deviates by more than k·MAD. **Zero added latency** (trailing window), and a genuine step becomes the new normal within three samples. It runs **before** the EMA on purpose: after smoothing, a spike is no longer detectable. |
+| 8 | Accel EMA (`accelLpAlphaX1000`) | ADC and mechanical noise make the published acceleration jittery. | A one-pole low-pass with a known time constant (α = 0.2 at 50 Hz ≈ 90 ms, f_c ≈ 1.8 Hz). Off by default: the site pipeline filters again, and filtering twice only doubles the latency. |
+
+### Sound (2× INMP441)
+
+```
+   2x INMP441 ──> I2S, 32-bit stereo @ 16 kHz
+        │
+   [1] >>8 to 24-bit samples, DC removal
+        │
+        ├──> [2] breath band-pass: HP biquad then LP biquad
+        │          │
+        │     [3] block RMS (per channel)
+        │          │
+        │     [4] adaptive peak detector: fast EMA vs slow EMA + threshold,
+        │          hysteresis and debounce
+        │          │
+        │          └──> sound event ──> LED flash + virtual CO2 pulse
+        │
+        └──> [5] decimate 16 kHz -> 2 kHz (average of 8) ──> AudioChunkPacket
+                   (the FFT runs in the browser, not here)
+```
+
+| # | Stage | What goes wrong without it | What it buys |
+|---|---|---|---|
+| 1 | 24-bit extraction + DC removal | The INMP441 pushes 24-bit data inside 32-bit slots and carries a DC offset that would bias every RMS value. | A zero-mean signal, so RMS measures sound and not the offset. |
+| 2 | Breath band-pass (`audioBpfEnabled`, HP/LP + Q) | Handling noise and table thumps live below the breath band; speech and room tone above it. Both fire the detector. | Only the breath band reaches the detector. The cut-offs are tuned against the live spectrum in the config-app, which is why the raw stream is also published. |
+| 3 | Block RMS | Instantaneous amplitude swings sample to sample; a threshold on it would chatter. | Energy over a block: one stable number per block to compare against a threshold. |
+| 4 | Adaptive peak detector (`src/logic/PeakDetector.*`) | A fixed threshold drifts out of calibration with the room: too high in a quiet hall, constantly triggered in a noisy one. | The fast envelope is compared against a slow envelope (the room's own noise floor) plus the threshold, so the detector adapts to the room. Hysteresis and debounce turn one long breath into exactly one event. |
+| 5 | Decimation to 2 kHz | Streaming 16 kHz audio over BLE would eat the notify budget the orientation stream needs. | ~4.4 kB/s instead of ~32 kB/s, which still covers the breath band with room to spare. Average-of-8 is the anti-alias filter for that decimation. |
+
+### CO2 (SC8-CO2-5K)
+
+```
+   SC8-CO2-5K ──> UART1 9600 8N1, listen-only (never transmit: a query mutes the sensor)
+        │
+   [1] frame sync on 0x42 0x4D + checksum
+        │
+   [2] stale timeout (co2StaleTimeoutMs)
+        │
+   [3] EMA over ACCEPTED readings (co2EmaAlphaX1000)
+        │
+   [4] virtual pulse override (sound-triggered)
+        │
+   Co2Packet ──> BLE
+```
+
+| # | Stage | What goes wrong without it | What it buys |
+|---|---|---|---|
+| 1 | Frame sync + checksum | A byte lost on the UART shifts every following field; the ppm value becomes nonsense that still looks plausible. | Resync on the header after any loss, and a corrupted frame is dropped instead of reported. |
+| 2 | Stale timeout | A sensor that stopped answering would keep a stale number on screen for ever. | The reading is flagged `stale`, so the UI and the patch can tell "old" from "low". |
+| 3 | EMA over accepted readings | The sensor's own quantisation steps show up as jumps in a value people read as a slow trend. | A smooth trend. Off by default (1000), because the legacy behaviour is the reference for the patch. |
+| 4 | Virtual pulse | The real sensor's T90 is minutes: a breath would reach the composition long after the person stopped blowing. | A plausible ppm curve arrives ~1 s after the breath, which is what makes the instrument playable. The real reading returns when the pulse ends. |
+
+### Threshold potentiometer
+
+```
+   RV1 ──> ADC1 ch6, 11 dB attenuation, read at 10 Hz
+        │
+   [1] EMA (potEmaAlphaX1000)
+        │
+   threshold for the sound peak detector (when potControlsThreshold = 1)
+```
+
+The ESP32's SAR ADC is noisy by a few LSB, and that noise would modulate the detector
+threshold continuously. One EMA (default α = 0.3, the legacy value) is enough: the knob
+is turned by hand, so there is nothing fast to preserve.
 
 ## PIN and commands
 
@@ -156,6 +279,8 @@ that connection's unlock for 30 s. Unlock lasts until disconnect.
 | `0x12` | factory reset (defaults, incl. PIN `1234` and mounting) + reboot | yes |
 | `0x13` | reboot | yes |
 | `0x14` | mounting calibration (captured and saved to NVS automatically) | yes |
+| `0x15` | start raw magnetometer capture (streams MagChunk packets; auto-stops after 180 s) | yes |
+| `0x16` | stop raw magnetometer capture | yes |
 | `0x20` + PIN | unlock this connection | — |
 
 Locked or unknown commands are ignored and logged on the serial console.
@@ -181,8 +306,16 @@ persisted only by command `0x11`. Full table with types: [`docs/protocol.md`](do
 |---|---|---|
 | `0x01` | orientationMode (0 Quat6 relative, 1 Quat9) | 0 |
 | `0x02` | imuNotifyHz (10–200; drives the MPU-9250 sample rate live) | 50 |
-| `0x03` | slerpAmount (0–100, 0 off) | 0 |
+| `0x03` | slerpAmount (0–100, 0 off; used when quatSmoothMode = 1) | 0 |
 | `0x04` | accelLpAlphaX1000 (0 off) | 0 |
+| `0x05` | imuDlpfMode (0 = auto from the rate; 1–7 force DLPF_CFG) | 0 |
+| `0x06` | gyroFsSel (0 = ±250, 1 = ±500, 2 = ±1000, 3 = ±2000 dps) | 2 |
+| `0x07` | fusionGainX100 (0–500) | 50 |
+| `0x08`–`0x0A` | accelRejectionDeg, magRejectionDeg, rejectionTimeoutS (0 = off) | 10, 10, 5 |
+| `0x0B`–`0x0D` | biasRestThDpsX100, biasMaxDpsX100, biasTauS | 200, 1000, 4 |
+| `0x0E`–`0x0F` | quatSmoothMode (0 off / 1 slerp / 2 one-euro), oneEuroFcMinX100 | 0, 100 |
+| `0x1C`–`0x1D` | oneEuroBetaX1000, accelHampelKX10 (0 off) | 20, 0 |
+| `0x1E` | magCal — 24-byte hard/soft-iron record (see protocol.md) | identity |
 | `0x10`–`0x15` | audio: enabled, fast/slow alpha ×1000, debounceMs, potControlsThreshold, thresholdFixed | 1, 250, 995, 300, 1, 100000 |
 | `0x16`–`0x1A` | breath band-pass: enabled, HP Hz, HP Q×100, LP Hz, LP Q×100 (LP > HP enforced) | 1, 10, 500, 200, 500 |
 | `0x1B` | potEmaAlphaX1000 | 300 |

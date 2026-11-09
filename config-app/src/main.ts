@@ -8,6 +8,7 @@ import { GaiaballClient, type StatusDetail } from './ble/gaiaball-client.ts';
 import { mountConnectionPanel } from './panels/connection-panel.ts';
 import { StreamStats } from './metrics/stream-stats.ts';
 import { mountConfigPanel } from './panels/config-panel.ts';
+import { mountMagCalPanel } from './panels/magcal-panel.ts';
 import { mountMetricsPanel } from './panels/metrics-panel.ts';
 import { mountSensorsPanel } from './panels/sensors-panel.ts';
 import { decorateInfo } from './panels/info.ts';
@@ -45,6 +46,7 @@ app.innerHTML = `
     <aside id="panels">
       <section id="panel-conexao"></section>
       <section id="panel-config"></section>
+      <section id="panel-magcal"></section>
       <section id="panel-metricas"></section>
     </aside>
     <section id="panel-sensores"></section>
@@ -84,6 +86,7 @@ renderThemeBtn();
 
 mountConnectionPanel(app.querySelector<HTMLElement>('#panel-conexao')!, client);
 mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client);
+mountMagCalPanel(app.querySelector<HTMLElement>('#panel-magcal')!, client);
 mountMetricsPanel(app.querySelector<HTMLElement>('#panel-metricas')!, client, stats);
 mountSensorsPanel(app.querySelector<HTMLElement>('#panel-sensores')!, client);
 

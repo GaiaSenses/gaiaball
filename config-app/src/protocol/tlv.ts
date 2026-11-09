@@ -6,6 +6,20 @@ export const TLV = {
   imuNotifyHz: 0x02, // 10..200; also drives the MPU-9250 sample rate
   slerpAmount: 0x03,
   accelLpAlphaX1000: 0x04, // 0 = off (raw)
+  imuDlpfMode: 0x05, // 0 = auto (anti-alias picked from the rate)
+  gyroFsSel: 0x06, // 0=+-250, 1=+-500, 2=+-1000, 3=+-2000 dps
+  fusionGainX100: 0x07,
+  accelRejectionDeg: 0x08, // 0 = off
+  magRejectionDeg: 0x09, // 0 = off
+  rejectionTimeoutS: 0x0a, // 0 = disables both rejections
+  biasRestThDpsX100: 0x0b,
+  biasMaxDpsX100: 0x0c,
+  biasTauS: 0x0d,
+  quatSmoothMode: 0x0e, // 0=off, 1=slerp fixo, 2=1 euro
+  oneEuroFcMinX100: 0x0f,
+  oneEuroBetaX1000: 0x1c,
+  accelHampelKX10: 0x1d, // 0 = off
+  magCal: 0x1e, // 24 bytes: 3x int16 hard iron (0.1 uT) + 9x int16 soft iron (1/4096)
   audioEnabled: 0x10,
   audioFastAlphaX1000: 0x11,
   audioSlowAlphaX1000: 0x12,
@@ -43,10 +57,13 @@ export const VALID_OUTPUT_GPIOS: readonly number[] = [
 
 export interface TlvWrite {
   id: number;
-  value: number | string;
+  value: number | string | Uint8Array;
 }
 
-type Spec = { kind: 'u8' | 'u16' | 'u32' } | { kind: 'str'; min: number; max: number };
+type Spec =
+  | { kind: 'u8' | 'u16' | 'u32' }
+  | { kind: 'str'; min: number; max: number }
+  | { kind: 'bytes'; len: number };
 
 const U8: Spec = { kind: 'u8' };
 const U16: Spec = { kind: 'u16' };
@@ -54,6 +71,20 @@ const U32: Spec = { kind: 'u32' };
 
 const SPECS: Record<number, Spec> = {
   [TLV.orientationMode]: U8,
+  [TLV.imuDlpfMode]: U8,
+  [TLV.gyroFsSel]: U8,
+  [TLV.fusionGainX100]: U16,
+  [TLV.accelRejectionDeg]: U8,
+  [TLV.magRejectionDeg]: U8,
+  [TLV.rejectionTimeoutS]: U8,
+  [TLV.biasRestThDpsX100]: U16,
+  [TLV.biasMaxDpsX100]: U16,
+  [TLV.biasTauS]: U8,
+  [TLV.quatSmoothMode]: U8,
+  [TLV.oneEuroFcMinX100]: U16,
+  [TLV.oneEuroBetaX1000]: U16,
+  [TLV.accelHampelKX10]: U8,
+  [TLV.magCal]: { kind: 'bytes', len: 24 },
   [TLV.imuNotifyHz]: U8,
   [TLV.slerpAmount]: U8,
   [TLV.accelLpAlphaX1000]: U16,
@@ -92,7 +123,12 @@ export function encodeTlv(regs: TlvWrite[]): Uint8Array {
   for (const { id, value } of regs) {
     const spec = SPECS[id];
     if (!spec) throw new RangeError(`unknown TLV id 0x${id.toString(16)}`);
-    if (spec.kind === 'str') {
+    if (spec.kind === 'bytes') {
+      if (!(value instanceof Uint8Array) || value.length !== spec.len) {
+        throw new RangeError(`TLV 0x${id.toString(16)} expects ${spec.len} bytes`);
+      }
+      parts.push(id, spec.len, ...value);
+    } else if (spec.kind === 'str') {
       if (typeof value !== 'string') throw new RangeError(`TLV 0x${id.toString(16)} expects a string`);
       const bytes = new TextEncoder().encode(value);
       if (bytes.length < spec.min || bytes.length > spec.max) {
@@ -130,5 +166,19 @@ export function buildCommand(opcode: number, arg?: Uint8Array): Uint8Array {
   const out = new Uint8Array(1 + (arg?.length ?? 0));
   out[0] = opcode;
   if (arg) out.set(arg, 1);
+  return out;
+}
+
+/**
+ * Builds the 24-byte magnetometer calibration record (TLV 0x1E) from the fixed-point
+ * arrays produced by magCalToFixed: hard iron x/y/z, then the soft-iron matrix
+ * row-major, all little-endian int16.
+ */
+export function encodeMagCalRecord(hard: Int16Array, soft: Int16Array): Uint8Array {
+  if (hard.length !== 3 || soft.length !== 9) throw new RangeError('magCal needs 3 + 9 values');
+  const out = new Uint8Array(24);
+  const dv = new DataView(out.buffer);
+  for (let i = 0; i < 3; i++) dv.setInt16(2 * i, hard[i], true);
+  for (let i = 0; i < 9; i++) dv.setInt16(6 + 2 * i, soft[i], true);
   return out;
 }

@@ -73,8 +73,12 @@ os critérios e onde olhar cada número.
 1. **Conectar** (painel Conexão) e escolher `Globo_1`.
 2. **Desbloquear** com o PIN `1234` (botão "Desbloquear"). O firmware não confirma o PIN:
    se escritas/comandos forem ignorados, o PIN está errado ou o bloqueio de 30 s está ativo.
-3. **Ler do dispositivo** (painel Configuração). O formulário deve vir com os padrões da
-   tabela de `firmware/README.md` (item 02).
+3. **Ler do dispositivo** (painel Configuração). O formulário já abre preenchido com os
+   padrões de fábrica; depois da leitura os valores devem continuar iguais aos da tabela
+   de `firmware/README.md` (item 02). O painel tem duas abas: **Básico** (14 parâmetros
+   de operação) e **Avançado** (25 de afinação da cadeia de sinais). A contagem na aba
+   Avançado acende quando algum parâmetro está fora do padrão — confira isso antes de
+   culpar o firmware por um comportamento estranho.
 4. Medir no painel **Métricas** (deixe a bola em movimento):
 
 | Critério | Onde olhar | Meta |
@@ -96,13 +100,41 @@ Se a taxa ficar abaixo do esperado, confira o campo **Taxa (Hz)** (faixa 10–60
    desbloqueio (item 06).
 2. Sobre uma **superfície plana**, gire a bola uma volta completa em cada eixo. No modelo 3D
    deve ser exatamente uma volta, no mesmo eixo e sentido (item 07).
-3. Se o movimento estiver tremido, ajuste **Suavização do quaternion (slerp)** no painel
-   Configuração e aplique: a vista 3D mostra o quaternion exatamente como chega da bola,
+3. Se o movimento estiver tremido, ajuste a suavização em Configuração › **Básico** ›
+   *Suavização da saída › Modo* (e, se escolher o filtro 1€, os dois parâmetros dele
+   ficam em **Avançado**) e aplique: a vista 3D mostra o quaternion exatamente como chega da bola,
    então o efeito do slerp — e o atraso que ele adiciona — aparece na própria vista.
    Lembre que o site também suaviza por conta própria (mediana + EMA); evite exagerar.
 4. Deriva (item 08): em modo **Quat6 (relativo)**, deixe a bola parada por 5 min e anote a
    deriva do yaw. Aproxime um ímã ou celular: em Quat6 nada deve mudar. Compare com
    **Quat9 (absoluto)**.
+
+## 4.1 Pipeline do IMU (firmware v7)
+
+Tudo aqui se observa em Métricas › Firmware, que agora publica o estado interno da fusão.
+
+| Item | Como verificar | Esperado |
+|---|---|---|
+| Bias do giro aprende | Deixe a bola parada sobre a mesa | Em ~1 s aparece **em repouso**, depois **aprendendo**; em ~15 s o valor de “Bias do giroscópio” estabiliza e a deriva de yaw em Quat6 cai |
+| Bias com offset grande | Compare o bias estimado com a leitura crua do giroscópio parado (log serial) | O firmware aprende o offset mesmo acima de 2 °/s — era exatamente o caso que a versão anterior nunca corrigia |
+| Rejeição de aceleração | Dê um tranco lateral na bola, mantendo-a nivelada | “Estado da fusão” mostra **accel ignorado** durante o tranco e o modelo 3D não tomba |
+| Recuperação | Mantenha a bola acelerada/inclinada por mais de 5 s | O selo **accel ignorado** desaparece (o firmware volta a confiar no sensor) |
+| Rejeição magnética (Quat9) | Aproxime um ímã do globo | “Estado da fusão” mostra **mag ignorado** e o rumo não gira atrás do ímã |
+| Saturação do giroscópio | Gire a bola o mais rápido que conseguir | Com faixa ±1000 °/s o selo **saturação** deve ser raro; se aparecer com frequência, suba para ±2000 |
+| Anti-serrilhamento | Em “Filtro anti-serrilhamento (DLPF)” deixe em automático e apoie a bola sobre algo que vibre | Menos tremor do que forçando 41 Hz a 50 Hz de taxa |
+| Filtro 1€ | Modo **filtro 1€**; compare com **slerp fixo** em 100 | Parada: ambos ficam quietos. Em movimento rápido: o 1€ acompanha, o slerp fixo “borracha” (~190 ms) |
+| Espícula da aceleração | Ligue o filtro de espícula (k 3,0) e observe o gráfico de aceleração | Picos isolados desaparecem sem atraso visível; movimento real passa intacto |
+
+## 4.2 Calibração do magnetômetro (painel Magnetômetro)
+
+1. Desbloqueie com o PIN e afaste a bola de metal, caixas de som e computadores.
+2. **Iniciar calibração** e gire devagar desenhando um 8 até os **8 setores** acenderem.
+3. Confira: campo entre 22 e 28 µT (Brasil) e resíduo **abaixo de 3 %**.
+4. **Gravar calibração na bola** (já persiste na NVS) — em Métricas a linha “Calibração
+   magnética” passa a **calibrado**.
+5. Em Quat9, gire a bola 360° sobre a mesa: o rumo deve voltar ao mesmo valor
+   (±5°). Antes da calibração esse erro chega a dezenas de graus.
+6. **Remover calibração** volta ao magnetômetro cru, para comparar.
 5. Para persistir ajustes, **Salvar no dispositivo** (`0x11`). "Aplicar" vale só até reiniciar.
 
 ## 5. CO₂: validar o SC8-CO2-5K

@@ -3,6 +3,7 @@ import {
   decodeAudioChunkPacket,
   decodeCo2Packet,
   decodeDiagPacket,
+  decodeMagChunkPacket,
   decodeImuPacket,
   decodeSensorsPacket,
 } from '../protocol/packets.ts';
@@ -96,6 +97,7 @@ export class GaiaballClient extends EventTarget {
       this.subscribe(diag, 'diag', decodeDiagPacket);
       this.subscribe(diag, 'sensors', decodeSensorsPacket);
       this.subscribe(diag, 'audio', decodeAudioChunkPacket);
+      this.subscribe(diag, 'magchunk', decodeMagChunkPacket);
       await imu.startNotifications();
       await co2.startNotifications();
       await diag.startNotifications();

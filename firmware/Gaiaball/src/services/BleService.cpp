@@ -23,7 +23,7 @@ constexpr const char *kDiagUuid = "19b10005-e8f2-537e-4f6c-d104768a1214";
 
 constexpr uint16_t kPreferredMtu = 247;
 constexpr uint16_t kNoHandle = 0xFFFF;  // == BLE_HS_CONN_HANDLE_NONE
-constexpr size_t kConfigReadBuf = 256;
+constexpr size_t kConfigReadBuf = 384;  // see ConfigStore kTlvBufCap
 // onSubscribe() subValue bit for notifications (NimBLE-Arduino 1.4.3 keeps its
 // NIMBLE_SUB_NOTIFY private to NimBLECharacteristic.cpp).
 constexpr uint16_t kSubNotify = 0x0001;
@@ -186,6 +186,7 @@ void BleService::notifyCo2(const Co2Packet &p) { notify(kIdxCo2, &p, sizeof(p));
 void BleService::notifyDiag(const DiagPacket &p) { notify(kIdxDiag, &p, sizeof(p)); }
 void BleService::notifySensors(const SensorsPacket &p) { notify(kIdxDiag, &p, sizeof(p)); }
 void BleService::notifyAudioChunk(const AudioChunkPacket &p) { notify(kIdxDiag, &p, sizeof(p)); }
+void BleService::notifyMagChunk(const MagChunkPacket &p) { notify(kIdxDiag, &p, sizeof(p)); }
 
 void BleService::notify(uint8_t idx, const void *data, size_t len) {
   NimBLECharacteristic *chr = notifyChars_[idx];

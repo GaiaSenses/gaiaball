@@ -17,8 +17,9 @@ constexpr const char *kKeyPin = "pin";
 constexpr const char *kKeyMount = "mount";
 constexpr const char *kKeyVer = "ver";
 constexpr const char *kTag = "cfg";
-// Worst-case tlvSerialize output is ~120 B (29 registers); headroom for new ids.
-constexpr size_t kTlvBufCap = 256;
+// Worst-case tlvSerialize output is ~190 B (43 registers, incl. the 24-byte
+// magnetometer calibration record); headroom for new ids.
+constexpr size_t kTlvBufCap = 384;
 Preferences g_prefs;
 
 // Scoped lock on the ConfigStore mutex; no-op when begin() never created it.

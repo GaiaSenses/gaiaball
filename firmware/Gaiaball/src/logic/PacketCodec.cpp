@@ -62,4 +62,20 @@ SensorsPacket makeSensorsPacket(uint16_t seq, uint32_t tMs, float rmsL, float rm
   return p;
 }
 
+MagChunkPacket makeMagChunkPacket(uint16_t seq, uint32_t tMs, const int16_t *samples,
+                                  uint8_t count, uint8_t flags) {
+  MagChunkPacket p{};
+  p.version = kProtocolVersion;
+  p.type = static_cast<uint8_t>(PacketType::MagChunk);
+  p.seq = seq;
+  p.timestampMs = tMs;
+  if (count > kMagChunkMaxSamples) count = kMagChunkMaxSamples;
+  p.count = count;
+  p.flags = flags;
+  if (samples != nullptr) {
+    for (int i = 0; i < 3 * count; ++i) p.samples[i] = samples[i];
+  }
+  return p;
+}
+
 }  // namespace gaia

@@ -14,4 +14,10 @@ ImuPacket makeImuPacket(uint16_t seq, uint32_t tUs, const float q[4], const int1
 SensorsPacket makeSensorsPacket(uint16_t seq, uint32_t tMs, float rmsL, float rmsR,
                                 float threshold, float potRaw, uint8_t flags);
 
+// Packs up to kMagChunkMaxSamples raw magnetometer triplets (0.1 uT per LSB, x/y/z
+// interleaved). `count` is clamped and the unused tail is zeroed, so a short chunk
+// never leaks the previous one's samples.
+MagChunkPacket makeMagChunkPacket(uint16_t seq, uint32_t tMs, const int16_t *samples,
+                                  uint8_t count, uint8_t flags);
+
 }  // namespace gaia

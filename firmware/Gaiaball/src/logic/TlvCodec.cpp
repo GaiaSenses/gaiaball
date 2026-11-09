@@ -4,7 +4,7 @@
 namespace gaia {
 namespace {
 
-enum class Kind : uint8_t { U8, U16, U32, Str, Pin };
+enum class Kind : uint8_t { U8, U16, U32, Str, Pin, MagCal };
 
 struct Reg {
   uint8_t id;
@@ -16,17 +16,28 @@ constexpr uint32_t kAnyU8 = 0xFF, kAnyU16 = 0xFFFF, kAnyU32 = 0xFFFFFFFFu;
 constexpr uint32_t kMaxGpio = 33;  // ESP32 output-capable GPIOs: 0..33 (see isValidOutputGpio)
 constexpr size_t kNameMax = 16;
 constexpr size_t kPinLen = 4;
+// Magnetometer calibration record: 3 x int16 hard iron + 9 x int16 soft iron.
+constexpr size_t kMagCalLen = 24;
 
 constexpr Reg kRegs[] = {
     {0x01, Kind::U8, 0, kAnyU8},      {0x02, Kind::U8, 10, 200},
     {0x03, Kind::U8, 0, 100},         {0x04, Kind::U16, 0, 1000},
+    // IMU front-end, fusion, bias tracker and output smoothing (v7).
+    {0x05, Kind::U8, 0, 7},           {0x06, Kind::U8, 0, 3},
+    {0x07, Kind::U16, 0, 500},        {0x08, Kind::U8, 0, 90},
+    {0x09, Kind::U8, 0, 90},          {0x0A, Kind::U8, 0, 60},
+    {0x0B, Kind::U16, 1, 2000},       {0x0C, Kind::U16, 1, 5000},
+    {0x0D, Kind::U8, 1, 60},          {0x0E, Kind::U8, 0, 2},
+    {0x0F, Kind::U16, 1, 5000},
     {0x10, Kind::U8, 0, kAnyU8},
     {0x11, Kind::U16, 1, 1000},       {0x12, Kind::U16, 1, 1000},
     {0x13, Kind::U16, 0, kAnyU16},    {0x14, Kind::U8, 0, kAnyU8},
     {0x15, Kind::U32, 0, kAnyU32},    {0x16, Kind::U8, 0, 1},
     {0x17, Kind::U16, 1, 7000},       {0x18, Kind::U16, 10, 2000},
     {0x19, Kind::U16, 1, 7000},       {0x1A, Kind::U16, 10, 2000},
-    {0x1B, Kind::U16, 1, 1000},       {0x20, Kind::U8, 0, kAnyU8},
+    {0x1B, Kind::U16, 1, 1000},
+    {0x1C, Kind::U16, 0, 10000},      {0x1D, Kind::U8, 0, 100},
+    {0x1E, Kind::MagCal, 0, 0},       {0x20, Kind::U8, 0, kAnyU8},
     {0x22, Kind::U16, 0, kAnyU16},
     {0x23, Kind::U16, 0, kAnyU16},    {0x24, Kind::U16, 0, kAnyU16},
     {0x25, Kind::U16, 0, kAnyU16},    {0x26, Kind::U8, 0, kAnyU8},
@@ -52,6 +63,19 @@ void *numField(GaiaConfig &c, uint8_t id) {
     case 0x02: return &c.imuNotifyHz;
     case 0x03: return &c.slerpAmount;
     case 0x04: return &c.accelLpAlphaX1000;
+    case 0x05: return &c.imuDlpfMode;
+    case 0x06: return &c.gyroFsSel;
+    case 0x07: return &c.fusionGainX100;
+    case 0x08: return &c.accelRejectionDeg;
+    case 0x09: return &c.magRejectionDeg;
+    case 0x0A: return &c.rejectionTimeoutS;
+    case 0x0B: return &c.biasRestThDpsX100;
+    case 0x0C: return &c.biasMaxDpsX100;
+    case 0x0D: return &c.biasTauS;
+    case 0x0E: return &c.quatSmoothMode;
+    case 0x0F: return &c.oneEuroFcMinX100;
+    case 0x1C: return &c.oneEuroBetaX1000;
+    case 0x1D: return &c.accelHampelKX10;
     case 0x10: return &c.audioEnabled;
     case 0x11: return &c.audioFastAlphaX1000;
     case 0x12: return &c.audioSlowAlphaX1000;
@@ -107,6 +131,18 @@ uint32_t loadNum(const void *f, Kind k) {
   }
 }
 
+// The magnetometer calibration record is the only multi-value register: 12 int16 in
+// a fixed order (hard iron x/y/z, then the soft-iron matrix row-major).
+void writeMagCal(uint8_t *out, const GaiaConfig &c) {
+  for (int i = 0; i < 3; i++) writeLe(out + 2 * i, 2, (uint16_t)c.magHardIron[i]);
+  for (int i = 0; i < 9; i++) writeLe(out + 6 + 2 * i, 2, (uint16_t)c.magSoftIron[i]);
+}
+
+void readMagCal(const uint8_t *v, GaiaConfig &c) {
+  for (int i = 0; i < 3; i++) c.magHardIron[i] = (int16_t)readLe(v + 2 * i, 2);
+  for (int i = 0; i < 9; i++) c.magSoftIron[i] = (int16_t)readLe(v + 6 + 2 * i, 2);
+}
+
 // Output-capable ESP32 GPIOs; excludes SPI-flash 6..11 and nonexistent 20, 24, 28..31.
 bool isValidOutputGpio(uint8_t pin) {
   static const uint8_t kValid[] = {0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16,
@@ -124,6 +160,16 @@ bool validValue(const Reg &r, const uint8_t *v, size_t len) {
       for (size_t i = 0; i < len; i++)
         if (v[i] < 0x20 || v[i] > 0x7E) return false;
       return true;
+    case Kind::MagCal: {
+      if (len != kMagCalLen) return false;
+      // A zero on the soft-iron diagonal would silently zero the magnetometer and
+      // make Quat9 unusable: refuse the record instead of storing it.
+      for (int d = 0; d < 3; d++) {
+        const size_t off = 6 + 2 * (size_t)(4 * d);  // soft[0], soft[4], soft[8]
+        if ((int16_t)readLe(v + off, 2) == 0) return false;
+      }
+      return true;
+    }
     case Kind::Pin:
       if (len != kPinLen) return false;
       for (size_t i = 0; i < len; i++)
@@ -148,6 +194,8 @@ size_t tlvSerialize(const GaiaConfig &cfg, uint8_t *out, size_t cap) {
     size_t vlen;
     if (r.kind == Kind::Str) {
       vlen = strnlen(c.bleName, kNameMax);
+    } else if (r.kind == Kind::MagCal) {
+      vlen = kMagCalLen;
     } else {
       vlen = numSize(r.kind);
     }
@@ -156,6 +204,8 @@ size_t tlvSerialize(const GaiaConfig &cfg, uint8_t *out, size_t cap) {
     out[pos + 1] = static_cast<uint8_t>(vlen);
     if (r.kind == Kind::Str) {
       memcpy(out + pos + 2, c.bleName, vlen);
+    } else if (r.kind == Kind::MagCal) {
+      writeMagCal(out + pos + 2, c);
     } else {
       writeLe(out + pos + 2, vlen, loadNum(numField(c, r.id), r.kind));
     }
@@ -193,6 +243,8 @@ bool tlvApply(GaiaConfig &cfg, const uint8_t *data, size_t len) {
     if (r->kind == Kind::Str) {
       memset(cfg.bleName, 0, sizeof cfg.bleName);
       memcpy(cfg.bleName, v, vlen);
+    } else if (r->kind == Kind::MagCal) {
+      readMagCal(v, cfg);
     } else if (r->kind == Kind::Pin) {
       memcpy(cfg.pin, v, kPinLen);
       cfg.pin[kPinLen] = 0;
@@ -218,6 +270,8 @@ size_t tlvApplyLenient(GaiaConfig &cfg, const uint8_t *data, size_t len) {
     if (r->kind == Kind::Str) {
       memset(cfg.bleName, 0, sizeof cfg.bleName);
       memcpy(cfg.bleName, v, vlen);
+    } else if (r->kind == Kind::MagCal) {
+      readMagCal(v, cfg);
     } else {
       storeNum(numField(cfg, r->id), r->kind, readLe(v, vlen));
     }

@@ -29,7 +29,25 @@ constexpr uint8_t kMagRegHxl = 0x03;   // 6 data bytes + ST2
 constexpr uint8_t kMagRegCntl1 = 0x0A;
 constexpr uint8_t kMagRegAsax = 0x10;
 constexpr float kMagUtPerLsb = 0.15f;  // 16-bit mode
+
+// Gyroscope DLPF cut-off per DLPF_CFG value (datasheet table, FCHOICE_B = 0). Index 7
+// (3600 Hz) exists but is never chosen automatically.
+constexpr float kGyroDlpfHz[8] = {250.0f, 184.0f, 92.0f, 41.0f, 20.0f, 10.0f, 5.0f, 3600.0f};
+// Gyroscope sensitivity per FS_SEL value, and the matching full-scale magnitude.
+constexpr float kGyroLsbPerDps[Mpu9250::kGyroFsCount] = {131.0f, 65.5f, 32.8f, 16.4f};
+constexpr float kGyroRangeDps[Mpu9250::kGyroFsCount] = {250.0f, 500.0f, 1000.0f, 2000.0f};
+
+// Widest DLPF whose cut-off still sits below the output Nyquist frequency. 0.47 (not
+// 0.5) leaves a guard band for the filter's own transition region.
+uint8_t autoDlpfMode(uint8_t hz) {
+  const float limit = 0.47f * (float)hz;
+  for (uint8_t m = 0; m <= 6; ++m)
+    if (kGyroDlpfHz[m] <= limit) return m;
+  return 6;  // 5 Hz: the narrowest available, for the lowest output rates
+}
 }  // namespace
+
+float Mpu9250::dlpfCutoffHz() const { return kGyroDlpfHz[dlpfMode_ & 0x07]; }
 
 bool Mpu9250::write8(uint8_t addr, uint8_t reg, uint8_t val) {
   wire_->beginTransmission(addr);
@@ -66,10 +84,9 @@ bool Mpu9250::begin(TwoWire &wire, bool ad0) {
   delay(100);
   ok &= write8(addr_, kRegPwrMgmt1, 0x01);  // clock from PLL
   ok &= write8(addr_, kRegPwrMgmt2, 0x00);  // all axes on
-  ok &= write8(addr_, kRegConfig, 0x03);        // gyro DLPF 41 Hz, internal 1 kHz
-  ok &= write8(addr_, kRegGyroConfig, 0x18);    // ±2000 dps
-  ok &= write8(addr_, kRegAccelConfig, 0x08);   // ±4 g (8192 LSB/g, wire scale)
-  ok &= write8(addr_, kRegAccelConfig2, 0x03);  // accel DLPF 41 Hz
+  ok &= write8(addr_, kRegAccelConfig, 0x08);  // ±4 g (8192 LSB/g, wire scale)
+  // Gyro range and the DLPF pair are written by setGyroFullScale()/setSampleRateHz(),
+  // which begin() callers invoke with the stored configuration.
   ok &= write8(addr_, kRegIntEnable, 0x01);     // RAW_DATA_RDY latches INT_STATUS
   ok &= write8(addr_, kRegIntPinCfg, 0x02);     // I2C bypass: AK8963 visible at 0x0C
   if (!ok) return false;
@@ -96,12 +113,29 @@ bool Mpu9250::initMag() {
   return write8(kMagAddr, kMagRegCntl1, 0x16);
 }
 
-bool Mpu9250::setSampleRateHz(uint8_t hz) {
+bool Mpu9250::setGyroFullScale(uint8_t fsSel) {
+  if (fsSel >= kGyroFsCount) fsSel = kGyroFsCount - 1;
+  if (!write8(addr_, kRegGyroConfig, (uint8_t)(fsSel << 3))) return false;
+  gyroLsbPerDps_ = kGyroLsbPerDps[fsSel];
+  gyroRangeDps_ = kGyroRangeDps[fsSel];
+  GB_LOGI(kTag, "gyro range ±%d dps (%.1f LSB/dps)", (int)gyroRangeDps_, gyroLsbPerDps_);
+  return true;
+}
+
+bool Mpu9250::setSampleRateHz(uint8_t hz, uint8_t dlpfMode) {
   if (hz < 4) hz = 4;
+  const uint8_t mode = (dlpfMode == 0 || dlpfMode > 7) ? autoDlpfMode(hz) : dlpfMode;
+  bool ok = write8(addr_, kRegConfig, mode);          // gyro DLPF, internal rate 1 kHz
+  ok &= write8(addr_, kRegAccelConfig2, mode);        // accel DLPF (same index)
   uint16_t div = (uint16_t)((1000 + hz / 2) / hz);
   if (div > 0) div -= 1;
   if (div > 255) div = 255;
-  return write8(addr_, kRegSmplrtDiv, (uint8_t)div);
+  ok &= write8(addr_, kRegSmplrtDiv, (uint8_t)div);
+  if (!ok) return false;
+  dlpfMode_ = mode;
+  GB_LOGI(kTag, "rate %u Hz, DLPF %.0f Hz (mode %u%s)", (unsigned)hz, kGyroDlpfHz[mode],
+          (unsigned)mode, dlpfMode == 0 ? ", auto" : "");
+  return true;
 }
 
 bool Mpu9250::dataReady() {

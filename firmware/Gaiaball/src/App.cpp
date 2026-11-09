@@ -35,6 +35,8 @@ constexpr uint8_t kCmdSave = 0x11;
 constexpr uint8_t kCmdFactoryReset = 0x12;
 constexpr uint8_t kCmdReboot = 0x13;
 constexpr uint8_t kCmdMountCal = 0x14;
+constexpr uint8_t kCmdMagCalStart = 0x15;
+constexpr uint8_t kCmdMagCalStop = 0x16;
 
 inline bool elapsed(uint32_t nowMs, uint32_t sinceMs, uint32_t periodMs) {
   return (uint32_t)(nowMs - sinceMs) >= periodMs;
@@ -151,6 +153,7 @@ void App::taskLoop() {
     }
 
     maybeSendAudioChunk(nowMs);
+    maybeSendMagChunk(nowMs);
 
     drainCommands();
     persistCapturedMounting();
@@ -289,6 +292,25 @@ void App::maybeSendAudioChunk(uint32_t nowMs) {
   ble_.notifyAudioChunk(p);
 }
 
+// Raw magnetometer stream for the config-app's hard/soft-iron fit (command 0x15).
+// Samples are batched: 16 per packet keeps the notify rate near 3 Hz at 50 Hz sampling
+// instead of flooding the diag characteristic with one packet per sample.
+void App::maybeSendMagChunk(uint32_t nowMs) {
+  QueueHandle_t q = imu_.magQueue();
+  if (q == nullptr) return;
+  MagRawSample batch[kMagChunkMaxSamples];
+  uint8_t n = 0;
+  while (n < kMagChunkMaxSamples && xQueueReceive(q, &batch[n], 0) == pdTRUE) n++;
+  if (n == 0) return;
+  if (!ble_.anySubscriber(5)) return;  // diag characteristic (…0005)
+  int16_t flat[3 * kMagChunkMaxSamples];
+  for (uint8_t i = 0; i < n; i++)
+    for (int a = 0; a < 3; a++) flat[3 * i + a] = batch[i].xyz[a];
+  // The stream is deliberately UNCALIBRATED: the fit has to see the raw ellipsoid.
+  const MagChunkPacket p = makeMagChunkPacket(magChunkSeq_++, nowMs, flat, n, 0);
+  ble_.notifyMagChunk(p);
+}
+
 void App::drainCommands() {
   QueueHandle_t q = ble_.commandQueue();
   if (q == nullptr) return;
@@ -306,6 +328,8 @@ void App::dispatch(const BleCommand &cmd) {
     case kCmdFactoryReset:
     case kCmdReboot:
     case kCmdMountCal:
+    case kCmdMagCalStart:
+    case kCmdMagCalStop:
       break;
     default:
       GB_LOGW(kTag, "unknown opcode 0x%02X (slot %u)", cmd.opcode, cmd.connSlot);
@@ -342,6 +366,14 @@ void App::dispatch(const BleCommand &cmd) {
     case kCmdMountCal:
       GB_LOGI(kTag, "mounting calibration requested");
       imu_.requestMountingCalibration();
+      break;
+    case kCmdMagCalStart:
+      GB_LOGI(kTag, "magnetometer capture requested");
+      imu_.startMagCapture();
+      break;
+    case kCmdMagCalStop:
+      GB_LOGI(kTag, "magnetometer capture stop requested");
+      imu_.stopMagCapture();
       break;
   }
 }

@@ -306,6 +306,7 @@ footer .wrap { display: grid; gap: 6px; }
       <a href="#achados">Achados</a>
       <a href="#arquitetura">Arquitetura</a>
       <a href="#protocolo">Protocolo</a>
+      <a href="#pipeline">Pipeline IMU</a>
       <a href="#parametros">Parâmetros</a>
       <a href="#ferramentas">Ferramentas</a>
       <a href="#bancada">Bancada</a>
@@ -324,7 +325,7 @@ footer .wrap { display: grid; gap: 6px; }
       <span><b>Código novo:</b> firmware/Gaiaball (multiarquivo, FreeRTOS, NimBLE)</span>
       <span><b>Branch:</b> feature/firmware-v2</span>
     </div>
-    <p class="status-note"><strong>Estado:</strong> todas as correções estão implementadas e compilam nos dois toolchains (PlatformIO e Arduino IDE), com 66 testes de unidade da lógica pura passando no host. <strong>Nada foi medido em hardware ainda.</strong> Taxas, latência e estabilidade citadas aqui são metas de projeto, a confirmar com o <a href="#bancada">checklist de bancada</a>.</p>
+    <p class="status-note"><strong>Estado:</strong> todas as correções estão implementadas e compilam nos dois toolchains (PlatformIO e Arduino IDE), com 120 testes de unidade da lógica pura passando no host. Em 08/11/2026 entrou a revisão do <a href="#pipeline">pipeline do IMU</a> (fusão nova, bias, anti-serrilhamento, calibração magnética e suavização adaptativa). <strong>Nada foi medido em hardware ainda.</strong> Taxas, latência e estabilidade citadas aqui são metas de projeto, a confirmar com o <a href="#bancada">checklist de bancada</a>.</p>
   </div>
 </header>
 
@@ -1368,10 +1369,103 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
 </section>
 
 <!-- =============================== PARÂMETROS =============================== -->
+<!-- =============================== PIPELINE IMU =============================== -->
+<section class="block" id="pipeline">
+  <div class="wrap">
+    <div class="section-head">
+      <span class="eyebrow">5 · Pipeline do IMU (revisão de 08/11/2026)</span>
+      <h2>Seis mudanças na cadeia de orientação</h2>
+      <p>Uma comparação entre o que o firmware fazia e o que a literatura de estimação de atitude mede hoje apontou seis pontos em que o ganho não vinha de trocar o algoritmo, e sim de corrigir o que entra nele. Todos foram implementados; cada linha abaixo diz contra o que a etapa defende.</p>
+    </div>
+
+    <div class="prose">
+      <p>A cadeia completa, na ordem em que roda a cada amostra — e a ordem é parte do projeto:</p>
+    </div>
+
+    <div class="diagram" aria-label="Cadeia de processamento da orientação">
+<pre style="margin:0;font-size:0.78rem;line-height:1.5"><code>MPU-9250 / AK8963 (I2C)
+   │  [1] DLPF no chip, corte casado com a taxa de saída
+   ├── giro ──> [2] estimador de bias (detector de repouso)  ──┐
+   ├── accel ─────────────────────────────────────────────────┤
+   └── mag ───> [3] calibração hard/soft-iron ────────────────┤
+                                                              ▼
+                         [4] fusão AHRS (Madgwick revisado)
+                             + rejeição de aceleração
+                             + rejeição magnética
+                             + rampa de partida / recuperação de saturação
+                                              │
+                         [5] quaternion de montagem, depois zero
+                                              │
+                         [6] suavização: desligada | slerp fixo | filtro 1€
+                                              │
+                                    ImuPacket.quat ──> BLE
+
+   caminho paralelo (nunca entra na fusão):
+   accel cru ──> [7] Hampel (espícula) ──> [8] EMA ──> ImuPacket.acc</code></pre>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>#</th><th>Mudança</th><th>O que estava errado</th><th>Ganho esperado</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td><b>Detector de repouso do bias</b><br><code>src/logic/GyroBias.*</code></td>
+            <td>O repouso era testado na taxa <em>já corrigida</em> contra 2 °/s. Com a estimativa começando em zero e um offset real acima disso, a bola nunca parecia parada e o offset nunca era aprendido — quanto pior a peça, menos a correção funcionava. O datasheet do MPU-9250 admite ±5 °/s de offset inicial.</td>
+            <td>O repouso passa a ser detectado pela <em>oscilação</em> da taxa em torno da própria média (independente do offset), com trava de plausibilidade e porta do acelerômetro. Fim da deriva de yaw ilimitada em Quat6 — o “globo girando sozinho”.</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td><b>Anti-serrilhamento e faixa do giroscópio</b><br><code>src/services/Mpu9250.*</code></td>
+            <td>DLPF fixo em 41 Hz com saída decimada para 50 Hz: a decimação não faz média, então tudo entre 25 e 41 Hz voltava dobrado para dentro da banda. Giroscópio fixo em ±2000 °/s = 0,061 °/s por bit, integrados direto na deriva.</td>
+            <td>DLPF escolhido automaticamente abaixo da metade da taxa (50 Hz → 20 Hz) e faixa configurável, com ±1000 °/s de padrão: metade do ruído de quantização e ainda ~2,8 rotações/s de folga para uma bola girada na mão.</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td><b>Fusão: Madgwick revisado (cap. 7)</b><br><code>src/logic/Ahrs.*</code></td>
+            <td>O filtro de gradiente (cap. 3) não tem defesa contra aceleração: numa bola arremessada o acelerômetro aponta para a resultante, e a orientação tomba atrás dele. Também não tinha rampa de partida nem tratamento de saturação do giroscópio.</td>
+            <td>Rejeição de aceleração e magnética por limiar, com recuperação temporizada; rampa de ganho que converge de uma orientação desconhecida em ~1 s; reinício controlado quando o giroscópio satura.</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td><b>Calibração do magnetômetro</b><br><code>src/logic/MagCalibration.h</code> + config-app</td>
+            <td>Só o ajuste de sensibilidade de fábrica (ASA) do AK8963. Ímã do alto-falante, bateria e trilhas somam dezenas de µT contra um campo terrestre de 25–65 µT, e o ferro em volta deforma a esfera do campo.</td>
+            <td>Modelo <code>m_c = S (m_u − h)</code> aplicado no firmware (9 multiplicações por amostra); a varredura é capturada pela bola (comando <code>0x15</code>) e o elipsoide é ajustado no navegador. Sem isso, o Quat9 pode ser <em>pior</em> que o Quat6.</td>
+          </tr>
+          <tr>
+            <td>5</td>
+            <td><b>Suavização adaptativa (filtro 1€)</b><br><code>src/logic/QuatSmoother.*</code></td>
+            <td>O slerp fixo atrasa tudo igualmente: no ajuste máximo, ~190 ms a 50 Hz — audível como resposta elástica num instrumento.</td>
+            <td>Corte que acompanha a velocidade angular (Casiez, CHI 2012): filtra forte com a bola quase parada, quase nada em movimento. Mesmo silêncio, uma fração do atraso. O slerp fixo continua disponível.</td>
+          </tr>
+          <tr>
+            <td>6</td>
+            <td><b>Filtro de espícula na aceleração</b><br><code>Hampel5</code>, <code>src/logic/Filters.h</code></td>
+            <td>Uma leitura I²C corrompida é uma amostra absurda. A EMA não a remove: espalha pelas amostras seguintes.</td>
+            <td>Mediana das 5 últimas com limiar k·MAD, em janela que termina na amostra nova: remove a espícula com <b>zero</b> de atraso adicional, e um degrau real vira o novo normal em três amostras. Roda antes da EMA, porque depois de suavizar a espícula não é mais detectável.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <h3>De onde vêm os números</h3>
+      <p>A escolha foi guiada por medições publicadas no <em>benchmark</em> BROAD (39 ensaios com referência óptica), não por preferência. Com cada algoritmo no seu melhor ajuste, o erro total médio fica em 4,3° para o Madgwick cap. 3 em ensaios limpos e 5,4° nos perturbados, contra 1,8°/2,7° do VQF — e, sobretudo, <b>+2 °/s de offset de giroscópio levam o Madgwick a 12,7°</b>, enquanto os filtros com estimação de bias ficam perto de 3°. A 48 Hz (a nossa taxa) a perda é pequena: 5,2°. Foi por isso que a prioridade 1 virou o detector de repouso, e não a troca do filtro.</p>
+      <p>Também foi avaliado substituir a fusão pelo <b>VQF</b> (o mais preciso do campo nessas medições). A decisão foi adotar primeiro o Madgwick revisado — é o sucessor direto do que já rodava, é uma biblioteca C feita para embarcado e traz as rejeições que faltavam. O VQF fica como avaliação futura, com uma ressalva registrada: o limite de bias padrão dele (2 °/s) precisa subir para a faixa do MPU-9250 antes de qualquer teste.</p>
+      <p><strong>Nada disso foi medido no globo ainda.</strong> Os números acima são da literatura; o que esperar e como conferir está em <a href="#bancada">Bancada</a>, nas seções 4.1 e 4.2 do roteiro de validação.</p>
+    </div>
+
+    <div class="callout">
+      <h3>O que ficou observável</h3>
+      <p>Antes, uma rejeição que nunca dispara e uma rejeição que funciona têm a mesma aparência: nada. O pacote de diagnóstico cresceu de 23 para 32 bytes e passou a publicar o estado do pipeline — rampa de partida, saturação, acelerômetro ignorado, magnetômetro ignorado, repouso, aprendizado do bias, calibração magnética carregada — mais o offset estimado em cada eixo e a discordância em graus. O config-app mostra tudo isso no painel Métricas, e é com isso que a bancada distingue “funciona” de “nunca ativou”.</p>
+    </div>
+  </div>
+</section>
+
 <section class="block" id="parametros">
   <div class="wrap">
     <div class="section-head">
-      <span class="eyebrow">5 · Parâmetros configuráveis</span>
+      <span class="eyebrow">6 · Parâmetros configuráveis</span>
       <h2>O que pode ser ajustado sem regravar o firmware</h2>
       <p>Registros TLV (<code>id u8 | len u8 | valor</code>) na característica <code>…0004</code>. Escrever exige conexão desbloqueada; um registro fora da faixa rejeita a escrita inteira. A mudança vale na hora, mas só persiste após o comando <code>0x11</code>.</p>
     </div>
@@ -1379,6 +1473,10 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
       <select id="paramGroup" aria-label="Filtrar por grupo">
         <option value="">Todos os grupos</option>
         <option value="Orientação">Orientação</option>
+        <option value="Fusão">Fusão</option>
+        <option value="Bias do giro">Bias do giro</option>
+        <option value="Suavização">Suavização</option>
+        <option value="Magnetômetro">Magnetômetro</option>
         <option value="Áudio">Áudio</option>
         <option value="CO₂">CO₂</option>
         <option value="LEDs">LEDs</option>
@@ -1393,7 +1491,21 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
           <tr><td>Orientação</td><td>0x01</td><td><code>orientationMode</code></td><td>0 ou 1</td><td>0</td><td>0 = Quat6 relativo (sem magnetômetro); 1 = Quat9 com norte magnético. Ver <a href="#f11">F11</a>.</td></tr>
           <tr><td>Orientação</td><td>0x02</td><td><code>imuNotifyHz</code></td><td>10–200</td><td>50</td><td>Taxa de saída da orientação. Também reconfigura o DMP da IMU para rodar nessa taxa (ou logo acima), a quente.</td></tr>
           <tr><td>Orientação</td><td>0x04</td><td><code>accelLpAlphaX1000</code></td><td>0–1000</td><td>0</td><td>EMA da aceleração publicada (0 = desligado, dado cru).</td></tr>
-          <tr><td>Orientação</td><td>0x03</td><td><code>slerpAmount</code></td><td>0–100</td><td>0</td><td>Suavização no firmware; 0 = desligada. O site já suaviza (mediana + EMA); ligar aqui soma latência.</td></tr>
+          <tr><td>Orientação</td><td>0x05</td><td><code>imuDlpfMode</code></td><td>0–7</td><td>0</td><td>Filtro anti-serrilhamento do MPU-9250. 0 = automático (corte mais largo abaixo da metade da taxa: 50 Hz → 20 Hz); 1–7 forçam 184/92/41/20/10/5/3600 Hz.</td></tr>
+          <tr><td>Orientação</td><td>0x06</td><td><code>gyroFsSel</code></td><td>0–3</td><td>2</td><td>Faixa do giroscópio: ±250/500/1000/2000 °/s. Mais estreito mede mais fino, mas satura antes. O giroscópio não vai no fio, então nenhum cliente depende disso.</td></tr>
+          <tr><td>Fusão</td><td>0x07</td><td><code>fusionGainX100</code></td><td>0–500</td><td>50</td><td>Ganho do filtro complementar (×100). 0 = só giroscópio, o que também desliga as rejeições.</td></tr>
+          <tr><td>Fusão</td><td>0x08</td><td><code>accelRejectionDeg</code></td><td>0–90</td><td>10</td><td>Discordância de inclinação acima da qual o acelerômetro é ignorado. É o que impede a bola arremessada de tombar. 0 = desligado.</td></tr>
+          <tr><td>Fusão</td><td>0x09</td><td><code>magRejectionDeg</code></td><td>0–90</td><td>10</td><td>Mesmo mecanismo no rumo: blinda a orientação de um ímã passando perto (só em Quat9). 0 = desligado.</td></tr>
+          <tr><td>Fusão</td><td>0x0A</td><td><code>rejectionTimeoutS</code></td><td>0–60</td><td>5</td><td>Tempo de discordância depois do qual o firmware volta a confiar no sensor. 0 desliga as duas rejeições.</td></tr>
+          <tr><td>Bias do giro</td><td>0x0B</td><td><code>biasRestThDpsX100</code></td><td>1–2000</td><td>200</td><td>Oscilação máxima da taxa em torno da própria média para contar como repouso (2,00 °/s).</td></tr>
+          <tr><td>Bias do giro</td><td>0x0C</td><td><code>biasMaxDpsX100</code></td><td>1–5000</td><td>1000</td><td>Offset máximo plausível e trava da estimativa (10,00 °/s). O datasheet admite ±5 °/s.</td></tr>
+          <tr><td>Bias do giro</td><td>0x0D</td><td><code>biasTauS</code></td><td>1–60</td><td>4</td><td>Constante de tempo da estimativa em repouso, em segundos.</td></tr>
+          <tr><td>Suavização</td><td>0x0E</td><td><code>quatSmoothMode</code></td><td>0–2</td><td>0</td><td>0 = desligada, 1 = slerp fixo (usa 0x03), 2 = filtro 1€ (usa 0x0F e 0x1C).</td></tr>
+          <tr><td>Suavização</td><td>0x0F</td><td><code>oneEuroFcMinX100</code></td><td>1–5000</td><td>100</td><td>Corte do filtro 1€ com a bola parada (1,00 Hz). Menor = menos tremor, mais atraso em repouso.</td></tr>
+          <tr><td>Suavização</td><td>0x1C</td><td><code>oneEuroBetaX1000</code></td><td>0–10000</td><td>20</td><td>Quanto o corte sobe por °/s de velocidade angular (0,020 Hz por °/s). Maior = menos atraso no movimento rápido.</td></tr>
+          <tr><td>Suavização</td><td>0x1D</td><td><code>accelHampelKX10</code></td><td>0–100</td><td>0</td><td>Filtro de espícula da aceleração (k × 10). 0 = desligado; 30 = k 3,0. Não adiciona atraso.</td></tr>
+          <tr><td>Magnetômetro</td><td>0x1E</td><td><code>magCal</code></td><td>24 bytes</td><td>identidade</td><td>Hard iron (3 × int16, 0,1 µT) + matriz soft iron (9 × int16, 1/4096). Gravado pelo config-app ao fim da calibração; diagonal com zero é rejeitada.</td></tr>
+          <tr><td>Orientação</td><td>0x03</td><td><code>slerpAmount</code></td><td>0–100</td><td>0</td><td>Intensidade do slerp fixo, usada só quando <code>quatSmoothMode = 1</code>. O site já suaviza (mediana + EMA); ligar aqui soma latência.</td></tr>
           <tr><td>Áudio</td><td>0x10</td><td><code>audioEnabled</code></td><td>0 / ≠0</td><td>1</td><td>Liga ou desliga a detecção de som.</td></tr>
           <tr><td>Áudio</td><td>0x11</td><td><code>audioFastAlphaX1000</code></td><td>1–1000</td><td>250</td><td>Velocidade do filtro rápido (α × 1000). Maior = reage mais rápido a picos.</td></tr>
           <tr><td>Áudio</td><td>0x12</td><td><code>audioSlowAlphaX1000</code></td><td>1–1000</td><td>995</td><td>Inércia da linha de base de ruído (α × 1000). Maior = adapta mais devagar.</td></tr>
@@ -1430,7 +1542,7 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
 <section class="block" id="ferramentas">
   <div class="wrap">
     <div class="section-head">
-      <span class="eyebrow">6 · Ferramentas novas</span>
+      <span class="eyebrow">7 · Ferramentas novas</span>
       <h2>Para ver o que o globo está fazendo</h2>
     </div>
     <div class="tools">
@@ -1440,6 +1552,7 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
         <ul>
           <li>Vista 3D da orientação: o quaternion tratado, exatamente como chega por BLE — a suavização é configurada só no próprio firmware (slerp), e o efeito aparece na vista.</li>
           <li>Tooltips didáticos (ⓘ) em todos os parâmetros — descrição em português + unidade de medida —, tema claro/escuro e layout responsivo (desktop, tablet e celular).</li>
+          <li><b>Básico e Avançado em abas</b>: a aba de entrada traz os 14 parâmetros de operação (modo, taxa, sopro, CO₂ virtual, nome, PIN) e a segunda guarda os 25 de afinação da cadeia de sinais. Todos os campos já abrem preenchidos com os padrões de fábrica, e a contagem na aba Avançado acende quando algum deles está fora do padrão — a pergunta “tem algo afinado aqui?” se responde sem abrir a aba.</li>
           <li>Métricas do fluxo: taxa (Hz), perda por <code>seq</code> e jitter.</li>
           <li><b>Sensores em tempo real</b>: valor atual de cada sensor com a unidade correta (orientação em °, aceleração em g, microfones em dBFS + dB SPL estimado, CO₂ em ppm, potenciômetro em %) e gráficos de linha (Plotly.js) empilhados verticalmente, um por sensor, cada um com sua cor, todos <b>compartilhando o mesmo eixo X (tempo)</b> — janela de 120 s a 10 Hz, com zoom.</li>
           <li><b>Analisador de espectro do sopro</b>: a bola transmite o áudio bruto decimado (2 kHz, int16) e o <b>FFT roda no navegador</b> (512 pontos, bins de ~3,9 Hz, 0–1000 Hz), com as linhas dos cortes HP/LP sobrepostas — sopre na bola e ajuste o passa-banda vendo quais frequências sobem.</li>
@@ -1479,7 +1592,7 @@ uart().begin(kBaud, SERIAL_8N1, kPinRx, kPinTxNone);</code></pre></figure>
 <section class="block" id="bancada">
   <div class="wrap">
     <div class="section-head">
-      <span class="eyebrow">7 · Checklist de validação em bancada</span>
+      <span class="eyebrow">8 · Checklist de validação em bancada</span>
       <h2>O que precisa ser confirmado no hardware</h2>
       <p>Na ordem em que vale a pena executar. As marcações ficam salvas só neste navegador.</p>
     </div>

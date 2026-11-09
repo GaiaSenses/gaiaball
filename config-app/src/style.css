@@ -332,3 +332,83 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
   .metrics { grid-template-columns: auto 1fr; }
   .metrics canvas, .metrics dd + span { display: none; }
 }
+
+/* Magnetometer calibration: the sweep's coverage is the one thing the person needs to
+   see while turning the ball, so it gets a readout of its own. Each cell names the
+   combination of axis directions it stands for and fills when that octant is reached. */
+.mag-steps { margin: 0 0 12px; padding-left: 20px; color: var(--muted); font-size: 0.88rem; }
+.mag-steps li { margin: 2px 0; }
+.mag-octants {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.mag-octant {
+  padding: 6px 2px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--raised);
+  color: var(--muted);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.72rem;
+  text-align: center;
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+.mag-octant.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .mag-octant { transition: none; }
+}
+
+/* Configuração: duas abas. Operar o globo e afinar a cadeia de sinais são tarefas
+   diferentes, feitas por pessoas diferentes em momentos diferentes — a primeira não
+   deve ter que ler 25 parâmetros de filtro para achar o limiar do sopro. A contagem na
+   aba Avançado responde, sem abri-la, "tem algo fora do padrão aqui?". */
+.tabs {
+  display: flex;
+  gap: 2px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  margin-bottom: -1px;
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  border-radius: 4px 4px 0 0;
+  background: transparent;
+  color: var(--muted);
+  font: 500 0.92rem inherit;
+  cursor: pointer;
+}
+.tab:hover { color: var(--text); }
+.tab[aria-selected='true'] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.tab-count {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 0.74rem;
+  color: var(--muted);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+.tab.has-off .tab-count {
+  color: var(--warn);
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+.tab.has-off .tab-count::after {
+  content: ' ●';
+  font-size: 0.6rem;
+  vertical-align: 0.1em;
+}

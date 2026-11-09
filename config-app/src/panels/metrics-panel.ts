@@ -1,6 +1,6 @@
 import type { GaiaballClient } from '../ble/gaiaball-client.ts';
 import type { StreamStats } from '../metrics/stream-stats.ts';
-import type { Co2Sample, DiagSample } from '../protocol/packets.ts';
+import { AHRS_FLAG_OVERRANGE, type Co2Sample, type DiagSample } from '../protocol/packets.ts';
 import { resolvedTheme } from '../theme.ts';
 import { decorateInfo } from './info.ts';
 import { RingBuffer, drawSparkline } from './sparkline.ts';
@@ -30,6 +30,10 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
       <dt data-info="Quadros do sensor de CO₂ descartados por erro de formato ou de checksum na UART. Adimensional.">Erros UART</dt><dd id="d-uart">–</dd><span></span>
       <dt data-info="Memória RAM livre agora / mínimo desde o boot — um mínimo que só cai indica vazamento. Unidade: kilobytes (KB).">Heap livre / mín</dt><dd id="d-heap">–</dd><span></span>
       <dt data-info="Autoteste de cada subsistema (IMU, áudio, CO₂) reportado pelo firmware. Sem unidade.">Saúde</dt><dd id="d-flags">–</dd><span></span>
+      <dt data-info="O que a fusão está fazendo agora: “partida” = ganho ainda em rampa (converge depois do boot); “saturação” = o giroscópio passou do fundo de escala e o filtro reiniciou; “accel ignorado” / “mag ignorado” = a rejeição está agindo, protegendo a orientação de aceleração ou de um ímã. Sem unidade.">Estado da fusão</dt><dd id="d-ahrs">–</dd><span></span>
+      <dt data-info="Discordância entre a inclinação estimada e a que o acelerômetro indica (e, no Quat9, o mesmo para o rumo e o magnetômetro). É o valor comparado com os limiares de rejeição. Unidade: graus (°).">Discordância incl./rumo</dt><dd id="d-err">–</dd><span></span>
+      <dt data-info="Offset de velocidade angular estimado em repouso e subtraído de cada leitura — é ele que, se não fosse removido, viraria deriva de rumo. “aprendendo” aparece enquanto a bola está parada e a estimativa se refina. Unidade: graus por segundo (°/s).">Bias do giroscópio</dt><dd id="d-bias">–</dd><span></span>
+      <dt data-info="Se há uma calibração hard/soft-iron gravada na bola. Sem ela, o modo Quat9 pode errar o rumo em dezenas de graus. Sem unidade.">Calibração magnética</dt><dd id="d-magcal">–</dd><span></span>
       <dt data-info="Última leitura de CO₂. “virtual” = pulso disparado por sopro; “desatualizado” = sem quadro novo do sensor dentro do timeout. Unidade: ppm.">CO₂</dt><dd id="d-co2">–</dd><span></span>
     </dl>`;
   decorateInfo(root);
@@ -65,6 +69,21 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
       $('d-uart').textContent = String(diag.uartFrameErrors);
       $('d-heap').textContent = `${diag.freeHeapKb} / ${diag.minFreeHeapKb} KB`;
       $('d-flags').innerHTML = [flag('IMU', diag.imuOk), flag('Áudio', diag.audioOk), flag('CO₂', diag.co2Ok)].join(' ');
+      const state: string[] = [];
+      if (diag.startup) state.push('<span class="badge warn">partida</span>');
+      if (diag.ahrsFlags & AHRS_FLAG_OVERRANGE) state.push('<span class="badge warn">saturação</span>');
+      if (diag.accelIgnored) state.push('<span class="badge warn">accel ignorado</span>');
+      if (diag.magIgnored) state.push('<span class="badge warn">mag ignorado</span>');
+      if (diag.magCapturing) state.push('<span class="badge">capturando mag</span>');
+      $('d-ahrs').innerHTML = state.length ? state.join(' ') : '<span class="ok">estável</span>';
+      $('d-err').textContent = `${diag.accelErrDeg}° / ${diag.magErrDeg}°`;
+      const bias = diag.gyroBiasDps.map((v) => v.toFixed(2)).join(' / ');
+      $('d-bias').innerHTML = `${bias} °/s` +
+        (diag.biasAdapting ? ' <span class="badge">aprendendo</span>'
+          : diag.biasAtRest ? ' <span class="badge">em repouso</span>' : '');
+      $('d-magcal').innerHTML = diag.magCalibrated
+        ? '<span class="ok">calibrado</span>'
+        : '<span class="badge warn">não calibrado</span>';
     }
     if (co2) {
       $('d-co2').innerHTML = `${co2.ppm} ppm` +

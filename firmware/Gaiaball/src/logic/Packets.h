@@ -12,6 +12,7 @@ enum class PacketType : uint8_t {
   Diagnostics = 0x03,
   Sensors = 0x04,     // audio levels + potentiometer; shares the diag characteristic
   AudioChunk = 0x05,  // decimated raw audio stream; shares the diag characteristic
+  MagChunk = 0x06,    // raw magnetometer capture for calibration; diag characteristic
 };
 
 // ImuPacket.flags
@@ -37,6 +38,20 @@ constexpr uint8_t kSensAudioFiltered = 1u << 3;  // RMS computed after the HP/LP
 
 // AudioChunkPacket.flags
 constexpr uint8_t kAudioBpfEnabled = 1u << 0;  // band-pass active (chunk itself is RAW)
+
+// MagChunkPacket.flags
+constexpr uint8_t kMagChunkCalibrated = 1u << 0;  // samples already hard/soft-iron corrected
+
+// DiagPacket.ahrsFlags — the fusion pipeline's live state, so the bench can SEE which
+// stage is acting instead of inferring it from the orientation.
+constexpr uint8_t kAhrsStartup = 1u << 0;        // gain still ramping down
+constexpr uint8_t kAhrsOverrange = 1u << 1;      // gyroscope range exceeded, recovering
+constexpr uint8_t kAhrsAccelIgnored = 1u << 2;   // acceleration rejection acting now
+constexpr uint8_t kAhrsMagIgnored = 1u << 3;     // magnetic rejection acting now
+constexpr uint8_t kAhrsBiasAtRest = 1u << 4;     // bias tracker sees the ball at rest
+constexpr uint8_t kAhrsBiasAdapting = 1u << 5;   // ... and is refining the estimate
+constexpr uint8_t kAhrsMagCalibrated = 1u << 6;  // a hard/soft-iron calibration is loaded
+constexpr uint8_t kAhrsMagCapture = 1u << 7;     // raw magnetometer capture streaming
 
 // Quaternion scale: int16 = round(float * 16384) (Q14).
 constexpr float kQuatScale = 16384.0f;
@@ -66,6 +81,31 @@ struct __attribute__((packed)) DiagPacket {
   uint16_t imuHzX10, notifyHzX10, fifoOverflows, i2sErrors, uartFrameErrors, freeHeapKb,
       minFreeHeapKb;
   uint8_t flags;
+  // Appended in v7 (packet grew 23 -> 32 B): the IMU pipeline's own state. Without it
+  // the acceleration/magnetic rejection and the bias tracker are invisible from the
+  // outside, and a bench run cannot tell "working" from "never triggered".
+  uint8_t ahrsFlags;
+  uint8_t accelErrDeg;        // inclination disagreement, 0..90 deg (saturating)
+  uint8_t magErrDeg;          // heading disagreement, 0..90 deg (saturating)
+  int16_t gyroBiasX100[3];    // estimated zero-rate offset, 0.01 dps per LSB
+};
+
+// Raw magnetometer capture, notified on the diag characteristic while a calibration
+// run is active (command 0x15 / 0x16). The ellipsoid fit that turns these samples into
+// a hard-iron offset and a soft-iron matrix runs in the config-app: the firmware would
+// need hundreds of samples in RAM and a least-squares solve to do it itself, and the
+// browser already has both.
+// Samples are int16 in 0.1 uT (+-3276.7 uT, saturating), x/y/z interleaved, already
+// remapped to the gyro/accel chip frame.
+constexpr uint8_t kMagChunkMaxSamples = 16;
+
+struct __attribute__((packed)) MagChunkPacket {
+  uint8_t version, type;
+  uint16_t seq;
+  uint32_t timestampMs;
+  uint8_t count;  // valid samples, 0..kMagChunkMaxSamples
+  uint8_t flags;
+  int16_t samples[3 * kMagChunkMaxSamples];
 };
 
 // Live sensor levels for the config-app charts, notified on the diag characteristic
@@ -100,8 +140,9 @@ struct __attribute__((packed)) AudioChunkPacket {
 
 static_assert(sizeof(ImuPacket) == 23, "ImuPacket size");
 static_assert(sizeof(Co2Packet) == 12, "Co2Packet size");
-static_assert(sizeof(DiagPacket) == 23, "DiagPacket size");
+static_assert(sizeof(DiagPacket) == 32, "DiagPacket size");
 static_assert(sizeof(SensorsPacket) == 23, "SensorsPacket size");
 static_assert(sizeof(AudioChunkPacket) == 208, "AudioChunkPacket size");
+static_assert(sizeof(MagChunkPacket) == 106, "MagChunkPacket size");
 
 }  // namespace gaia

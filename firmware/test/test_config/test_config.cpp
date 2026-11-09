@@ -1,6 +1,7 @@
 #include <unity.h>
 #include <cstring>
 #include "../../Gaiaball/src/logic/GaiaConfig.h"
+#include "../../Gaiaball/src/logic/MagCalibration.h"
 #include "../../Gaiaball/src/logic/TlvCodec.h"
 
 using namespace gaia;
@@ -53,7 +54,7 @@ void test_roundtrip() {
   std::strcpy(a.bleName, "MyBall");
   std::strcpy(a.pin, "9876");
 
-  uint8_t buf[128];
+  uint8_t buf[384];
   size_t n = tlvSerialize(a, buf, sizeof buf);
   TEST_ASSERT_GREATER_THAN(0, n);
 
@@ -69,7 +70,7 @@ void test_roundtrip() {
   TEST_ASSERT_EQUAL_STRING("MyBall", b.bleName);
   TEST_ASSERT_EQUAL_STRING("1234", b.pin);  // PIN excluded: stays default
   // Re-serialize must be byte-identical (full non-PIN equality).
-  uint8_t buf2[128];
+  uint8_t buf2[384];
   size_t n2 = tlvSerialize(b, buf2, sizeof buf2);
   TEST_ASSERT_EQUAL(n, n2);
   TEST_ASSERT_EQUAL_MEMORY(buf, buf2, n);
@@ -222,7 +223,7 @@ void test_shorter_name_clears_old_tail() {
 
 void test_serialize_cap_too_small() {
   GaiaConfig c;
-  uint8_t buf[128];
+  uint8_t buf[384];
   size_t full = tlvSerialize(c, buf, sizeof buf);
   TEST_ASSERT_GREATER_THAN(0, full);
   TEST_ASSERT_EQUAL(0, tlvSerialize(c, buf, full - 1));
@@ -231,7 +232,7 @@ void test_serialize_cap_too_small() {
 void test_pin_not_serialized() {
   GaiaConfig c;
   std::strcpy(c.pin, "5678");
-  uint8_t buf[128];
+  uint8_t buf[384];
   size_t n = tlvSerialize(c, buf, sizeof buf);
   size_t i = 0;
   while (i < n) {
@@ -254,7 +255,7 @@ void test_lenient_roundtrip_from_serialize() {
   a.soundLedPin = 5;
   std::strcpy(a.bleName, "MyBall");
   std::strcpy(a.pin, "9876");
-  uint8_t buf[256];
+  uint8_t buf[384];
   const size_t n = tlvSerialize(a, buf, sizeof buf);
   TEST_ASSERT_GREATER_THAN(0, n);
   GaiaConfig b;
@@ -305,6 +306,123 @@ void test_lenient_restores_cross_field_invariants() {
   TEST_ASSERT_EQUAL(200, d.audioLpHz);
 }
 
+// ------------------------------------------------ IMU / fusion registers (v7)
+
+void test_imu_fusion_defaults() {
+  GaiaConfig c;
+  TEST_ASSERT_EQUAL(0, c.imuDlpfMode);          // 0 = auto (anti-alias from the rate)
+  TEST_ASSERT_EQUAL(2, c.gyroFsSel);            // +-1000 dps: headroom for a spun ball
+  TEST_ASSERT_EQUAL(50, c.fusionGainX100);      // 0.50, the x-io Fusion default
+  TEST_ASSERT_EQUAL(10, c.accelRejectionDeg);   // degrees
+  TEST_ASSERT_EQUAL(10, c.magRejectionDeg);     // degrees
+  TEST_ASSERT_EQUAL(5, c.rejectionTimeoutS);
+  TEST_ASSERT_EQUAL(200, c.biasRestThDpsX100);  // 2.00 dps of deviation
+  TEST_ASSERT_EQUAL(1000, c.biasMaxDpsX100);    // 10.00 dps plausibility bound
+  TEST_ASSERT_EQUAL(4, c.biasTauS);
+  TEST_ASSERT_EQUAL(0, c.quatSmoothMode);       // off, as the legacy slerp default
+  TEST_ASSERT_EQUAL(100, c.oneEuroFcMinX100);   // 1.00 Hz
+  TEST_ASSERT_EQUAL(20, c.oneEuroBetaX1000);    // 0.020 Hz per dps
+  TEST_ASSERT_EQUAL(0, c.accelHampelKX10);      // spike filter off
+  TEST_ASSERT_EQUAL(0, c.magHardIron[0]);       // no magnetometer calibration
+  TEST_ASSERT_EQUAL(kMagSoftIronOne, c.magSoftIron[0]);
+  TEST_ASSERT_EQUAL(0, c.magSoftIron[1]);
+  TEST_ASSERT_EQUAL(kMagSoftIronOne, c.magSoftIron[4]);
+  TEST_ASSERT_EQUAL(kMagSoftIronOne, c.magSoftIron[8]);
+}
+
+void test_imu_fusion_registers_roundtrip() {
+  const uint8_t buf[] = {
+      0x05, 1, 4,           // imuDlpfMode = 4 (20 Hz)
+      0x06, 1, 1,           // gyroFsSel = 1 (+-500 dps)
+      0x07, 2, 0x96, 0x00,  // fusionGainX100 = 150
+      0x08, 1, 15,          // accelRejectionDeg
+      0x09, 1, 20,          // magRejectionDeg
+      0x0A, 1, 8,           // rejectionTimeoutS
+      0x0B, 2, 0x2C, 0x01,  // biasRestThDpsX100 = 300
+      0x0C, 2, 0xB8, 0x0B,  // biasMaxDpsX100 = 3000
+      0x0D, 1, 10,          // biasTauS
+      0x0E, 1, 2,           // quatSmoothMode = one euro
+      0x0F, 2, 0xC8, 0x00,  // oneEuroFcMinX100 = 200
+      0x1C, 2, 0x32, 0x00,  // oneEuroBetaX1000 = 50
+      0x1D, 1, 30,          // accelHampelKX10 = 3.0
+  };
+  GaiaConfig c;
+  TEST_ASSERT_TRUE(tlvApply(c, buf, sizeof buf));
+  TEST_ASSERT_EQUAL(4, c.imuDlpfMode);
+  TEST_ASSERT_EQUAL(1, c.gyroFsSel);
+  TEST_ASSERT_EQUAL(150, c.fusionGainX100);
+  TEST_ASSERT_EQUAL(15, c.accelRejectionDeg);
+  TEST_ASSERT_EQUAL(20, c.magRejectionDeg);
+  TEST_ASSERT_EQUAL(8, c.rejectionTimeoutS);
+  TEST_ASSERT_EQUAL(300, c.biasRestThDpsX100);
+  TEST_ASSERT_EQUAL(3000, c.biasMaxDpsX100);
+  TEST_ASSERT_EQUAL(10, c.biasTauS);
+  TEST_ASSERT_EQUAL(2, c.quatSmoothMode);
+  TEST_ASSERT_EQUAL(200, c.oneEuroFcMinX100);
+  TEST_ASSERT_EQUAL(50, c.oneEuroBetaX1000);
+  TEST_ASSERT_EQUAL(30, c.accelHampelKX10);
+}
+
+void test_imu_fusion_registers_reject_out_of_range() {
+  const uint8_t dlpf[] = {0x05, 1, 8};             // only 0..7
+  const uint8_t fs[] = {0x06, 1, 4};               // only 0..3
+  const uint8_t gain[] = {0x07, 2, 0xF5, 0x01};    // 501 > 500
+  const uint8_t reject[] = {0x08, 1, 91};          // > 90 deg
+  const uint8_t mode[] = {0x0E, 1, 3};             // only 0..2
+  const uint8_t restTh[] = {0x0B, 2, 0x00, 0x00};  // 0 would freeze rest detection
+  assertRejected(dlpf, sizeof dlpf);
+  assertRejected(fs, sizeof fs);
+  assertRejected(gain, sizeof gain);
+  assertRejected(reject, sizeof reject);
+  assertRejected(mode, sizeof mode);
+  assertRejected(restTh, sizeof restTh);
+}
+
+// --------------------------------------------- magnetometer calibration (0x1E)
+
+// 24-byte record: 3 x int16 hard iron (0.1 uT) + 9 x int16 soft iron (1/4096).
+static void buildMagCalRecord(uint8_t *out, const int16_t hard[3], const int16_t soft[9]) {
+  out[0] = 0x1E;
+  out[1] = 24;
+  for (int i = 0; i < 3; i++) {
+    out[2 + 2 * i] = (uint8_t)(hard[i] & 0xFF);
+    out[3 + 2 * i] = (uint8_t)((uint16_t)hard[i] >> 8);
+  }
+  for (int i = 0; i < 9; i++) {
+    out[8 + 2 * i] = (uint8_t)(soft[i] & 0xFF);
+    out[9 + 2 * i] = (uint8_t)((uint16_t)soft[i] >> 8);
+  }
+}
+
+void test_mag_calibration_roundtrip() {
+  const int16_t hard[3] = {250, -1200, 70};
+  const int16_t soft[9] = {4300, -60, 12, -60, 3900, 5, 12, 5, 4150};
+  uint8_t buf[26];
+  buildMagCalRecord(buf, hard, soft);
+  GaiaConfig c;
+  TEST_ASSERT_TRUE(tlvApply(c, buf, sizeof buf));
+  for (int i = 0; i < 3; i++) TEST_ASSERT_EQUAL_INT16(hard[i], c.magHardIron[i]);
+  for (int i = 0; i < 9; i++) TEST_ASSERT_EQUAL_INT16(soft[i], c.magSoftIron[i]);
+
+  uint8_t ser[512];
+  const size_t n = tlvSerialize(c, ser, sizeof ser);
+  TEST_ASSERT_TRUE(n > 0);
+  GaiaConfig back;
+  TEST_ASSERT_TRUE(tlvApply(back, ser, n));
+  for (int i = 0; i < 9; i++) TEST_ASSERT_EQUAL_INT16(soft[i], back.magSoftIron[i]);
+}
+
+void test_mag_calibration_rejects_bad_length_and_singular_matrix() {
+  uint8_t shortRec[] = {0x1E, 12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+  assertRejected(shortRec, sizeof shortRec);
+  // A zero diagonal would silently zero the magnetometer: refuse it.
+  const int16_t hard[3] = {0, 0, 0};
+  const int16_t soft[9] = {0, 0, 0, 0, 4096, 0, 0, 0, 4096};
+  uint8_t buf[26];
+  buildMagCalRecord(buf, hard, soft);
+  assertRejected(buf, sizeof buf);
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_defaults_match_legacy);
@@ -325,5 +443,10 @@ int main(int, char **) {
   RUN_TEST(test_lenient_skips_unknown_and_invalid);
   RUN_TEST(test_lenient_stops_at_truncation);
   RUN_TEST(test_lenient_restores_cross_field_invariants);
+  RUN_TEST(test_imu_fusion_defaults);
+  RUN_TEST(test_imu_fusion_registers_roundtrip);
+  RUN_TEST(test_imu_fusion_registers_reject_out_of_range);
+  RUN_TEST(test_mag_calibration_roundtrip);
+  RUN_TEST(test_mag_calibration_rejects_bad_length_and_singular_matrix);
   return UNITY_END();
 }

@@ -50,7 +50,8 @@ silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen b
  │ imu task │──drop-oldest)─────────────>│       app task        │──>│ BLE notify  │ IMU  (char 1)
  │ prio 3   │<─requestZero/Mounting──────│ prio 2                │──>│             │ CO2  (char 3)
  │          │──takeCapturedMounting─────>│  throttle → ImuPacket │──>│             │ Diag (char 5)
- └──────────┘   (mutex handoff)          │  CO2 on change / 1 Hz │   └─────────────┘
+ │          │──MagRawSample queue───────>│  CO2 on change / 1 Hz │   └─────────────┘
+ │          │  (depth 32, drop-oldest,   │  mag chunk (16/pkt)   │
                                          │  diag 1 Hz            │          │
  ┌──────────┐ onPeak: atomics only       │  LED update 20 Hz     │  BleCommand queue
  │audio task│──lastPeakMs_, peakPending_>│  pot poll 10 Hz       │<─(depth 8)──┤
@@ -84,6 +85,18 @@ silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen b
   the user's stored config.
 - **IMU → App (mounting)**: `0x14` sets a request flag; the IMU task captures the mounting
   quaternion and hands it over; the App task calls `ConfigStore::setMountQuat` + `save()`.
+- **App → IMU (settings)**: the IMU pipeline has six configurable stages, so
+  `ImuService::applyConfig` translates the whole config into ONE `ImuSettings` struct
+  (`imuSettingsFrom`, a pure function) and hands it over under a short critical section.
+  The IMU task picks it up at the top of its cycle and reprograms only what changed
+  (gyro range, rate and DLPF are register writes; the rest is filter state). A dozen
+  independent atomics would let a config write leave the task running half of the old
+  setup and half of the new one.
+- **IMU → App (magnetometer capture)**: `0x15` starts the capture; the IMU task pushes
+  each RAW magnetometer triplet into a depth-32 queue (drop-oldest, so a stalled reader
+  cannot stall the capture) and the App task batches 16 per `MagChunkPacket`. The
+  capture stops on `0x16` or after 180 s, whichever comes first. Nothing is fitted on
+  the device: the config-app solves the ellipsoid and writes back TLV `0x1E`.
 
 ### App task loop
 
