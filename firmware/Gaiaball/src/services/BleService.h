@@ -95,6 +95,11 @@ class BleService {
   // Queue of BleCommand items for the App task (depth 8). nullptr before begin().
   QueueHandle_t commandQueue() const { return cmdQueue_; }
 
+  // Read-only imuDetected status (TLV 0x35, see logic/ImuStatus.h), appended to every
+  // config read. The App sets it once after the IMU service starts; before that it reads
+  // as 0 (unconfigured, not found).
+  void setImuStatus(uint8_t status) { imuStatus_.store(status); }
+
   uint8_t connectedCount() const { return connCount_.load(); }
 
   // Connection interval granted by the central, in 0.1 ms per LSB (0 = not connected).
@@ -134,6 +139,7 @@ class BleService {
   // Mirror of one live handle for connIntervalMsX10(), which runs on the App task.
   std::atomic<uint16_t> liveHandle_{0xFFFF};
   std::atomic<uint8_t> connCount_{0};
+  std::atomic<uint8_t> imuStatus_{0};  // imuStatusByte(ImuChip::None, false)
   // Bit n set = slot n has notifications enabled on that characteristic.
   std::atomic<uint8_t> subMask_[kNotifyChars] = {{0}, {0}, {0}};
 };

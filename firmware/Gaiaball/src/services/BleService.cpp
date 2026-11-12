@@ -36,6 +36,7 @@ constexpr uint16_t kConnItvlMaxUnits = 12;   // x 1.25 ms = 15 ms
 constexpr uint16_t kConnLatency = 0;         // never skip an event: this is a live link
 constexpr uint16_t kConnTimeoutUnits = 400;  // x 10 ms = 4 s supervision timeout
 constexpr uint16_t kNoHandle = 0xFFFF;  // == BLE_HS_CONN_HANDLE_NONE
+constexpr uint8_t kTlvImuDetected = 0x35;  // read-only, see logic/ImuStatus.h
 constexpr size_t kConfigReadBuf = 384;  // see ConfigStore kTlvBufCap
 // onSubscribe() subValue bit for notifications (NimBLE-Arduino 1.4.3 keeps its
 // NIMBLE_SUB_NOTIFY private to NimBLECharacteristic.cpp).
@@ -323,6 +324,13 @@ void BleService::onConfigWrite(uint16_t connHandle, const uint8_t *data, size_t 
 void BleService::onConfigRead(NimBLECharacteristic *chr) {
   uint8_t buf[kConfigReadBuf];
   size_t n = store_->serializeTlv(buf, sizeof(buf));
+  // imuDetected (0x35) is read-only and lives outside the codec table: append it here.
+  // Skipped only if the config left no room for it (the full config is far below 384 B).
+  if (n + 3 <= sizeof(buf)) {
+    buf[n++] = kTlvImuDetected;
+    buf[n++] = 1;
+    buf[n++] = imuStatus_.load();
+  }
   chr->setValue(buf, n);
 }
 

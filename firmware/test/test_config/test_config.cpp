@@ -1,6 +1,7 @@
 #include <unity.h>
 #include <cstring>
 #include "../../Gaiaball/src/logic/GaiaConfig.h"
+#include "../../Gaiaball/src/logic/ImuStatus.h"
 #include "../../Gaiaball/src/logic/MagAxisRemap.h"
 #include "../../Gaiaball/src/logic/MagCalibration.h"
 #include "../../Gaiaball/src/logic/TlvCodec.h"
@@ -519,8 +520,51 @@ void test_roundtrip_preserves_both_new_registers(void) {
   TEST_ASSERT_EQUAL_UINT8(17, out.magAxisRemap);
 }
 
+// --- imuDetected (0x35): read-only, outside the codec table -------------------------
+
+void test_status_byte_encodes_boot_selection_and_found(void) {
+  TEST_ASSERT_EQUAL_UINT8(0x06, imuStatusByte(ImuChip::Mpu9250, true));  // 2 | kImuFound
+  TEST_ASSERT_EQUAL_UINT8(0x05, imuStatusByte(ImuChip::Icm20948, true));
+  TEST_ASSERT_EQUAL_UINT8(0x01, imuStatusByte(ImuChip::Icm20948, false));
+  TEST_ASSERT_EQUAL_UINT8(0x00, imuStatusByte(ImuChip::None, false));
+  TEST_ASSERT_EQUAL_UINT8(0x04, kImuFound);
+}
+
+void test_0x35_is_rejected_on_write(void) {
+  GaiaConfig c;
+  const uint8_t buf[] = {0x35, 1, 0x06};
+  TEST_ASSERT_FALSE(tlvApply(c, buf, sizeof(buf)));
+  // ...and it poisons the whole write, valid records included.
+  const uint8_t mixed[] = {0x02, 1, 100, 0x35, 1, 0x06};
+  TEST_ASSERT_FALSE(tlvApply(c, mixed, sizeof(mixed)));
+  TEST_ASSERT_EQUAL_UINT8(50, c.imuNotifyHz);
+}
+
+void test_0x35_never_appears_in_serialized_config(void) {
+  GaiaConfig c;
+  c.imuChip = 2;
+  uint8_t buf[384];
+  const size_t n = tlvSerialize(c, buf, sizeof(buf));
+  TEST_ASSERT_TRUE(n > 0);
+  for (size_t i = 0; i < n;) {
+    TEST_ASSERT_NOT_EQUAL(0x35, buf[i]);
+    i += 2u + buf[i + 1];
+  }
+}
+
+void test_serialized_config_leaves_room_for_status_record(void) {
+  GaiaConfig c;  // the 3-byte 0x35 record is appended after tlvSerialize in a 384 B buffer
+  uint8_t buf[384];
+  const size_t n = tlvSerialize(c, buf, sizeof(buf));
+  TEST_ASSERT_TRUE(n + 3 <= sizeof(buf));
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
+  RUN_TEST(test_status_byte_encodes_boot_selection_and_found);
+  RUN_TEST(test_0x35_is_rejected_on_write);
+  RUN_TEST(test_0x35_never_appears_in_serialized_config);
+  RUN_TEST(test_serialized_config_leaves_room_for_status_record);
   RUN_TEST(test_default_config_has_no_imu_selected);
   RUN_TEST(test_imu_chip_out_of_range_rejects_whole_write);
   RUN_TEST(test_mag_axis_remap_out_of_range_rejects_whole_write);
