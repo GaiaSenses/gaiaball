@@ -65,6 +65,16 @@ client.addEventListener('status', (ev) => {
   if ((ev as CustomEvent<{ connected: boolean }>).detail.connected) stats.reset();
 });
 
+// Read the configuration as soon as a link comes up, so the config panel's snapshot (the
+// "read before applying" guard) and the IMU status line are filled without a click. The
+// panels listen to 'config'; a failed read is non-fatal: "Ler do dispositivo" still works.
+client.addEventListener('status', (ev) => {
+  if (!(ev as CustomEvent<{ connected: boolean }>).detail.connected) return;
+  void client.readConfig()
+    .then((regs) => client.dispatchEvent(new CustomEvent('config', { detail: regs })))
+    .catch((e) => console.warn('leitura automática da configuração falhou', e));
+});
+
 // Top bar: connection chip mirrors the Conexão panel; theme button flips light/dark.
 const chip = app.querySelector<HTMLElement>('#conn-chip')!;
 client.addEventListener('status', (ev) => {

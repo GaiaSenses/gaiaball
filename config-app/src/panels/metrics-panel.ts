@@ -2,6 +2,8 @@ import type { GaiaballClient } from '../ble/gaiaball-client.ts';
 import type { StreamStats } from '../metrics/stream-stats.ts';
 import { AHRS_FLAG_OVERRANGE, type Co2Sample, type DiagSample } from '../protocol/packets.ts';
 import { resolvedTheme } from '../theme.ts';
+import { TLV } from '../protocol/tlv.ts';
+import { imuStatusText } from './config-panel.ts';
 import { decorateInfo } from './info.ts';
 import { RingBuffer, drawSparkline } from './sparkline.ts';
 
@@ -23,6 +25,7 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
     </dl>
     <h3>Firmware <span class="msg">— medidas pela própria bola (diagnóstico a 1 Hz)</span></h3>
     <dl class="metrics">
+      <dt data-info="Estado do IMU escolhido em Configuração: “ok” = o sensor foi encontrado no boot; “selecionado, não encontrado” = o chip escolhido não respondeu (confira a escolha e a fiação); “trocado, aguardando reinício” = a seleção mudou, mas a bola ainda roda com o chip do último boot; “não configurado” = IMU desligado (padrão de fábrica). Vem da leitura da configuração, feita ao conectar. Sem unidade.">Estado do IMU</dt><dd id="d-imustate">–</dd><span></span>
       <dt data-info="Taxa real de amostragem da IMU, medida pelo firmware. Unidade: hertz (Hz).">IMU</dt><dd id="d-imuhz">–</dd><span></span>
       <dt data-info="Taxa real de notificações BLE de orientação enviadas pelo firmware. Unidade: hertz (Hz).">Notify</dt><dd id="d-nothz">–</dd><span></span>
       <dt data-info="Contador acumulado de falhas de leitura da IMU no barramento I²C desde o boot. Adimensional.">Erros I²C da IMU</dt><dd id="d-fifo">–</dd><span></span>
@@ -46,6 +49,18 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
 
   client.addEventListener('diag', (ev) => { diag = (ev as CustomEvent<DiagSample>).detail; });
   client.addEventListener('co2', (ev) => { co2 = (ev as CustomEvent<Co2Sample>).detail; });
+
+  // The configuration is read on connect and after every Aplicar/Ler; 0x35 has no Field, so it is read here.
+  client.addEventListener('config', (ev) => {
+    const regs = (ev as CustomEvent<Map<number, DataView>>).detail;
+    const det = regs.get(TLV.imuDetected), sel = regs.get(TLV.imuChip);
+    $('d-imustate').textContent = sel && sel.byteLength === 1
+      ? imuStatusText(det && det.byteLength === 1 ? det.getUint8(0) : undefined, sel.getUint8(0))
+      : '–';
+  });
+  client.addEventListener('status', (ev) => {
+    if (!(ev as CustomEvent<{ connected: boolean }>).detail.connected) $('d-imustate').textContent = '–';
+  });
 
   const flag = (name: string, ok: boolean) =>
     `<span class="${ok ? 'ok' : 'fail'}">${name} ${ok ? 'OK' : 'falha'}</span>`;

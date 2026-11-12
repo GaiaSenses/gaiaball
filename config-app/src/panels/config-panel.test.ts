@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BASIC_FIELD_IDS, CONFIG_FIELDS, FIELD_DEFAULTS, dlpfOptions, imuRebootPending, isPerBall, resolveOptions,
+  BASIC_FIELD_IDS, CONFIG_FIELDS, FIELD_DEFAULTS, dlpfOptions, imuRebootPending, imuStatusText, isPerBall, resolveOptions,
 } from './config-panel';
 import { encodeTlv, TLV } from '../protocol/tlv';
 
@@ -128,5 +128,20 @@ describe('reboot banner', () => {
   it('stays after Aplicar: the stored value now equals the selection but the boot chip does not', () => {
     expect(imuRebootPending(2, 2, 0x05)).toBe(true); // booted ICM, now GY-91
     expect(imuRebootPending(1, 1, 0x05)).toBe(false);
+  });
+});
+
+describe('IMU status line', () => {
+  it.each([
+    [undefined, 0, 'não configurado'],
+    [0x06, 2, 'GY-91 (MPU-9250) ok'],
+    [0x01, 1, 'ICM-20948 selecionado, não encontrado'],
+    [0x05, 2, 'trocado, aguardando reinício'], // boot = ICM + found, current selection = GY-91
+  ])('descreve o estado do IMU (%s, %s)', (detected, selected, want) => {
+    expect(imuStatusText(detected, selected)).toBe(want);
+  });
+  it('does not accuse a good ball of a missing sensor right after a switch', () => {
+    expect(imuStatusText(0x05, 2)).not.toMatch(/não encontrado/);
+    expect(imuStatusText(0x05, 0)).toBe('trocado, aguardando reinício'); // switched back to off, still running ICM
   });
 });
