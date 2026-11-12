@@ -109,6 +109,8 @@ describe('DLPF labels follow the chip', () => {
     expect(dlpfOptions(1)).not.toContainEqual([3, '41 Hz']); // ICM-20948
     expect(dlpfOptions(1)).toContainEqual([3, '51,2 Hz']);
     expect(dlpfOptions(1)).toContainEqual([0, 'automático']);
+    expect(dlpfOptions(1).map(([i]) => i)).not.toContain(7); // 361,4 Hz: aliasing, not offered
+    expect(dlpfOptions(2).map(([i]) => i)).not.toContain(7); // 3600 Hz
     expect(dlpfOptions(2)).toContainEqual([0, 'automático']);
   });
   it('the DLPF field resolves its options from the configuration', () => {
@@ -134,8 +136,12 @@ describe('reboot banner', () => {
 describe('IMU status line', () => {
   it.each([
     [undefined, 0, 'não configurado'],
-    [0x06, 2, 'GY-91 (MPU-9250) ok'],
+    [0x0E, 2, 'GY-91 (MPU-9250) ok'],
+    [0x0D, 1, 'ICM-20948 ok'],
+    [0x05, 1, 'ICM-20948 ok (sem magnetômetro)'], // chip found, AK09916 not
+    [0x06, 2, 'GY-91 (MPU-9250) ok (sem magnetômetro)'],
     [0x01, 1, 'ICM-20948 selecionado, não encontrado'],
+    [0x09, 1, 'ICM-20948 selecionado, não encontrado'], // mag bit without chip: the chip verdict wins
     [0x05, 2, 'trocado, aguardando reinício'], // boot = ICM + found, current selection = GY-91
   ])('descreve o estado do IMU (%s, %s)', (detected, selected, want) => {
     expect(imuStatusText(detected, selected)).toBe(want);

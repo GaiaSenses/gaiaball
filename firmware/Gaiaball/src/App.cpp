@@ -73,7 +73,7 @@ void App::begin() {
   // The one writer of the read-only imuDetected register (TLV 0x35): what was selected
   // at boot plus whether the sensor actually answered, which is how the app tells "no
   // IMU configured" apart from "configured chip missing".
-  ble_.setImuStatus(imuStatusByte(imu_.bootChip(), imu_.imuOk()));
+  ble_.setImuStatus(imuStatusByte(imu_.bootChip(), imu_.imuOk(), imu_.magFound()));
 
   pot_.begin(cfg);
   threshold_.store(pot_.threshold());

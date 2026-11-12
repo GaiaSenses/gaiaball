@@ -126,6 +126,8 @@ class ImuService {
   QueueHandle_t sampleQueue() const { return queue_; }
   QueueHandle_t magQueue() const { return magQueue_; }
   bool imuOk() const { return imuOk_; }
+  // True when the selected driver found its magnetometer. Null-safe (no IMU selected).
+  bool magFound() const { return imu_ != nullptr && imu_->magOk(); }
 
   // Callable from any task (e.g. BLE). Executed by the IMU task on its next sample.
   void requestZeroOrientation() { zeroRequested_.store(true); }

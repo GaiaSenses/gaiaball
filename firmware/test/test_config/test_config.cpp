@@ -528,6 +528,12 @@ void test_status_byte_encodes_boot_selection_and_found(void) {
   TEST_ASSERT_EQUAL_UINT8(0x01, imuStatusByte(ImuChip::Icm20948, false));
   TEST_ASSERT_EQUAL_UINT8(0x00, imuStatusByte(ImuChip::None, false));
   TEST_ASSERT_EQUAL_UINT8(0x04, kImuFound);
+  // Bit 3: magnetometer found; independent of the other bits.
+  TEST_ASSERT_EQUAL_UINT8(0x08, kImuMagFound);
+  TEST_ASSERT_EQUAL_UINT8(0x0D, imuStatusByte(ImuChip::Icm20948, true, true));
+  TEST_ASSERT_EQUAL_UINT8(0x0E, imuStatusByte(ImuChip::Mpu9250, true, true));
+  TEST_ASSERT_EQUAL_UINT8(0x05, imuStatusByte(ImuChip::Icm20948, true, false));
+  TEST_ASSERT_EQUAL_UINT8(0x00, imuStatusByte(ImuChip::None, false, false));
 }
 
 void test_0x35_is_rejected_on_write(void) {

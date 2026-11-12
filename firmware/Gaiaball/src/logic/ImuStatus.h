@@ -11,9 +11,13 @@ namespace gaia {
 // bits 0..1: the ImuChip in force at BOOT; bit 2: the sensor was actually found.
 constexpr uint8_t kImuFound = 1u << 2;
 
+// bit 3: the magnetometer answered (WHO_AM_I pair). Without it Quat9 runs as 6-axis.
+constexpr uint8_t kImuMagFound = 1u << 3;
+
 // C++11 constexpr: a single return statement.
-constexpr uint8_t imuStatusByte(ImuChip bootChip, bool found) {
-  return static_cast<uint8_t>((static_cast<uint8_t>(bootChip) & 0x03u) | (found ? kImuFound : 0u));
+constexpr uint8_t imuStatusByte(ImuChip bootChip, bool found, bool magFound = false) {
+  return static_cast<uint8_t>((static_cast<uint8_t>(bootChip) & 0x03u) | (found ? kImuFound : 0u) |
+                              (magFound ? kImuMagFound : 0u));
 }
 
 }  // namespace gaia

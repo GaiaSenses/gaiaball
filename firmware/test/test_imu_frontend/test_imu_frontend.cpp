@@ -18,6 +18,19 @@ void test_mpu_auto_dlpf_matches_legacy(void) {  // preserves the shipped behavio
   TEST_ASSERT_EQUAL_FLOAT(50.0f, p.actualHz);
 }
 
+// Pins the documented auto choice at the default 50 Hz (README table, protocol.md 0x05,
+// Icm20948::dlpfMode_). The ICM lands one index narrower than the MPU: its 23.9 Hz entry
+// is above the 0.47 * 50 = 23.5 Hz guard.
+void test_auto_dlpf_at_default_50hz_both_chips(void) {
+  const FrontEndPlan mpu = planFrontEnd(ImuChip::Mpu9250, 50, 0);
+  TEST_ASSERT_EQUAL_UINT8(4, mpu.dlpfMode);
+  TEST_ASSERT_EQUAL_FLOAT(20.0f, mpu.cutoffHz);
+  const FrontEndPlan icm = planFrontEnd(ImuChip::Icm20948, 50, 0);
+  TEST_ASSERT_EQUAL_UINT8(5, icm.dlpfMode);
+  TEST_ASSERT_EQUAL_FLOAT(11.6f, icm.cutoffHz);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 48.91f, icm.actualHz);  // 1125 / 23
+}
+
 void test_mpu_legacy_extremes(void) {
   // Rates below 4 Hz are clamped; below ~11 Hz the narrowest filter (5 Hz) is used.
   const FrontEndPlan lo = planFrontEnd(ImuChip::Mpu9250, 1, 0);
@@ -72,6 +85,7 @@ void test_cutoff_tables_differ_between_chips(void) {
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_mpu_auto_dlpf_matches_legacy);
+  RUN_TEST(test_auto_dlpf_at_default_50hz_both_chips);
   RUN_TEST(test_mpu_legacy_extremes);
   RUN_TEST(test_icm_divisors_at_rate_extremes);
   RUN_TEST(test_icm_lowest_rate_uses_narrowest_filter);

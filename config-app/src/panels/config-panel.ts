@@ -27,15 +27,16 @@ export const resolveOptions = (f: Field, cfg: Map<number, unknown>): [number, st
 /**
  * DLPF labels per chip. The register value is the same index on both chips, but the cut-offs
  * differ: MPU-9250 DLPF_CFG 1..7 = 184/92/41/20/10/5/3600 Hz; ICM-20948 GYRO_DLPFCFG 1..7 =
- * 151.8/119.5/51.2/23.9/11.6/5.7/361.4 Hz. The ICM accel cut-offs differ slightly from its
+ * 151.8/119.5/51.2/23.9/11.6/5.7/361.4 Hz. Index 7 (3600 / 361.4 Hz) is not offered: against a
+ * 10-200 Hz output it is no filter at all, only aliasing. The ICM accel cut-offs differ slightly from its
  * gyro ones (the firmware writes the same index to both): these are the gyro values.
  */
 export function dlpfOptions(chip: number): [number, string][] {
   const auto: [number, string] = [0, 'automático'];
-  if (chip === 1) return [auto, [1, '151,8 Hz'], [2, '119,5 Hz'], [3, '51,2 Hz'], [4, '23,9 Hz'], [5, '11,6 Hz'], [6, '5,7 Hz'], [7, '361,4 Hz']];
-  if (chip === 2) return [auto, [1, '184 Hz'], [2, '92 Hz'], [3, '41 Hz'], [4, '20 Hz'], [5, '10 Hz'], [6, '5 Hz'], [7, '3600 Hz']];
+  if (chip === 1) return [auto, [1, '151,8 Hz'], [2, '119,5 Hz'], [3, '51,2 Hz'], [4, '23,9 Hz'], [5, '11,6 Hz'], [6, '5,7 Hz']];
+  if (chip === 2) return [auto, [1, '184 Hz'], [2, '92 Hz'], [3, '41 Hz'], [4, '20 Hz'], [5, '10 Hz'], [6, '5 Hz']];
   // IMU not selected: the cut-off depends on the chip, so only the index is honest.
-  return [auto, ...[1, 2, 3, 4, 5, 6, 7].map((i): [number, string] => [i, `índice ${i} (depende do IMU)`])];
+  return [auto, ...[1, 2, 3, 4, 5, 6].map((i): [number, string] => [i, `índice ${i} (depende do IMU)`])];
 }
 
 /**
@@ -67,13 +68,14 @@ export function imuRebootPending(selected: number, readChip: number | undefined,
   return ref !== undefined && selected !== ref;
 }
 
-/** One-line IMU state from TLV 0x35 (bits 0-1 chip at boot, bit 2 found) and the live selection. */
+/** One-line IMU state from TLV 0x35 (bits 0-1 chip at boot, bit 2 found, bit 3 magnetometer found) and the live selection. */
 export function imuStatusText(detected: number | undefined, selected: number): string {
   if (detected === undefined) return selected === 0 ? 'não configurado' : `${IMU_NAMES[selected] ?? '?'} selecionado`;
-  const boot = detected & 0x03, found = (detected & 0x04) !== 0;
+  const boot = detected & 0x03, found = (detected & 0x04) !== 0, mag = (detected & 0x08) !== 0;
   if (boot !== selected) return 'trocado, aguardando reinício';
   if (boot === 0) return 'não configurado';
-  return found ? `${IMU_NAMES[boot]} ok` : `${IMU_NAMES[boot]} selecionado, não encontrado`;
+  if (!found) return `${IMU_NAMES[boot]} selecionado, não encontrado`;
+  return mag ? `${IMU_NAMES[boot]} ok` : `${IMU_NAMES[boot]} ok (sem magnetômetro)`;
 }
 
 const GROUPS: Group[] = [
@@ -89,7 +91,7 @@ const GROUPS: Group[] = [
       info: 'Fundo de escala do giroscópio. Mais estreito mede mais fino (±250 → 0,0076 °/s por bit; ±2000 → 0,061 °/s) e essa resolução é integrada direto na deriva da orientação. Estreito demais satura: uma bola girada na mão passa fácil de 500 °/s e a fusão precisa reiniciar. O giroscópio não vai no fio, então mudar a faixa não afeta nenhum cliente. Seleção, sem unidade.' },
     { id: TLV.imuDlpfMode, label: 'Filtro anti-serrilhamento (DLPF)', kind: 'select',
       options: (cfg) => dlpfOptions(Number(cfg.get(TLV.imuChip) ?? 0)),
-      info: 'Passa-baixas interno do IMU (os cortes mostrados dependem do chip escolhido em “IMU”; no ICM-20948 o acelerômetro tem cortes ligeiramente diferentes, e os rótulos são os do giroscópio), aplicado ANTES da decimação para a taxa de saída. A decimação não faz média: o que passar acima da metade da taxa volta dobrado para dentro da banda (aliasing) e depois é indistinguível de movimento real — é assim que vibração entra como tremor lento. “Automático” escolhe o corte mais largo que ainda fica abaixo da metade da taxa (50 Hz → 20 Hz). Unidade: hertz (Hz).' },
+      info: 'Passa-baixas interno do IMU (os cortes mostrados dependem do chip escolhido em “IMU”; no ICM-20948 o acelerômetro tem cortes ligeiramente diferentes, e os rótulos são os do giroscópio), aplicado ANTES da decimação para a taxa de saída. A decimação não faz média: o que passar acima da metade da taxa volta dobrado para dentro da banda (aliasing) e depois é indistinguível de movimento real — é assim que vibração entra como tremor lento. “Automático” escolhe o corte mais largo que ainda fica abaixo da metade da taxa (a 50 Hz → 20 Hz no MPU-9250 e 11,6 Hz no ICM-20948, cujos cortes ficam um índice acima do limite e por isso caem um índice mais estreito). O índice 7 (sem filtro útil) não é oferecido. Unidade: hertz (Hz).' },
   ] },
   { title: 'Fusão (AHRS)', fields: [
     { id: TLV.magAxisRemap, label: 'Eixos do magnetômetro', kind: 'select', options: MAG_AXIS_OPTIONS,
