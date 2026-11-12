@@ -3,6 +3,7 @@
 #include <Arduino.h>
 
 #include "Logger.h"
+#include "../logic/ImuFrontEnd.h"
 
 namespace gaia {
 
@@ -30,24 +31,12 @@ constexpr uint8_t kMagRegCntl1 = 0x0A;
 constexpr uint8_t kMagRegAsax = 0x10;
 constexpr float kMagUtPerLsb = 0.15f;  // 16-bit mode
 
-// Gyroscope DLPF cut-off per DLPF_CFG value (datasheet table, FCHOICE_B = 0). Index 7
-// (3600 Hz) exists but is never chosen automatically.
-constexpr float kGyroDlpfHz[8] = {250.0f, 184.0f, 92.0f, 41.0f, 20.0f, 10.0f, 5.0f, 3600.0f};
 // Gyroscope sensitivity per FS_SEL value, and the matching full-scale magnitude.
 constexpr float kGyroLsbPerDps[Mpu9250::kGyroFsCount] = {131.0f, 65.5f, 32.8f, 16.4f};
 constexpr float kGyroRangeDps[Mpu9250::kGyroFsCount] = {250.0f, 500.0f, 1000.0f, 2000.0f};
-
-// Widest DLPF whose cut-off still sits below the output Nyquist frequency. 0.47 (not
-// 0.5) leaves a guard band for the filter's own transition region.
-uint8_t autoDlpfMode(uint8_t hz) {
-  const float limit = 0.47f * (float)hz;
-  for (uint8_t m = 0; m <= 6; ++m)
-    if (kGyroDlpfHz[m] <= limit) return m;
-  return 6;  // 5 Hz: the narrowest available, for the lowest output rates
-}
 }  // namespace
 
-float Mpu9250::dlpfCutoffHz() const { return kGyroDlpfHz[dlpfMode_ & 0x07]; }
+float Mpu9250::dlpfCutoffHz() const { return dlpfCutoffHzFor(ImuChip::Mpu9250, dlpfMode_); }
 
 bool Mpu9250::write8(uint8_t addr, uint8_t reg, uint8_t val) {
   wire_->beginTransmission(addr);
@@ -123,18 +112,15 @@ bool Mpu9250::setGyroFullScale(uint8_t fsSel) {
 }
 
 bool Mpu9250::setSampleRateHz(uint8_t hz, uint8_t dlpfMode) {
-  if (hz < 4) hz = 4;
-  const uint8_t mode = (dlpfMode == 0 || dlpfMode > 7) ? autoDlpfMode(hz) : dlpfMode;
+  const FrontEndPlan plan = planFrontEnd(ImuChip::Mpu9250, hz, dlpfMode);
+  const uint8_t mode = plan.dlpfMode;
   bool ok = write8(addr_, kRegConfig, mode);          // gyro DLPF, internal rate 1 kHz
   ok &= write8(addr_, kRegAccelConfig2, mode);        // accel DLPF (same index)
-  uint16_t div = (uint16_t)((1000 + hz / 2) / hz);
-  if (div > 0) div -= 1;
-  if (div > 255) div = 255;
-  ok &= write8(addr_, kRegSmplrtDiv, (uint8_t)div);
+  ok &= write8(addr_, kRegSmplrtDiv, (uint8_t)plan.gyroDiv);
   if (!ok) return false;
   dlpfMode_ = mode;
-  GB_LOGI(kTag, "rate %u Hz, DLPF %.0f Hz (mode %u%s)", (unsigned)hz, kGyroDlpfHz[mode],
-          (unsigned)mode, dlpfMode == 0 ? ", auto" : "");
+  GB_LOGI(kTag, "rate %u Hz, DLPF %.0f Hz (mode %u%s)", (unsigned)(hz < 4 ? 4 : hz),
+          plan.cutoffHz, (unsigned)mode, dlpfMode == 0 ? ", auto" : "");
   return true;
 }
 
