@@ -28,7 +28,7 @@ constexpr uint8_t kMagRemapCount = 24;
 // never touches the setting behaves exactly as before. Pinned by a static_assert in the .cpp.
 constexpr uint8_t kMagRemapDefault = 8;
 
-// Out-of-range indices behave as kMagRemapDefault. `in` and `out` must not alias.
+// Out-of-range indices behave as kMagRemapDefault. `in` and `out` may alias.
 void applyMagRemap(uint8_t index, const float in[3], float out[3]);
 
 // For log lines and documentation; never null.

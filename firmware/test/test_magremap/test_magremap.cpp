@@ -83,6 +83,34 @@ void test_out_of_range_falls_back_to_default(void) {
   TEST_ASSERT_EQUAL_STRING(magRemapLabel(kMagRemapDefault), magRemapLabel(kMagRemapCount));
 }
 
+// Absolute anchors for the documented order; the property tests above pass for any reordering.
+void test_documented_order_is_pinned_at_spread_indices(void) {
+  struct Pin { uint8_t index; const char *label; float want[3]; };
+  const Pin pins[] = {
+      {1, "+X -Y -Z", {1.0f, -2.0f, -3.0f}},    // XYZ group, second sign pattern
+      {4, "+X +Z -Y", {1.0f, 3.0f, -2.0f}},     // first entry of the XZY group
+      {12, "+Y +Z +X", {2.0f, 3.0f, 1.0f}},     // first entry of the YZX group
+      {23, "-Z -Y -X", {-3.0f, -2.0f, -1.0f}},  // last entry
+  };
+  const float in[3] = {1.0f, 2.0f, 3.0f};
+  for (const Pin &p : pins) {
+    float out[3];
+    TEST_ASSERT_EQUAL_STRING(p.label, magRemapLabel(p.index));
+    applyMagRemap(p.index, in, out);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(p.want, out, 3);
+  }
+}
+
+void test_in_place_remap_is_safe(void) {
+  for (uint8_t i = 0; i < kMagRemapCount; ++i) {
+    const float in[3] = {1.0f, 2.0f, 3.0f};
+    float separate[3], inPlace[3] = {1.0f, 2.0f, 3.0f};
+    applyMagRemap(i, in, separate);
+    applyMagRemap(i, inPlace, inPlace);
+    TEST_ASSERT_EQUAL_FLOAT_ARRAY(separate, inPlace, 3);
+  }
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_default_reproduces_current_behaviour);
@@ -91,5 +119,7 @@ int main(int, char **) {
   RUN_TEST(test_all_24_are_distinct);
   RUN_TEST(test_labels_are_unique_and_describe_the_mapping);
   RUN_TEST(test_out_of_range_falls_back_to_default);
+  RUN_TEST(test_documented_order_is_pinned_at_spread_indices);
+  RUN_TEST(test_in_place_remap_is_safe);
   return UNITY_END();
 }

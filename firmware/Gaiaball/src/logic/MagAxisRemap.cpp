@@ -39,16 +39,20 @@ constexpr MagRemapEntry kMagRemapTable[kMagRemapCount] = {
     {{2, 1, 0}, {-1, -1, -1}, "-Z -Y -X"},
 };
 
-static_assert(kMagRemapTable[kMagRemapDefault].src[0] == 1 && kMagRemapTable[kMagRemapDefault].src[1] == 0 &&
-                  kMagRemapTable[kMagRemapDefault].src[2] == 2 && kMagRemapTable[kMagRemapDefault].sgn[0] == 1 &&
-                  kMagRemapTable[kMagRemapDefault].sgn[1] == 1 && kMagRemapTable[kMagRemapDefault].sgn[2] == -1,
+constexpr bool isDefaultMapping(const MagRemapEntry &e) {
+  return e.src[0] == 1 && e.src[1] == 0 && e.src[2] == 2 &&
+         e.sgn[0] == 1 && e.sgn[1] == 1 && e.sgn[2] == -1;
+}
+static_assert(isDefaultMapping(kMagRemapTable[kMagRemapDefault]),
               "default remap must stay {+Y, +X, -Z}");
 
 }  // namespace
 
 void applyMagRemap(uint8_t index, const float in[3], float out[3]) {
   const MagRemapEntry &e = kMagRemapTable[index < kMagRemapCount ? index : kMagRemapDefault];
-  for (int k = 0; k < 3; ++k) out[k] = e.sgn[k] > 0 ? in[e.src[k]] : -in[e.src[k]];
+  // Copy first so in == out is safe: a permutation reads every input before any output is final.
+  const float v[3] = {in[0], in[1], in[2]};
+  for (int k = 0; k < 3; ++k) out[k] = e.sgn[k] > 0 ? v[e.src[k]] : -v[e.src[k]];
 }
 
 const char *magRemapLabel(uint8_t index) {
