@@ -5,7 +5,7 @@ Este roteiro acompanha o checklist da seção 7 do relatório interativo
 foi medido em hardware até aqui: taxas e estabilidade são **metas de projeto** a confirmar.
 
 Metas de aceitação (spec `docs/superpowers/specs/2026-11-06-gaiaball-v2-design.md`):
-notify de orientação 50–60 Hz, latência medida < 50 ms, 24 h sem travar, zero NaN.
+notify de orientação 50–60 Hz (taxa real por chip na configuração padrão de 50 Hz: MPU-9250 50,00 Hz = 1000/20; ICM-20948 48,91 Hz = 1125/23, por quantização da base de 1125 Hz; ambos são aprovados se ≥ 48 Hz), latência medida < 50 ms, 24 h sem travar, zero NaN.
 
 ## 1. Pré-requisitos
 
@@ -31,26 +31,31 @@ e falha com `Errno 13` (permissão negada). No Windows, com o [usbipd-win](https
 instalado:
 
 ```powershell
-usbipd list                                  # anote o BUSID do conversor USB-serial (ex.: 2-3)
+usbipd list                                  # anote o BUSID do conversor USB-serial (ex.: 1-2, um CP2102)
 usbipd bind --busid <X-Y>                    # UMA vez, em PowerShell de administrador
 usbipd attach --wsl --busid <X-Y>            # a CADA vez que replugar o cabo
 ```
 
-No WSL, confirme que a porta apareceu e que o seu usuário consegue abri-la:
-
-```sh
-ls -l /dev/ttyUSB0                           # deve existir; grupo dialout
-```
-
-Se existir mas der permissão negada, instale as regras udev do PlatformIO (elas liberam as
-placas ESP32/CP210x/CH340 para o seu usuário) e recarregue:
+No WSL, instale **primeiro** as regras udev do PlatformIO (elas liberam as placas
+ESP32/CP210x/CH340 com `MODE:="0666"`, então a permissão de grupo deixa de importar) e
+recarregue o udev:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/system/99-platformio-udev.rules \
   | sudo tee /etc/udev/rules.d/99-platformio-udev.rules
-sudo udevadm control --reload-rules && sudo udevadm trigger
-sudo usermod -aG dialout "$USER"             # e reabra o terminal
+sudo service udev reload
 ```
+
+Depois confirme que a porta apareceu e está aberta para todos (replugue o cabo ou refaça o
+`usbipd attach` se ela já estava listada antes das regras):
+
+```sh
+ls -l /dev/ttyUSB0                           # esperado: crw-rw-rw- 1 root dialout 188, 0 ...
+```
+
+Não use `usermod -aG dialout`: no WSL2 reabrir o terminal não atualiza os grupos; só
+`wsl --shutdown` o faz, e isso derruba a sessão **e** o `usbipd attach` (seria preciso
+anexar de novo). Com as regras udev isso é desnecessário.
 
 Depois grave **sempre com a porta explícita** para nunca cair em `/dev/ttyS0`:
 `pio run -d firmware -e esp32dev -t upload --upload-port /dev/ttyUSB0`. Após cada replug

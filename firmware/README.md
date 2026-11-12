@@ -297,7 +297,8 @@ choosing a DLPF index by hand:
 | Register map | flat, one bank | **banked** (4 banks sharing addresses `0x00..0x7E`; `REG_BANK_SEL` `0x7F` is the only register visible in all of them); a read in the wrong bank returns plausible garbage |
 | Rate dividers | one `SMPLRT_DIV`, 1 kHz base | **separate** gyro (8-bit) and accel (12-bit) dividers, 1125 Hz base |
 | DLPF index 1..7 (gyro) | 184 / 92 / 41 / 20 / 10 / 5 / 3600 Hz | 151.8 / 119.5 / 51.2 / 23.9 / 11.6 / 5.7 / 361.4 Hz (accel cut-offs differ slightly; same index is written to both) |
-| Auto DLPF at 50 Hz | 20 Hz | 23.9 Hz |
+| Auto DLPF at 50 Hz | 20 Hz (mode 4) | 11.6 Hz (mode 5) |
+| Auto DLPF, same configured rate | picks index *n* | lands one index narrower than the MPU for most rates (e.g. 50 Hz: 11.6 Hz vs 20 Hz), because the ICM cut-offs (51.2 / 23.9 / 11.6 ...) sit just above the `0.47 × rate` guard the unchanged auto rule applies (at 50 Hz the limit is 23.5 Hz, and 23.9 Hz does not fit). Forcing index 4 (23.9 Hz) is possible and is a bench decision |
 | Magnetometer | AK8963 at `0x0C` via I2C bypass; 16-bit with per-axis factory ASA trim; 0.15 µT/LSB after trim; little-endian | AK09916 at `0x0C` via pass-through; 16-bit, fixed 0.15 µT/LSB, **no** ASA fuse ROM; `WIA1` `0x48` and `WIA2` `0x09` (the AK8963 also reports `0x48` in `WIA1`, so only the pair tells them apart) |
 | Magnetometer axes | AK8963 frame | different from the accel/gyro frame on both chips; the operator-selected `magAxisRemap` (TLV `0x36`) puts it right |
 | Data ready | `INT_STATUS` bit 0 | `INT_STATUS_1` bit 0 (clear-on-read behaviour not confirmed from the vendored register map: see `docs/bench-validation.md`) |

@@ -74,7 +74,7 @@ class Icm20948 : public ImuDriver {
   uint8_t addr_ = 0x68;
   uint8_t whoAmI_ = 0;
   uint8_t bank_ = 0xFF;   // unknown: forces a REG_BANK_SEL write on the first operation
-  uint8_t dlpfMode_ = 4;  // 23.9 Hz: the auto choice for the default 50 Hz output
+  uint8_t dlpfMode_ = 5;  // 11.6 Hz: what planFrontEnd() picks (auto) for the default 50 Hz output
   uint8_t gyroFsSel_ = 2;         // ±1000 dps default, mirrored by the two fields below
   float gyroLsbPerDps_ = 32.8f;
   float gyroRangeDps_ = 1000.0f;
