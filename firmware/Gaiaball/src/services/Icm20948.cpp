@@ -207,9 +207,12 @@ bool Icm20948::setGyroFullScale(uint8_t fsSel) {
     selectBank(0);
     return false;
   }
-  if (!selectBank(0)) return false;
+  // The register write succeeded: the chip IS in the new range. Publish the matching
+  // sensitivity now, before the fallible bank restore, so it can never describe a range
+  // the chip is not in (ImuService divides every gyro reading by it).
   gyroLsbPerDps_ = kGyroLsbPerDps[fsSel];
   gyroRangeDps_ = kGyroRangeDps[fsSel];
+  if (!selectBank(0)) return false;  // bank_ is already marked unknown; readers re-select
   GB_LOGI(kTag, "gyro range ±%d dps (%.1f LSB/dps)", (int)gyroRangeDps_, gyroLsbPerDps_);
   return true;
 }
@@ -230,10 +233,14 @@ bool Icm20948::setSampleRateHz(uint8_t hz, uint8_t dlpfMode) {
   ok = ok && writeGyroConfig1();
   ok = ok && writeAccelConfig();
   const bool bankOk = selectBank(0);  // data lives in bank 0: always go back
-  if (!ok || !bankOk) {
+  // Only a failed register write rolls the shadow back. If every write landed but the
+  // bank restore failed, the chip already runs the new filter and the shadow must say so
+  // (writeGyroConfig1() reuses dlpfMode_ on the next gyro range change).
+  if (!ok) {
     dlpfMode_ = previous;
     return false;
   }
+  if (!bankOk) return false;
   GB_LOGI(kTag, "rate %u Hz, DLPF %.0f Hz (mode %u%s), div g=%u a=%u",
           (unsigned)(hz < 4 ? 4 : hz), plan.cutoffHz, (unsigned)plan.dlpfMode,
           dlpfMode == 0 ? ", auto" : "", (unsigned)plan.gyroDiv, (unsigned)plan.accelDiv);

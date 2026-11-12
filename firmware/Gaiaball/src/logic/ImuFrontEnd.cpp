@@ -12,8 +12,11 @@ constexpr float kMpuDlpfHz[8] = {250.0f, 184.0f, 92.0f, 41.0f, 20.0f, 10.0f, 5.0
 // which remains the upstream authority. Index 7 (361.4 Hz) is never automatic.
 constexpr float kIcmDlpfHz[8] = {196.6f, 151.8f, 119.5f, 51.2f, 23.9f, 11.6f, 5.7f, 361.4f};
 
-constexpr float kMpuBaseHz = 1000.0f;
-constexpr float kIcmBaseHz = 1125.0f;
+// One source for each base rate: the integer feeds divider(), the float feeds actualHz.
+constexpr uint16_t kMpuBase = 1000;
+constexpr uint16_t kIcmBase = 1125;
+constexpr float kMpuBaseHz = (float)kMpuBase;
+constexpr float kIcmBaseHz = (float)kIcmBase;
 
 const float *table(ImuChip chip) { return chip == ImuChip::Icm20948 ? kIcmDlpfHz : kMpuDlpfHz; }
 
@@ -43,11 +46,11 @@ FrontEndPlan planFrontEnd(ImuChip chip, uint8_t requestedHz, uint8_t forcedDlpfM
                                                            : forcedDlpfMode;
   p.cutoffHz = dlpfCutoffHzFor(chip, p.dlpfMode);
   if (chip == ImuChip::Icm20948) {
-    p.gyroDiv = divider(1125, requestedHz, 255);     // GYRO_SMPLRT_DIV: 8 bits
-    p.accelDiv = divider(1125, requestedHz, 4095);   // ACCEL_SMPLRT_DIV: 12 bits
+    p.gyroDiv = divider(kIcmBase, requestedHz, 255);     // GYRO_SMPLRT_DIV: 8 bits
+    p.accelDiv = divider(kIcmBase, requestedHz, 4095);   // ACCEL_SMPLRT_DIV: 12 bits
     p.actualHz = kIcmBaseHz / (1.0f + (float)p.gyroDiv);
   } else {
-    p.gyroDiv = divider(1000, requestedHz, 255);
+    p.gyroDiv = divider(kMpuBase, requestedHz, 255);
     p.accelDiv = p.gyroDiv;
     p.actualHz = kMpuBaseHz / (1.0f + (float)p.gyroDiv);
   }
