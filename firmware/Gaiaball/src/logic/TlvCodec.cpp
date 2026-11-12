@@ -43,12 +43,16 @@ constexpr Reg kRegs[] = {
     {0x25, Kind::U16, 0, kAnyU16},    {0x26, Kind::U8, 0, kAnyU8},
     {0x28, Kind::U16, 1, 1000},
     {0x30, Kind::U8, 0, kMaxGpio},    {0x31, Kind::U8, 0, kMaxGpio},
-    {0x32, Kind::U16, 0, kAnyU16},    {0x40, Kind::Str, 0, 0},
+    {0x32, Kind::U16, 0, kAnyU16},
+    {0x34, Kind::U8, 0, 2},           {0x36, Kind::U8, 0, 23},
+    {0x40, Kind::Str, 0, 0},
     {kTlvPin, Kind::Pin, 0, 0},       {0x50, Kind::U8, 0, 1},
 };
 // Reserved ids (never reuse): 0x21 (was co2ChecksumVariant) and 0x27 (was co2Protocol)
 // — both removed once the SC8-CO2-5K datasheet fixed the frame format; 0x33 (was
 // statusLedPin; removed with the legacy LED command).
+// 0x35 (imuDetected) is read-only status appended by BleService::onConfigRead; it is
+// deliberately NOT a register here, so a client write of it is an unknown id.
 
 const Reg *findReg(uint8_t id) {
   for (const Reg &r : kRegs)
@@ -99,6 +103,8 @@ void *numField(GaiaConfig &c, uint8_t id) {
     case 0x30: return &c.soundLedPin;
     case 0x31: return &c.co2LedPin;
     case 0x32: return &c.co2AlertPpm;
+    case 0x34: return &c.imuChip;
+    case 0x36: return &c.magAxisRemap;
     case 0x50: return &c.serialLogEnabled;
     default: return nullptr;
   }

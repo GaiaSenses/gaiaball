@@ -13,7 +13,7 @@ namespace gaia {
 // Informational only since v6: the config is persisted as TLV (stable register ids,
 // unknown/invalid records skipped on load), so a schema bump no longer discards the
 // stored config — new fields simply load their defaults.
-constexpr uint8_t kConfigSchemaVersion = 6;  // v6: TLV persistence (was: whole-struct blob)
+constexpr uint8_t kConfigSchemaVersion = 7;  // v6: TLV persistence; v7: imuChip, magAxisRemap
 
 // Threading: internally locked for applyTlv/serializeTlv/save/factoryReset/setMountQuat
 // (callable from BLE and App tasks; the mutex is created in begin(), before which the

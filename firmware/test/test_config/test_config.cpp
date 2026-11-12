@@ -1,6 +1,7 @@
 #include <unity.h>
 #include <cstring>
 #include "../../Gaiaball/src/logic/GaiaConfig.h"
+#include "../../Gaiaball/src/logic/MagAxisRemap.h"
 #include "../../Gaiaball/src/logic/MagCalibration.h"
 #include "../../Gaiaball/src/logic/TlvCodec.h"
 
@@ -440,8 +441,92 @@ void test_mag_calibration_rejects_bad_length_and_singular_matrix() {
   assertRejected(buf, sizeof buf);
 }
 
+// --- dual-IMU registers: imuChip (0x34), magAxisRemap (0x36) ----------------------
+
+// Re-serialises cfg but drops every record with the given id, to fake a blob written by
+// firmware that did not know that register.
+static size_t tlvSerializeWithout(const GaiaConfig &c, uint8_t *out, size_t cap, uint8_t skipId) {
+  uint8_t full[384];
+  const size_t n = tlvSerialize(c, full, sizeof full);
+  size_t w = 0;
+  for (size_t i = 0; i + 2 <= n;) {
+    const size_t rec = 2u + full[i + 1];
+    if (full[i] != skipId) {
+      TEST_ASSERT_TRUE(w + rec <= cap);
+      memcpy(out + w, full + i, rec);
+      w += rec;
+    }
+    i += rec;
+  }
+  return w;
+}
+
+void test_default_config_has_no_imu_selected(void) {
+  GaiaConfig c;
+  TEST_ASSERT_EQUAL_UINT8(0, c.imuChip);
+  TEST_ASSERT_EQUAL_UINT8(kMagRemapDefault, c.magAxisRemap);
+}
+
+void test_imu_chip_out_of_range_rejects_whole_write(void) {
+  GaiaConfig c;
+  c.imuChip = 1;
+  TEST_ASSERT_EQUAL_UINT8(50, c.imuNotifyHz);
+  // Invalid 0x34 FIRST, valid 0x02 (imuNotifyHz=100) AFTER: all-or-nothing means the
+  // valid record must not have been applied either.
+  const uint8_t buf[] = {0x34, 1, 3, 0x02, 1, 100};
+  TEST_ASSERT_FALSE(tlvApply(c, buf, sizeof(buf)));
+  TEST_ASSERT_EQUAL_UINT8(1, c.imuChip);
+  TEST_ASSERT_EQUAL_UINT8(50, c.imuNotifyHz);
+}
+
+void test_mag_axis_remap_out_of_range_rejects_whole_write(void) {
+  GaiaConfig c;
+  const uint8_t buf[] = {0x36, 1, 24, 0x02, 1, 100};
+  TEST_ASSERT_FALSE(tlvApply(c, buf, sizeof(buf)));
+  TEST_ASSERT_EQUAL_UINT8(kMagRemapDefault, c.magAxisRemap);
+  TEST_ASSERT_EQUAL_UINT8(50, c.imuNotifyHz);
+}
+
+void test_imu_registers_accept_boundaries(void) {
+  GaiaConfig c;
+  const uint8_t buf[] = {0x34, 1, 2, 0x36, 1, 23};
+  TEST_ASSERT_TRUE(tlvApply(c, buf, sizeof(buf)));
+  TEST_ASSERT_EQUAL_UINT8(2, c.imuChip);
+  TEST_ASSERT_EQUAL_UINT8(23, c.magAxisRemap);
+}
+
+void test_pre_v7_blob_loads_as_unconfigured(void) {
+  GaiaConfig c;
+  c.imuChip = 2;
+  c.magAxisRemap = 5;
+  uint8_t buf[384];
+  const size_t n = tlvSerializeWithout(c, buf, sizeof(buf), 0x34);
+  GaiaConfig loaded;
+  tlvApplyLenient(loaded, buf, n);
+  TEST_ASSERT_EQUAL_UINT8(0, loaded.imuChip);
+  TEST_ASSERT_EQUAL_UINT8(5, loaded.magAxisRemap);  // helper really kept the rest
+}
+
+void test_roundtrip_preserves_both_new_registers(void) {
+  GaiaConfig c;
+  c.imuChip = 2;
+  c.magAxisRemap = 17;
+  uint8_t buf[384];
+  const size_t n = tlvSerialize(c, buf, sizeof(buf));
+  GaiaConfig out;
+  TEST_ASSERT_TRUE(tlvApply(out, buf, n));
+  TEST_ASSERT_EQUAL_UINT8(2, out.imuChip);
+  TEST_ASSERT_EQUAL_UINT8(17, out.magAxisRemap);
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
+  RUN_TEST(test_default_config_has_no_imu_selected);
+  RUN_TEST(test_imu_chip_out_of_range_rejects_whole_write);
+  RUN_TEST(test_mag_axis_remap_out_of_range_rejects_whole_write);
+  RUN_TEST(test_imu_registers_accept_boundaries);
+  RUN_TEST(test_pre_v7_blob_loads_as_unconfigured);
+  RUN_TEST(test_roundtrip_preserves_both_new_registers);
   RUN_TEST(test_defaults_match_legacy);
   RUN_TEST(test_roundtrip);
   RUN_TEST(test_reject_unknown_id);

@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 
+#include "MagAxisRemap.h"
 #include "MagCalibration.h"
 
 // Runtime configuration. Defaults are the legacy firmware values.
@@ -58,6 +59,13 @@ struct GaiaConfig {
   // EMA low-pass on the published accelerometer counts. 0 = off (raw passthrough);
   // 1..1000 = alpha*1000 (smaller = smoother).
   uint16_t accelLpAlphaX1000 = 0;
+
+  // IMU chip on this ball (TLV 0x34): 0 = not configured (IMU stays off, a legitimate
+  // state), 1 = ICM-20948, 2 = GY-91 / MPU-9250. Takes effect at the next boot.
+  uint8_t imuChip = 0;
+  // Magnetometer axis remap (TLV 0x36): index into the 24 proper signed permutations of
+  // logic/MagAxisRemap.h. The default reproduces the existing {+Y, +X, -Z} mapping.
+  uint8_t magAxisRemap = kMagRemapDefault;
 
   uint8_t audioEnabled = 1;
   uint16_t audioFastAlphaX1000 = 250;  // 1..1000
