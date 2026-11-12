@@ -9,7 +9,7 @@ notify de orientação 50–60 Hz, latência medida < 50 ms, 24 h sem travar, ze
 
 ## 1. Pré-requisitos
 
-- Placa ESP32 (DevKit) montada conforme o pinout de `firmware/README.md`: IMU GY-91 (MPU-9250) em
+- Placa ESP32 (DevKit) montada conforme o pinout de `firmware/README.md`: IMU (GY-91 com MPU-9250, ou GY-ICM20948V2 com ICM-20948; veja a seção 3.0) em
   SDA 21 / SCL 22, INMP441 em WS 25 / SCK 26 / SD 33, sensor de CO₂ com TX no GPIO 16,
   potenciômetro no GPIO 34, LED de som no GPIO 2 (D2 na placa) e LED de CO₂ no GPIO 4
   (D1). 1 pino = 1 função (ver `firmware/docs/hardware-pinout.md`).
@@ -22,6 +22,41 @@ Toolchain fixo: ESP32 Arduino core **2.0.17** e NimBLE-Arduino **1.4.3** (não u
 nem core 3.x).
 
 ## 2. Gravar o firmware
+
+### 2.0 WSL2: gravando pela porta USB (usbipd-win)
+
+O WSL2 não tem passagem de USB própria: sem os passos abaixo, o `/dev/ttyUSB0` nem existe,
+e o `esptool` cai na detecção automática de porta, escolhe `/dev/ttyS0` (uma porta fictícia)
+e falha com `Errno 13` (permissão negada). No Windows, com o [usbipd-win](https://github.com/dorssel/usbipd-win)
+instalado:
+
+```powershell
+usbipd list                                  # anote o BUSID do conversor USB-serial (ex.: 2-3)
+usbipd bind --busid <X-Y>                    # UMA vez, em PowerShell de administrador
+usbipd attach --wsl --busid <X-Y>            # a CADA vez que replugar o cabo
+```
+
+No WSL, confirme que a porta apareceu e que o seu usuário consegue abri-la:
+
+```sh
+ls -l /dev/ttyUSB0                           # deve existir; grupo dialout
+```
+
+Se existir mas der permissão negada, instale as regras udev do PlatformIO (elas liberam as
+placas ESP32/CP210x/CH340 para o seu usuário) e recarregue:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/platformio/platformio-core/develop/platformio/assets/system/99-platformio-udev.rules \
+  | sudo tee /etc/udev/rules.d/99-platformio-udev.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
+sudo usermod -aG dialout "$USER"             # e reabra o terminal
+```
+
+Depois grave **sempre com a porta explícita** para nunca cair em `/dev/ttyS0`:
+`pio run -d firmware -e esp32dev -t upload --upload-port /dev/ttyUSB0`. Após cada replug
+(ou depois de a bola reiniciar com o cabo trocado) repita o `usbipd attach`.
+
+### 2.1 Gravar
 
 PlatformIO (recomendado), a partir da raiz do repositório:
 
@@ -44,9 +79,40 @@ arduino-cli upload  --fqbn esp32:esp32:esp32 -p /dev/ttyUSB0 firmware/Gaiaball
 Arduino IDE 2.x: ver `firmware/README.md` (Boards Manager 2.0.17, NimBLE-Arduino 1.4.3).
 
 **Critério (item 01):** no monitor serial, cada serviço (IMU, áudio, CO₂, BLE, NVS) reporta
-status no boot, sem erro. O dispositivo anuncia como `Globo_1`.
+status no boot, sem erro. O dispositivo anuncia como `Globo_1`. Uma bola recém-gravada (ou de
+fábrica) sai com o IMU **desligado** de propósito: o boot não acusa erro de IMU, e a seção 3.0
+é o passo que o liga.
 
 ## 3. Bancada com o config-app
+
+### 3.0 Escolher o IMU (antes de qualquer teste de orientação)
+
+A bola pode ter dois chips (ICM-20948 no módulo `GY-ICM20948V2`; MPU-9250 no GY-91) e o
+firmware **não adivinha**: quem escolhe é o operador. Sem este passo não há orientação.
+
+1. Conecte, desbloqueie com o PIN (a configuração é lida sozinha ao conectar).
+2. Em Configuração › Básico, campo **IMU**, escolha o chip montado na bola
+   (a bola de hoje: **ICM-20948**).
+3. Aparece a faixa “só vale depois de reiniciar”. Clique em **Aplicar** (confere e grava na
+   NVS) e depois em **Reiniciar agora** (ou **Reiniciar** no painel Conexão).
+4. Reconecte. Em Métricas › Firmware, **Estado do IMU** deve dizer `<chip> ok`. Se disser
+   “selecionado, não encontrado”, o chip escolhido não é o que está na bola (ou a fiação falhou).
+   “trocado, aguardando reinício” significa que falta reiniciar.
+5. Agite a bola e confira que o modelo 3D reage.
+
+**Primeiro passo de medição: compare a taxa medida com a configurada.** A lógica de
+`dataReady()` do ICM-20948 depende de `INT_STATUS_1` ser limpo na leitura, o que não deu para
+confirmar a partir do mapa de registradores incluído no repositório. Se não limpar,
+`dataReady()` fica sempre verdadeiro e o pipeline roda no período do polling (2–5 ms) em vez
+de na taxa configurada. Compare, em Métricas, **Taxa** e Firmware › **IMU** com a **Taxa (Hz)**
+configurada (ex.: 50 Hz). Se estiverem muito acima, pare: nenhuma medição de latência, jitter
+ou deriva vale até isso ser resolvido.
+
+**Ordem do magnetômetro: remap antes de calibrar.** O campo **Eixos do magnetômetro**
+(Avançado) vale na hora, sem reiniciar, mas **invalida a calibração magnética existente**: o
+firmware publica as amostras da captura já remapeadas e o ajuste hard/soft-iron do navegador é
+feito sobre elas. Portanto: (1) escolha os eixos certos (confira o rumo em Quat9 girando a bola
+sobre a mesa), (2) só então rode a seção 4.2. Trocou os eixos depois? Recalibre.
 
 ```sh
 cd config-app
@@ -230,6 +296,9 @@ segue) de reboot (uptime volta a zero).
 
 | Sintoma | Causa provável / ação |
 |---|---|
+| Sem orientação / modelo parado em bola recém-gravada | O IMU vem **desligado** de fábrica: escolha o chip (seção 3.0) e reinicie. |
+| Estado do IMU “selecionado, não encontrado” | O chip escolhido não é o da bola (ICM-20948 vs GY-91) ou a fiação falhou; troque a seleção e reinicie. |
+| `esptool` falha com `Errno 13` em `/dev/ttyS0` | WSL2 sem a porta USB: faça o `usbipd attach` e use `--upload-port /dev/ttyUSB0` (seção 2.0). |
 | IMU ausente: boot lento (+5 s) | IMU não responde no I²C (fiação SDA 21 / SCL 22, AD0 em GND, alimentação). `imuOk` fica desligada (Firmware › **Saúde**); o resto do firmware segue rodando. |
 | Escritas e comandos ignorados | Não desbloqueado, PIN errado, ou bloqueio de 30 s (5 erros seguidos). Aguarde 30 s ou reconecte e tente de novo. |
 | Valores voltam ao anterior após **Aplicar** | O app avisa "alguns valores não foram aceitos (desbloqueou com o PIN?)". |

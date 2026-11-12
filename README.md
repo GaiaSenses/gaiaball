@@ -22,7 +22,7 @@ compositions (Pure Data).
 
 | Component | Part | Bus / pins (ESP32 DevKitC) |
 |---|---|---|
-| Orientation | **GY-91 module** — MPU-9250 (accel + gyro) + AK8963 (mag) + BMP280 (barometer, unused) | I²C — SDA 21, SCL 22, addr 0x68 |
+| Orientation | **GY-ICM20948V2** (ICM-20948 + AK09916; the ball in hand) or **GY-91** (MPU-9250 + AK8963 + BMP280, unused; future units) — chosen in the config-app, default off | I²C — SDA 21, SCL 22, addr 0x68 |
 | Microphones | 2× INMP441 (stereo, for blow detection) | I²S — WS 25, SCK 26, SD 33 |
 | CO₂ | SC8-CO2-5K ("YYS SC8", NDIR, active 1 Hz stream) | UART1 — RX 16, 9600 8N1, listen-only |
 | Threshold knob | 50 kΩ potentiometer | ADC — GPIO 34 |
@@ -33,7 +33,7 @@ The full netlist cross-check against the KiCAD board design lives in
 
 ## How it works (short version)
 
-- **Orientation.** The MPU-9250 is read at the configured rate (10–200 Hz) and fused
+- **Orientation.** The selected IMU (ICM-20948 or MPU-9250) is read at the configured rate (10–200 Hz) and fused
   on the ESP32 with a **Madgwick filter** (6-axis relative mode by default; 9-axis
   with the magnetometer as an option). A gyro-bias tracker adapts only while the
   ball rests, so a stationary globe stays stationary. Mounting calibration and a

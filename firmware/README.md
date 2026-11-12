@@ -1,6 +1,6 @@
 # Gaiaball v2 firmware
 
-ESP32 firmware for the Gaiaball: GY-91 (MPU-9250 + AK8963) orientation fused on the MCU,
+ESP32 firmware for the Gaiaball: IMU orientation (ICM-20948 or GY-91 / MPU-9250, chosen in the config-app) fused on the MCU,
 stereo INMP441 sound-peak detection, UART CO2 sensor with a sound-triggered virtual CO2
 pulse, two status LEDs, and a NimBLE GATT server streaming binary packets to up to two
 centrals.
@@ -28,10 +28,12 @@ firmware/
 ## Build and flash
 
 Toolchain versions are pinned: **ESP32 Arduino core 2.0.17** and **NimBLE-Arduino
-1.4.3**. NimBLE 2.x and core 3.x are not supported (different APIs). The IMU driver
-(GY-91 module: MPU-9250 + AK8963) is register-level code in `src/services/Mpu9250.*`
+1.4.3**. NimBLE 2.x and core 3.x are not supported (different APIs). The IMU drivers
+(ICM-20948 + AK09916, or GY-91's MPU-9250 + AK8963) are register-level code in
+`src/services/Icm20948.*` and `src/services/Mpu9250.*` behind one `ImuDriver` interface
 — no external IMU library, no DMP; the fusion runs on the ESP32 (`src/logic/Ahrs.*`,
-host-tested).
+host-tested). The driver is picked at boot from TLV `0x34`; a factory-fresh ball leaves
+the IMU off until it is configured.
 
 ### PlatformIO (recommended)
 
@@ -141,13 +143,16 @@ config write that lands both LED functions on the same GPIO is rejected atomical
 - Wi-Fi is explicitly stopped at boot (BLE/Wi-Fi coexistence would wreck notify pacing).
 - USB serial logging is OFF by default (TLV `0x50`); the boot sequence (including the
   I2C identity probe below) always prints, the switch takes over afterwards.
-- The IMU is the **GY-91 module (MPU-9250 + AK8963 mag + BMP280 barometer)**. The
-  driver is register-level (`src/services/Mpu9250.*`); the fusion is the revised
+- The IMU is **either** a `GY-ICM20948V2` module (ICM-20948 + AK09916 mag; the ball in
+  hand) **or** a GY-91 (MPU-9250 + AK8963 mag + BMP280 barometer; future units); the
+  operator picks the chip in the config-app (TLV `0x34`, reboot to apply, default
+  "unconfigured" = IMU off). The drivers are register-level
+  (`src/services/Icm20948.*`, `src/services/Mpu9250.*`); the fusion is the revised
   Madgwick filter (`src/logic/Ahrs.*`) with acceleration and magnetic rejection, fed by
   a gyro-bias tracker whose rest detector works at any zero-rate offset
   (`src/logic/GyroBias.*`). The BMP280 (I2C 0x76) is present on the module but not read
-  by this firmware. Builds for the older ICM-20948 prototype exist in the git history
-  (before the GY-91 port).
+  by this firmware. The earlier claim that every ball carries a GY-91 was wrong: see
+  [`docs/hardware-pinout.md`](docs/hardware-pinout.md) finding 2 for the evidence.
 - The magnetometer needs a one-off hard/soft-iron calibration before Quat9 is worth
   using: command `0x15` streams raw samples, the config-app fits the ellipsoid and
   writes the result back as TLV `0x1E`.
@@ -240,10 +245,10 @@ wrong in a specific and predictable way. Each diagram is followed by what the st
 defends against and what it buys; the order of the stages is itself part of the design
 and is noted where it matters.
 
-### Orientation (MPU-9250 + AK8963)
+### Orientation (ICM-20948 or MPU-9250, same chain)
 
 ```
-         ┌──────────── MPU-9250 / AK8963, polled over I2C at rate/4 ────────────┐
+         ┌── ICM-20948 + AK09916  or  MPU-9250 + AK8963, polled over I2C ──────┐
          │  [1] on-chip DLPF — cut-off matched to the configured output rate    │
          └───────┬────────────────────┬───────────────────────┬─────────────────┘
             gyro (dps)           accel (g)                mag (uT)
@@ -280,6 +285,25 @@ and is noted where it matters.
 | 6 | Output smoothing (`src/logic/QuatSmoother.*`) | The fused quaternion still carries the gyro noise floor: a fine tremble in a 3D view, a dithering control signal in a sound patch. | The legacy fixed slerp costs ~190 ms of lag at its heaviest. The 1-euro filter moves its cut-off with the angular speed — hard filtering while the ball is still, almost none while it moves — so the tremble goes without the rubbery response. |
 | 7 | Hampel spike filter (`Hampel5`, `src/logic/Filters.h`) | A dropped or corrupted I2C read is one wild sample. An EMA does not remove it; it smears it across the following samples. | The newest sample is compared with the median of the last five and replaced only if it deviates by more than k·MAD. **Zero added latency** (trailing window), and a genuine step becomes the new normal within three samples. It runs **before** the EMA on purpose: after smoothing, a spike is no longer detectable. |
 | 8 | Accel EMA (`accelLpAlphaX1000`) | ADC and mechanical noise make the published acceleration jittery. | A one-pole low-pass with a known time constant (α = 0.2 at 50 Hz ≈ 90 ms, f_c ≈ 1.8 Hz). Off by default: the site pipeline filters again, and filtering twice only doubles the latency. |
+
+The chain is identical for both chips: everything from stage [2] onwards runs on the
+ESP32 and never learns which sensor produced the numbers. The drivers (`ImuDriver`)
+hide the following differences, which only matter when reading a register trace or
+choosing a DLPF index by hand:
+
+| | MPU-9250 (GY-91) | ICM-20948 (GY-ICM20948V2) |
+|---|---|---|
+| Identity | `WHO_AM_I` `0x71` at `0x75` | `WHO_AM_I` `0xEA` at `0x00` (register `0x75` is reserved and reads a meaningless `0x48`) |
+| Register map | flat, one bank | **banked** (4 banks sharing addresses `0x00..0x7E`; `REG_BANK_SEL` `0x7F` is the only register visible in all of them); a read in the wrong bank returns plausible garbage |
+| Rate dividers | one `SMPLRT_DIV`, 1 kHz base | **separate** gyro (8-bit) and accel (12-bit) dividers, 1125 Hz base |
+| DLPF index 1..7 (gyro) | 184 / 92 / 41 / 20 / 10 / 5 / 3600 Hz | 151.8 / 119.5 / 51.2 / 23.9 / 11.6 / 5.7 / 361.4 Hz (accel cut-offs differ slightly; same index is written to both) |
+| Auto DLPF at 50 Hz | 20 Hz | 23.9 Hz |
+| Magnetometer | AK8963 at `0x0C` via I2C bypass; 16-bit with per-axis factory ASA trim; 0.15 µT/LSB after trim; little-endian | AK09916 at `0x0C` via pass-through; 16-bit, fixed 0.15 µT/LSB, **no** ASA fuse ROM; `WIA1` `0x48` and `WIA2` `0x09` (the AK8963 also reports `0x48` in `WIA1`, so only the pair tells them apart) |
+| Magnetometer axes | AK8963 frame | different from the accel/gyro frame on both chips; the operator-selected `magAxisRemap` (TLV `0x36`) puts it right |
+| Data ready | `INT_STATUS` bit 0 | `INT_STATUS_1` bit 0 (clear-on-read behaviour not confirmed from the vendored register map: see `docs/bench-validation.md`) |
+
+The scales on the wire are the same for both: accelerometer +-4 g at 8192 LSB/g, gyro
+full scale selectable with the same four codes (TLV `0x06`).
 
 ### Sound (2× INMP441)
 

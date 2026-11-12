@@ -11,7 +11,7 @@ assignments on 2026-11-06.
 | Ref | Component | Pin / function | Net | ESP32 GPIO |
 |---|---|---|---|---|
 | U4 | ESP32-DEVKITC-32E | — | — | — |
-| U1 | IMU: **GY-91 module** (MPU-9250 + AK8963 + BMP280) on the 10-pin header (KiCAD symbol `Sensor_Motion:MPU-9250-IMU`) | SCL | `/GPIO22` | **22** |
+| U1 | IMU: **GY-91** (MPU-9250 + AK8963 + BMP280) or **GY-ICM20948V2** (ICM-20948 + AK09916) on the 10-pin header (KiCAD symbol `Sensor_Motion:MPU-9250-IMU`; see finding 2) | SCL | `/GPIO22` | **22** |
 | U1 | | SDA | `/GPIO21` | **21** |
 | U1 | | EDA, ECL, AD0, INT, **NCS**, FSYNC | unconnected | — |
 | U2 | CO2 sensor — **SC8-CO2-5K** (Shenzhen Shenchen Technology, "YYS SC8"; KiCAD value `Sensor_CO2_SC8`, drawn on an S8-style footprint `Senseair_S8_Down`) | +5V / GND | `+5V` / `GND` | — |
@@ -39,17 +39,31 @@ not be used).
    client ever sends it (the Gaiasenses site declares the characteristic but never
    writes it), so it was removed rather than given a pin. The firmware enforces that
    the two LED pins are distinct.
-2. **The IMU is a GY-91 module (MPU-9250 + AK8963 + BMP280), confirmed by the user;
-   the KiCAD symbol (`MPU-9250-IMU`, datasheet property MPU-9250A) agrees.** This
-   drove a full driver change: the legacy firmware (and the first v2 iterations) used
-   the SparkFun ICM-20948 library — a DIFFERENT InvenSense chip (WHO_AM_I 0xEA vs the
-   MPU-9250's 0x71) that cannot talk to an MPU-9250. The current firmware has a
-   register-level MPU-9250 driver + Madgwick fusion on the ESP32 (no DMP, no FIFO).
-   Evidence note, for the record: a ball that visibly moved under the legacy
-   ICM-20948 firmware must have carried an ICM-20948 — if the ball in hand has a
-   GY-91, the legacy firmware never read its IMU at all. Wiring is I2C only (NCS
-   unconnected, SCL/SDA on 22/21, AD0/SDO low → 0x68); the GY-91's BMP280 barometer
-   sits at 0x76 and is not read by the firmware (available for future use).
+2. **The IMU comes in two variants, and the firmware drives both.** The earlier text
+   here called the IMU a GY-91 (MPU-9250 + AK8963 + BMP280) "confirmed by the user"; that
+   was **wrong for the ball in hand**. The KiCAD symbol (`MPU-9250-IMU`, datasheet
+   property MPU-9250A) describes the GY-91 footprint the board was designed around, and
+   a GY-91 is what future production units are expected to carry, but the existing
+   ball carries a **`GY-ICM20948V2`** module (ICM-20948 + AK09916 magnetometer).
+   Evidence, 2026-11-12: reading `WHO_AM_I` the MPU-9250 way (register `0x75`, expected
+   `0x71`) returned a stable `0x48`. Register `0x75` is *reserved* on the ICM-20948, so
+   the `0x48` was not an answer: it is a meaningless constant that merely resembles one
+   (it is also the AK09916/AK8963 magnetometer's WIA1 value, which made it look
+   plausible). On the ICM-20948 `WHO_AM_I` lives at register `0x00` (bank 0) and reads
+   `0xEA`. That is consistent with the legacy firmware, which used the SparkFun
+   ICM-20948 library and visibly moved on this ball.
+
+   | Variant | Chips | WHO_AM_I | Where |
+   |---|---|---|---|
+   | `GY-ICM20948V2` | ICM-20948 + AK09916 | `0xEA` at `0x00` (bank 0) | the existing ball |
+   | `GY-91` | MPU-9250 + AK8963 (+ BMP280 at 0x76, unread) | `0x71` at `0x75` | future production |
+
+   One firmware drives both. The two are **not** told apart by auto-detection: the
+   operator selects the chip in the config-app (TLV `0x34`, `imuChip`), and a
+   factory-fresh ball leaves the IMU **off** (`0` = unconfigured) until someone does.
+   Changing the selection takes effect after a reboot. Wiring is the same I2C-only
+   arrangement for both (NCS unconnected, SCL/SDA on 22/21, AD0/SDO low -> 0x68); the
+   magnetometer sits at 0x0C on both (pass-through / bypass).
 3. **The CO2 sensor is an SC8-CO2-5K** (Shenzhen Shenchen Technology, often listed
    as "YYS SC8") — user-confirmed hardware. The schematic's `Sensor_CO2_SC8` value is
    literal; the `Senseair_S8_Down` footprint name misled an earlier revision of this

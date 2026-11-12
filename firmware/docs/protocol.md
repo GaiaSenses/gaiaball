@@ -34,7 +34,7 @@ produces data.
 ## Scales
 
 - Quaternion: `int16 = round(float * 16384)` (Q14), saturating; `value / 16384` on decode.
-- Accel: raw MPU-9250 counts (±4 g, 8192 LSB/g), `int16` passthrough (no scaling).
+- Accel: raw counts of the selected IMU (MPU-9250 or ICM-20948; ±4 g, 8192 LSB/g on both), `int16` passthrough (no scaling).
 - Gyro: never on the wire. Its full scale is configurable (TLV 0x06) precisely because
   no decoder depends on it.
 - Magnetometer (MagChunk only): `int16` in 0.1 µT, saturating.
@@ -194,16 +194,17 @@ Units:
   32-bit I2S configuration with `>>8`; a 16-bit I2S configuration would change it.**
 - `potRaw` is the EMA-filtered 12-bit ADC reading (0..4095) of the threshold
   potentiometer; percent of travel = potRaw / 4095 × 100.
-- IMU acceleration (ImuPacket) is in raw MPU-9250 counts at ±4 g full scale:
+- IMU acceleration (ImuPacket) is in raw counts (MPU-9250 or ICM-20948, per TLV 0x34) at ±4 g full scale:
   g = counts / 8192. With `accelLpAlphaX1000` > 0 the published counts are
   EMA-filtered on-device (same scale).
 - The IMU stream carries TREATED data only (mounting + zero + configured filters
   applied); raw-and-treated side by side is intentionally NOT exported, to keep the
   high-rate flow simple. Filters can be toggled live from the config-app.
-- The quaternion source is Madgwick fusion on the ESP32 over the GY-91's MPU-9250
-  (Quat6 = gyro+accel; Quat9 adds the AK8963 magnetometer). The wire format is
+- The quaternion source is Madgwick fusion on the ESP32 over the selected IMU (MPU-9250
+  of the GY-91, or ICM-20948; Quat6 = gyro+accel; Quat9 adds the AK8963 / AK09916
+  magnetometer). The wire format is
   identical to the previous DMP-based firmware.
-- DiagPacket's `fifoOverflows` slot now carries the MPU-9250 I2C read-error count
+- DiagPacket's `fifoOverflows` slot now carries the IMU I2C read-error count
   (same offset and type; there is no FIFO anymore).
 
 ## AudioChunkPacket (208 bytes, type 0x05, ~21 Hz, diag characteristic, opt-in)
@@ -269,17 +270,17 @@ TLV register and are persisted under their own NVS keys.
 | id | type | default | field |
 |---|---|---|---|
 | 0x01 | u8 | 0 | orientationMode (0=Quat6 relative, 1=Quat9) |
-| 0x02 | u8 | 50 | imuNotifyHz (10–200). Also sets the MPU-9250 sample-rate divisor (1 kHz base), applied live; the notify throttle paces the exact rate |
+| 0x02 | u8 | 50 | imuNotifyHz (10–200). Also sets the selected IMU's sample-rate divisor (1 kHz base on the MPU-9250, 1125 Hz on the ICM-20948), applied live; the notify throttle paces the exact rate |
 | 0x03 | u8 | 0 | slerpAmount 0–100 (0=off) |
 | 0x04 | u16 | 0 | accelLpAlphaX1000 — EMA on published accel counts (0=off/raw) |
-| 0x05 | u8 | 0 | imuDlpfMode — MPU-9250 anti-alias filter. 0 = auto (widest DLPF below the output Nyquist: 50 Hz → 20 Hz), 1..7 force DLPF_CFG (1=184, 2=92, 3=41, 4=20, 5=10, 6=5, 7=3600 Hz) |
+| 0x05 | u8 | 0 | imuDlpfMode — anti-alias filter of the selected IMU; the index means different cut-offs per chip. 0 = auto (widest DLPF below the output Nyquist: 50 Hz → 20 Hz on the MPU-9250, 23.9 Hz on the ICM-20948), 1..7 force the index. MPU-9250 DLPF_CFG: 1=184, 2=92, 3=41, 4=20, 5=10, 6=5, 7=3600 Hz. ICM-20948 GYRO_DLPFCFG (gyro values; the accel cut-offs differ slightly and use the same index): 1=151.8, 2=119.5, 3=51.2, 4=23.9, 5=11.6, 6=5.7, 7=361.4 Hz |
 | 0x06 | u8 | 2 | gyroFsSel — gyro full scale: 0=±250, 1=±500, 2=±1000, 3=±2000 dps (131/65.5/32.8/16.4 LSB/dps) |
 | 0x07 | u16 | 50 | fusionGainX100 — AHRS feedback gain ×100 (0–500); 0 = gyroscope only, which also disables the rejection features |
 | 0x08 | u8 | 10 | accelRejectionDeg — inclination disagreement above which the accelerometer is ignored (0–90; 0=off) |
 | 0x09 | u8 | 10 | magRejectionDeg — heading disagreement above which the magnetometer is ignored (0–90; 0=off) |
 | 0x0A | u8 | 5 | rejectionTimeoutS — recovery trigger timeout (0–60; 0 disables BOTH rejections) |
 | 0x0B | u16 | 200 | biasRestThDpsX100 — rest detected when the rate deviates from its own low-passed value by less than this (1–2000) |
-| 0x0C | u16 | 1000 | biasMaxDpsX100 — plausibility bound and clip for the gyro offset (1–5000) |
+| 0x0C | u16 | 1000 | biasMaxDpsX100 — plausibility bound and clip for the gyro offset (1–5000); 1000 (= 10 °/s) leaves headroom over the zero-rate offset both chips specify (MPU-9250 ±5 °/s) |
 | 0x0D | u8 | 4 | biasTauS — bias estimate time constant at rest, seconds (1–60) |
 | 0x0E | u8 | 0 | quatSmoothMode — 0=off, 1=fixed slerp (uses 0x03), 2=1-euro filter (uses 0x0F/0x1C) |
 | 0x0F | u16 | 100 | oneEuroFcMinX100 — 1-euro cut-off at rest, Hz ×100 (1–5000) |
@@ -309,6 +310,9 @@ TLV register and are persisted under their own NVS keys.
 | 0x30 | u8 | 2 | soundLedPin (valid output GPIOs only; 6–11 (flash) and nonexistent pins rejected) |
 | 0x31 | u8 | 4 | co2LedPin (same validation as 0x30) |
 | 0x32 | u16 | 2000 | co2AlertPpm |
+| 0x34 | u8 | 0 | imuChip — which IMU is fitted: 0 = unconfigured (IMU off; the factory default, on purpose), 1 = ICM-20948, 2 = GY-91 / MPU-9250. Range 0–2. Persisted in NVS; **takes effect after a reboot** (the driver is chosen once, at boot) |
+| 0x35 | u8 | — | imuDetected — **READ-ONLY.** Appended by the firmware on every config read; **absent from NVS**. Bits 0–1 = the `imuChip` value in force *at boot*; bit 2 (`0x04`) = the sensor was actually found. A config write that contains `0x35` fails as a whole, so a client must never include it. Comparing bits 0–1 with `0x34` tells "switched, reboot pending" apart from "sensor missing" |
+| 0x36 | u8 | 8 | magAxisRemap — mapping of the magnetometer axes onto the accel/gyro frame, 0–23 (index into a fixed table; default 8 = `+Y +X -Z`, i.e. out.x=+in.y, out.y=+in.x, out.z=-in.z). Applied live. The firmware publishes calibration-capture samples already remapped, so **changing it invalidates an existing 0x1E calibration** (remap first, calibrate after). Order: permutation groups lexicographic (XYZ, XZY, YXZ, YZX, ZXY, ZYX), then the four sign patterns whose product equals the permutation's parity, from `+++` with `+` before `-`, leftmost axis slowest; authority `Gaiaball/src/logic/MagAxisRemap.cpp` |
 | 0x40 | char[≤16] | "Globo_1" | bleName |
 | 0x41 | char[4] | "1234" | pin (write-only: never serialized/readable) |
 | 0x50 | u8 | 0 | serialLogEnabled — USB serial logging master switch (default OFF: log formatting steals CPU) |
@@ -325,7 +329,8 @@ whose resulting configuration puts both LED functions on the same GPIO is reject
 atomically (one pin = one function). Reserved ids, never to be reused: 0x21 (was
 co2ChecksumVariant) and 0x27 (was co2Protocol) — both removed when the SC8-CO2-5K
 datasheet fixed the frame format; 0x33 (was statusLedPin; removed with the legacy
-LED command).
+LED command). `0x35` is a read-only status register, not configuration: it has no NVS key
+and no write path.
 
 ## CO2 sensor protocol (UART1, 9600 8N1, listen-only)
 
