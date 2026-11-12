@@ -6,7 +6,7 @@
 
 **Architecture:** `Mpu9250` vira uma implementação de uma interface `ImuDriver`; `Icm20948` é a segunda. `ImuService` passa a construir o driver a partir de `cfg.imuChip` e deixa de conhecer o modelo do sensor. A aritmética de taxa/DLPF dos dois chips e a tabela de remapeamento de eixos do magnetômetro mudam para `logic/`, onde compilam e são testadas no host. O formato dos pacotes não muda.
 
-**Tech Stack:** C++17 (Arduino-ESP32, FreeRTOS, NimBLE), PlatformIO `espressif32@6.12.0` + arduino-cli `esp32:esp32@2.0.17`, Unity para testes nativos; TypeScript + Vite + vitest no `config-app/`.
+**Tech Stack:** C++11 no firmware / C++17 nos testes de host (Arduino-ESP32, FreeRTOS, NimBLE), PlatformIO `espressif32@6.12.0` + arduino-cli `esp32:esp32@2.0.17`, Unity para testes nativos; TypeScript + Vite + vitest no `config-app/`.
 
 **Spec:** `docs/superpowers/specs/2026-11-12-imu-dual-chip-design.md`
 
@@ -20,6 +20,13 @@
 - `ahrsFlags` do `DiagPacket` está com os 8 bits ocupados: não usar.
 - Ids TLV reservados, nunca reutilizar: `0x21`, `0x27`, `0x33`. Comandos reservados: `0x00`, `0x01`.
 - `firmware-original.ino` e `relatorio.md` **nunca** são modificados.
+- **O build do dispositivo é C++11 (`-std=gnu++11`), não C++17.** Verificado em 2026-11-12: nem
+  `firmware/platformio.ini` nem o `platform.txt` do core arduino-esp32 2.0.17 definem outro
+  padrão, e o firmware existente não usa nada pós-C++11. Apenas o ambiente `native` (testes de
+  host) é C++17. Portanto, em qualquer código que entre no build do dispositivo: sem
+  `inline constexpr`, sem variáveis inline, sem `if constexpr`, e sem `constexpr` com laços ou
+  mutação local. Tabela compartilhada vai para um `.cpp`, com `extern const` declarado no header
+  — isso resolve ODR e duplicação de flash sem precisar de C++17.
 - Todo `Field` novo no config-app exige `info` (tooltip didático) — é obrigatório pela interface.
 - Registradores do ICM-20948 conferidos contra o datasheet **DS-000189 rev. 1.3**; os valores deste plano orientam, não substituem.
 
