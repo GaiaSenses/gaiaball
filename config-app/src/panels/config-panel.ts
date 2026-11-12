@@ -12,7 +12,8 @@ export interface Field {
   info: string;
   min?: number;
   max?: number;
-  options?: [number, string][];
+  /** Static list, or a function of the configuration currently in the form (e.g. DLPF labels follow imuChip). */
+  options?: [number, string][] | ((cfg: Map<number, unknown>) => [number, string][]);
   /** Per-filter on/off toggle: the register value that means "filter OFF". */
   offValue?: number;
   /** Value restored in the input when the toggle is turned on with nothing sensible. */
@@ -20,20 +21,79 @@ export interface Field {
 }
 interface Group { title: string; fields: Field[] }
 
+export const resolveOptions = (f: Field, cfg: Map<number, unknown>): [number, string][] =>
+  typeof f.options === 'function' ? f.options(cfg) : (f.options ?? []);
+
+/**
+ * DLPF labels per chip. The register value is the same index on both chips, but the cut-offs
+ * differ: MPU-9250 DLPF_CFG 1..7 = 184/92/41/20/10/5/3600 Hz; ICM-20948 GYRO_DLPFCFG 1..7 =
+ * 151.8/119.5/51.2/23.9/11.6/5.7/361.4 Hz. The ICM accel cut-offs differ slightly from its
+ * gyro ones (the firmware writes the same index to both): these are the gyro values.
+ */
+export function dlpfOptions(chip: number): [number, string][] {
+  const auto: [number, string] = [0, 'automático'];
+  if (chip === 1) return [auto, [1, '151,8 Hz'], [2, '119,5 Hz'], [3, '51,2 Hz'], [4, '23,9 Hz'], [5, '11,6 Hz'], [6, '5,7 Hz'], [7, '361,4 Hz']];
+  if (chip === 2) return [auto, [1, '184 Hz'], [2, '92 Hz'], [3, '41 Hz'], [4, '20 Hz'], [5, '10 Hz'], [6, '5 Hz'], [7, '3600 Hz']];
+  // IMU not selected: the cut-off depends on the chip, so only the index is honest.
+  return [auto, ...[1, 2, 3, 4, 5, 6, 7].map((i): [number, string] => [i, `índice ${i} (depende do IMU)`])];
+}
+
+/**
+ * Labels of the 24 magnetometer axis mappings, "+Y +X -Z" meaning out.x = +in.y, out.y = +in.x,
+ * out.z = -in.z. AUTHORITY: firmware/Gaiaball/src/logic/MagAxisRemap.cpp (kMagRemapTable). The
+ * order and labels here were copied from it and nothing tests the two against each other, so
+ * change them only together.
+ */
+const MAG_AXIS_LABELS = [
+  '+X +Y +Z', '+X -Y -Z', '-X +Y -Z', '-X -Y +Z', '+X +Z -Y', '+X -Z +Y', '-X +Z +Y', '-X -Z -Y', '+Y +X -Z', '+Y -X +Z', '-Y +X +Z', '-Y -X -Z', '+Y +Z +X', '+Y -Z -X', '-Y +Z -X', '-Y -Z +X', '+Z +X +Y', '+Z -X -Y', '-Z +X -Y', '-Z -X +Y', '+Z +Y -X', '+Z -Y +X', '-Z +Y +X', '-Z -Y -X',
+];
+const MAG_AXIS_OPTIONS: [number, string][] = MAG_AXIS_LABELS.map((l, i) => [i, l]);
+
+/** Registers that describe one physical ball and must never travel in a preset. */
+export const isPerBall = (f: Field): boolean =>
+  f.id === TLV.pin || f.id === TLV.magCal || f.id === TLV.imuChip || f.id === TLV.magAxisRemap;
+
+/** Display names of the IMU choices (index = TLV 0x34 value). */
+const IMU_NAMES = ['não configurado', 'ICM-20948', 'GY-91 (MPU-9250)'];
+
+/**
+ * True while a reboot is needed for the IMU choice to take effect. The reference is the chip in
+ * force at boot (imuDetected bits 0-1) when known, because after Aplicar the stored value already
+ * equals the selection yet the running firmware still drives the old chip; before the first
+ * imuDetected it falls back to the value read from the device.
+ */
+export function imuRebootPending(selected: number, readChip: number | undefined, detected: number | undefined): boolean {
+  const ref = detected !== undefined ? detected & 0x03 : readChip;
+  return ref !== undefined && selected !== ref;
+}
+
+/** One-line IMU state from TLV 0x35 (bits 0-1 chip at boot, bit 2 found) and the live selection. */
+export function imuStatusText(detected: number | undefined, selected: number): string {
+  if (detected === undefined) return selected === 0 ? 'não configurado' : `${IMU_NAMES[selected] ?? '?'} selecionado`;
+  const boot = detected & 0x03, found = (detected & 0x04) !== 0;
+  if (boot !== selected) return 'trocado, aguardando reinício';
+  if (boot === 0) return 'não configurado';
+  return found ? `${IMU_NAMES[boot]} ok` : `${IMU_NAMES[boot]} selecionado, não encontrado`;
+}
+
 const GROUPS: Group[] = [
   { title: 'Aquisição', fields: [
     { id: TLV.orientationMode, label: 'Modo', kind: 'select', options: [[0, 'Quat6 (relativo)'], [1, 'Quat9 (absoluto)']],
       info: 'Como o firmware calcula a orientação: Quat6 usa giroscópio + acelerômetro (referência relativa, imune a ímãs); Quat9 acrescenta o magnetômetro (yaw absoluto, porém sensível a interferência magnética — e só confiável depois de calibrar o magnetômetro). Sem unidade.' },
+    { id: TLV.imuChip, label: 'IMU', kind: 'select', options: [[0, 'não configurado'], [1, 'ICM-20948'], [2, 'GY-91 (MPU-9250)']],
+      info: 'Qual chip de movimento está soldado nesta bola. O mesmo firmware serve aos dois (ICM-20948 ou GY-91/MPU-9250), mas ele não adivinha: a bola sai de fábrica com o IMU DESLIGADO (“não configurado”) de propósito, para que ninguém dependa de um sensor que ninguém escolheu. Trocar o chip só vale depois de REINICIAR a bola (o barramento é inicializado uma vez, no boot). Sem unidade.' },
     { id: TLV.imuNotifyHz, label: 'Taxa (Hz)', kind: 'number', min: 10, max: 200,
-      info: 'Quantas amostras de orientação a bola envia por segundo via BLE; também reconfigura a amostragem da IMU (MPU-9250). Unidade: hertz (Hz), de 10 a 200.' },
+      info: 'Quantas amostras de orientação a bola envia por segundo via BLE; também reconfigura a amostragem da IMU. Unidade: hertz (Hz), de 10 a 200.' },
     { id: TLV.gyroFsSel, label: 'Faixa do giroscópio', kind: 'select',
       options: [[0, '±250 °/s'], [1, '±500 °/s'], [2, '±1000 °/s'], [3, '±2000 °/s']],
       info: 'Fundo de escala do giroscópio. Mais estreito mede mais fino (±250 → 0,0076 °/s por bit; ±2000 → 0,061 °/s) e essa resolução é integrada direto na deriva da orientação. Estreito demais satura: uma bola girada na mão passa fácil de 500 °/s e a fusão precisa reiniciar. O giroscópio não vai no fio, então mudar a faixa não afeta nenhum cliente. Seleção, sem unidade.' },
     { id: TLV.imuDlpfMode, label: 'Filtro anti-serrilhamento (DLPF)', kind: 'select',
-      options: [[0, 'automático'], [1, '184 Hz'], [2, '92 Hz'], [3, '41 Hz'], [4, '20 Hz'], [5, '10 Hz'], [6, '5 Hz']],
-      info: 'Passa-baixas interno do MPU-9250, aplicado ANTES da decimação para a taxa de saída. A decimação não faz média: o que passar acima da metade da taxa volta dobrado para dentro da banda (aliasing) e depois é indistinguível de movimento real — é assim que vibração entra como tremor lento. “Automático” escolhe o corte mais largo que ainda fica abaixo da metade da taxa (50 Hz → 20 Hz). Unidade: hertz (Hz).' },
+      options: (cfg) => dlpfOptions(Number(cfg.get(TLV.imuChip) ?? 0)),
+      info: 'Passa-baixas interno do IMU (os cortes mostrados dependem do chip escolhido em “IMU”; no ICM-20948 o acelerômetro tem cortes ligeiramente diferentes, e os rótulos são os do giroscópio), aplicado ANTES da decimação para a taxa de saída. A decimação não faz média: o que passar acima da metade da taxa volta dobrado para dentro da banda (aliasing) e depois é indistinguível de movimento real — é assim que vibração entra como tremor lento. “Automático” escolhe o corte mais largo que ainda fica abaixo da metade da taxa (50 Hz → 20 Hz). Unidade: hertz (Hz).' },
   ] },
   { title: 'Fusão (AHRS)', fields: [
+    { id: TLV.magAxisRemap, label: 'Eixos do magnetômetro', kind: 'select', options: MAG_AXIS_OPTIONS,
+      info: 'Como os eixos do magnetômetro são rearranjados para coincidir com os do acelerômetro/giroscópio (o magnetômetro tem eixos próprios, diferentes em cada chip). “+Y +X -Z” significa x = +Y lido, y = +X lido, z = -Z lido. Vale na hora, sem reiniciar. ATENÇÃO: mudar isto INVALIDA a calibração magnética existente — o firmware publica as amostras de captura já remapeadas e o ajuste hard/soft-iron do navegador é feito sobre elas. Ordem correta na bancada: primeiro o remap, depois calibrar. Sem unidade.' },
     { id: TLV.fusionGainX100, label: 'Ganho da fusão (×100)', kind: 'number', min: 0, max: 500,
       info: 'Peso do acelerômetro/magnetômetro contra o giroscópio — na prática, a frequência de corte do filtro complementar. Ganho baixo confia no giroscópio (saída lisa, mais deriva); ganho alto corrige rápido (mais ruído e mais erro durante aceleração). 50 = 0,50, o padrão do algoritmo. Adimensional (×100).' },
     { id: TLV.accelRejectionDeg, label: 'Rejeição de aceleração (°)', kind: 'number', min: 0, max: 90,
@@ -142,7 +202,7 @@ const byId = (id: number): Field => FIELDS.find((f) => f.id === id)!;
  * tuned under Avançado is still collected and applied.
  */
 const BASIC_IDS: ReadonlySet<number> = new Set([
-  TLV.orientationMode, TLV.imuNotifyHz, TLV.quatSmoothMode,
+  TLV.orientationMode, TLV.imuChip, TLV.imuNotifyHz, TLV.quatSmoothMode,
   TLV.audioEnabled, TLV.potControlsThreshold, TLV.thresholdFixed, TLV.debounceMs,
   TLV.audioBpfEnabled,
   TLV.co2Enabled, TLV.virtualPeakPpm, TLV.virtualDelayMs, TLV.virtualHoldMs,
@@ -160,9 +220,11 @@ const tierOf = (f: Field): Tier => (BASIC_IDS.has(f.id) ? 'basico' : 'avancado')
  */
 export const FIELD_DEFAULTS: ReadonlyMap<number, number | string> = new Map<number, number | string>([
   [TLV.orientationMode, 0],
+  [TLV.imuChip, 0],
   [TLV.imuNotifyHz, 50],
   [TLV.gyroFsSel, 2],
   [TLV.imuDlpfMode, 0],
+  [TLV.magAxisRemap, 8],
   [TLV.fusionGainX100, 50],
   [TLV.accelRejectionDeg, 10],
   [TLV.magRejectionDeg, 10],
@@ -284,7 +346,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       let el: HTMLInputElement | HTMLSelectElement;
       if (f.kind === 'select') {
         el = document.createElement('select');
-        for (const [v, t] of f.options!) el.add(new Option(t, String(v)));
+        for (const [v, t] of resolveOptions(f, new Map())) el.add(new Option(t, String(v)));
       } else {
         el = document.createElement('input');
         el.type = f.kind === 'checkbox' ? 'checkbox' : f.kind === 'pin' ? 'password' : f.kind === 'text' ? 'text' : f.kind;
@@ -308,6 +370,17 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       label.append(name, el);
       fs.append(label);
       inputs.set(f.id, el);
+      if (f.id === TLV.imuChip) {
+        // Visible (not tooltip-only) because a switch silently does nothing until the ball reboots.
+        // Sits outside the <label> so clicking the button does not focus the select.
+        const b = document.createElement('div');
+        b.className = 'banner cfg-reboot';
+        b.dataset.el = 'imu-reboot';
+        b.hidden = true;
+        b.setAttribute('role', 'status');
+        b.innerHTML = '<span>A troca de IMU só vale depois de reiniciar a bola.</span> <button type="button" data-act="imu-reboot">Reiniciar agora</button>';
+        fs.append(b);
+      }
     }
     pane.append(fs);
   }
@@ -318,7 +391,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   const dirty = new Set<number>();
   for (const [id, el] of inputs) {
     el.addEventListener('input', () => { dirty.add(id); refreshAdvCount(); });
-    el.addEventListener('change', () => refreshAdvCount());
+    el.addEventListener('change', () => { refreshAdvCount(); if (id === TLV.imuChip) { refreshDependentOptions(); refreshImuBanner(); } });
   }
   for (const [id, tg] of toggles) tg.addEventListener('change', () => { dirty.add(id); refreshAdvCount(); });
 
@@ -344,8 +417,40 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
     if (f.kind === 'checkbox') (el as HTMLInputElement).checked = Number(v) !== 0;
     else el.value = String(v);
   };
+  /** Live form values by register id, for fields whose options depend on other fields. */
+  const formView = (): Map<number, unknown> => {
+    const m = new Map<number, unknown>();
+    for (const f of FIELDS) m.set(f.id, getValue(f));
+    return m;
+  };
+  /** Relabel selects whose options are a function of the form (DLPF follows imuChip), keeping the value. */
+  const refreshDependentOptions = (): void => {
+    const view = formView();
+    for (const f of FIELDS) {
+      if (typeof f.options !== 'function') continue;
+      const el = inputs.get(f.id) as HTMLSelectElement;
+      const keep = el.value;
+      el.replaceChildren(...f.options(view).map(([v, t]) => new Option(t, String(v))));
+      el.value = keep;
+    }
+  };
+  /** TLV 0x35 from the last read; has no Field because populate only keeps registers that do. */
+  let imuDetected: number | undefined;
+  const imuBanner = q('[data-el=imu-reboot]');
+  const refreshImuBanner = (): void => {
+    const sel = getValue(byId(TLV.imuChip));
+    const read = snapshot.get(TLV.imuChip);
+    imuBanner.hidden = !(typeof sel === 'number' &&
+      imuRebootPending(sel, typeof read === 'number' ? read : undefined, imuDetected));
+  };
+  q('[data-act=imu-reboot]').addEventListener('click', () => {
+    if (!confirm('Reiniciar o dispositivo? A conexão será perdida.')) return;
+    void client.sendCommand(0x13).then(() => say('Reiniciar: enviado.'), fail);
+  });
   const populate = (regs: Map<number, DataView>): void => {
     snapshot = new Map();
+    const det = regs.get(TLV.imuDetected);
+    imuDetected = det && det.byteLength === 1 ? det.getUint8(0) : undefined;
     dirty.clear();
     for (const f of FIELDS) {
       if (f.id === TLV.pin) continue; // firmware never sends the PIN
@@ -357,6 +462,8 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       setValue(f, v);
     }
     (inputs.get(TLV.pin) as HTMLInputElement).value = '';
+    refreshDependentOptions();
+    refreshImuBanner();
     hint.textContent = 'Lido do dispositivo. Aplicar envia só o que mudou, confere a aceitação e grava de forma permanente.';
     refreshAdvCount();
   };
@@ -368,6 +475,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       const d = FIELD_DEFAULTS.get(f.id);
       if (d !== undefined) setValue(f, d);
     }
+    refreshDependentOptions();
   };
 
   /** How many advanced parameters currently sit away from the firmware default. */
@@ -467,8 +575,12 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
     return { regs, error: null };
   };
 
+  /** Single path for every configuration read (button, Aplicar, connect): the panels listen to 'config'. */
+  const publish = (regs: Map<number, DataView>): void => {
+    client.dispatchEvent(new CustomEvent('config', { detail: regs }));
+  };
   const doRead = async (): Promise<void> => {
-    populate(await client.readConfig());
+    publish(await client.readConfig());
   };
 
   q('[data-act=read]').addEventListener('click', () => {
@@ -492,7 +604,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
         const got = dv ? decodeValue(f, dv) : null;
         if (got !== r.value) rejected.push(f.label);
       }
-      populate(back);
+      publish(back);
       const pinNote = regs.some((r) => r.id === TLV.pin) ? ' Novo PIN enviado (não verificável).' : '';
       if (rejected.length > 0) {
         say(`⚠ alguns valores não foram aceitos (desbloqueou com o PIN?): ${rejected.join(', ')}.${pinNote}`);
@@ -526,7 +638,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
     if (snapshot.size === 0) { pmsg.textContent = 'Leia a configuração do dispositivo antes de salvar um preset.'; return; }
     const regs: TlvWrite[] = [];
     for (const f of FIELDS) {
-      if (hasPin(f)) continue; // never persist the PIN in presets
+      if (isPerBall(f)) continue; // PIN, magnetometer calibration, IMU chip and axis remap belong to one ball
       const v = getValue(f);
       if (v === null) continue; // empty numeric field (never read): not part of the preset
       const err = validate(f, v);
@@ -542,9 +654,9 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
     if (!p) { pmsg.textContent = 'Selecione um preset.'; return; }
     for (const r of p.regs) {
       const f = FIELDS.find((x) => x.id === r.id);
-      // Byte-array registers (the magnetometer calibration) are never part of a preset:
-      // they describe one physical ball's magnetic environment, not a set of choices.
-      if (f && !hasPin(f) && typeof r.value !== 'object') { setValue(f, r.value); dirty.add(f.id); }
+      // Per-ball registers (PIN, magnetometer calibration, IMU chip, axis remap) are never
+      // part of a preset, even one saved by an older version that did include them.
+      if (f && !isPerBall(f) && typeof r.value !== 'object') { setValue(f, r.value); dirty.add(f.id); }
     }
     pmsg.textContent = `Preset "${p.name}" carregado no formulário. Clique em Aplicar para enviar.`;
   });
@@ -578,8 +690,9 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   const gated = [...inputs.values(), ...toggles.values(), q<HTMLButtonElement>('[data-act=read]'), q<HTMLButtonElement>('[data-act=apply]')];
   const render = (d: StatusDetail): void => {
     for (const el of gated) el.disabled = !d.connected;
-    if (!d.connected) snapshot = new Map();
+    if (!d.connected) { snapshot = new Map(); imuDetected = undefined; refreshImuBanner(); }
   };
   client.addEventListener('status', (ev) => render((ev as CustomEvent<StatusDetail>).detail));
+  client.addEventListener('config', (ev) => populate((ev as CustomEvent<Map<number, DataView>>).detail));
   render({ connected: client.connected, name: null });
 }

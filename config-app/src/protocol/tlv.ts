@@ -45,6 +45,9 @@ export const TLV = {
   soundLedPin: 0x30,
   co2LedPin: 0x31,
   co2AlertPpm: 0x32,
+  imuChip: 0x34, // 0 = unconfigured (IMU off), 1 = ICM-20948, 2 = GY-91 / MPU-9250; takes effect after a reboot
+  imuDetected: 0x35, // READ-ONLY (never write it: the whole write fails). bits 0-1 = chip at boot, bit 2 = sensor found
+  magAxisRemap: 0x36, // 0..23, index into the fixed table of magnetometer axis mappings (default 8 = +Y +X -Z)
   // 0x33 is reserved (was statusLedPin; removed with the legacy LED command).
   bleName: 0x40,
   pin: 0x41,
@@ -113,6 +116,8 @@ const SPECS: Record<number, Spec> = {
   [TLV.soundLedPin]: U8,
   [TLV.co2LedPin]: U8,
   [TLV.co2AlertPpm]: U16,
+  [TLV.imuChip]: U8,
+  [TLV.magAxisRemap]: U8,
   [TLV.bleName]: { kind: 'str', min: 1, max: 16 },
   [TLV.pin]: { kind: 'str', min: 4, max: 4 },
 };

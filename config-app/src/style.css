@@ -412,3 +412,8 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
   font-size: 0.6rem;
   vertical-align: 0.1em;
 }
+
+/* Reboot notice next to the IMU field: inline in the panel, not the page-wide top banner. */
+.cfg-reboot { border: 1px solid var(--warn); border-radius: 6px; margin: 4px 0 8px; padding: 8px 10px; }
+.cfg-reboot[hidden] { display: none; }
+.cfg-reboot button { margin-left: 8px; }

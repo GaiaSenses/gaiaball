@@ -151,7 +151,7 @@ describe('invalid input returns null', () => {
 
 describe('TLV', () => {
   it('registry ids', () => {
-    expect(Object.keys(TLV)).toHaveLength(44);
+    expect(Object.keys(TLV)).toHaveLength(47);
     expect(TLV.orientationMode).toBe(0x01);
     expect(TLV.imuNotifyHz).toBe(0x02);
     expect(TLV.slerpAmount).toBe(0x03);
@@ -159,6 +159,12 @@ describe('TLV', () => {
     expect(TLV.co2AlertPpm).toBe(0x32);
     expect(TLV.bleName).toBe(0x40);
     expect(TLV.pin).toBe(0x41);
+    expect(TLV.imuChip).toBe(0x34);
+    expect(TLV.imuDetected).toBe(0x35);
+    expect(TLV.magAxisRemap).toBe(0x36);
+  });
+  it('imuDetected is read-only: it cannot be encoded for a write', () => {
+    expect(() => encodeTlv([{ id: TLV.imuDetected, value: 1 }])).toThrow(RangeError);
   });
   it('encode layout little-endian', () => {
     expect(Array.from(encodeTlv([{ id: TLV.imuNotifyHz, value: 50 }]))).toEqual([0x02, 1, 50]);

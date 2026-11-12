@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { BASIC_FIELD_IDS, CONFIG_FIELDS, FIELD_DEFAULTS } from './config-panel';
+import {
+  BASIC_FIELD_IDS, CONFIG_FIELDS, FIELD_DEFAULTS, dlpfOptions, imuRebootPending, isPerBall, resolveOptions,
+} from './config-panel';
 import { encodeTlv, TLV } from '../protocol/tlv';
 
 describe('config fields', () => {
@@ -31,7 +33,7 @@ describe('config fields', () => {
     for (const f of CONFIG_FIELDS) {
       if (f.kind !== 'select') continue;
       const d = FIELD_DEFAULTS.get(f.id);
-      expect(f.options!.map(([v]) => v), f.label).toContain(d);
+      expect(resolveOptions(f, new Map()).map(([v]) => v), f.label).toContain(d);
     }
   });
 
@@ -55,5 +57,76 @@ describe('config fields', () => {
   it('every basic id is a real field', () => {
     const ids = new Set(CONFIG_FIELDS.map((f) => f.id));
     expect([...BASIC_FIELD_IDS].filter((id) => !ids.has(id))).toEqual([]);
+  });
+
+  it('lists imuChip in Básico and magAxisRemap in Avançado, both with a tooltip', () => {
+    expect(BASIC_FIELD_IDS.has(TLV.imuChip)).toBe(true);
+    expect(BASIC_FIELD_IDS.has(TLV.magAxisRemap)).toBe(false);
+    for (const id of [TLV.imuChip, TLV.magAxisRemap]) {
+      const f = CONFIG_FIELDS.find((x) => x.id === id)!;
+      expect(f.kind).toBe('select');
+      expect(f.info.length).toBeGreaterThan(40);
+    }
+    expect(CONFIG_FIELDS.find((x) => x.id === TLV.magAxisRemap)!.info).toMatch(/calibra/i);
+  });
+
+  it('FIELD_DEFAULTS has an entry for every new Field (factory ball: IMU off, remap +Y +X -Z)', () => {
+    expect(FIELD_DEFAULTS.get(TLV.imuChip)).toBe(0);
+    expect(FIELD_DEFAULTS.get(TLV.magAxisRemap)).toBe(8);
+    expect(FIELD_DEFAULTS.has(TLV.imuDetected)).toBe(false); // read-only, never a Field
+    expect(CONFIG_FIELDS.some((f) => f.id === TLV.imuDetected)).toBe(false);
+  });
+
+  it('offers 24 magnetometer axis options matching MagAxisRemap.cpp anchors', () => {
+    const f = CONFIG_FIELDS.find((x) => x.id === TLV.magAxisRemap)!;
+    const o = resolveOptions(f, new Map());
+    expect(o).toHaveLength(24);
+    const at = (i: number) => o.find(([v]) => v === i)![1];
+    expect(at(0)).toBe('+X +Y +Z');
+    expect(at(1)).toBe('+X -Y -Z');
+    expect(at(4)).toBe('+X +Z -Y');
+    expect(at(8)).toBe('+Y +X -Z');
+    expect(at(12)).toBe('+Y +Z +X');
+    expect(at(23)).toBe('-Z -Y -X');
+  });
+});
+
+describe('presets', () => {
+  const field = (id: number) => CONFIG_FIELDS.find((f) => f.id === id)!;
+  it('keeps per-ball registers out of presets (PIN, mag calibration, imuChip, magAxisRemap)', () => {
+    expect(isPerBall(field(TLV.imuChip))).toBe(true);
+    expect(isPerBall(field(TLV.magAxisRemap))).toBe(true);
+    expect(isPerBall(field(TLV.pin))).toBe(true);
+    expect(isPerBall({ id: TLV.magCal, label: 'x', kind: 'number', info: 'x' })).toBe(true);
+    expect(isPerBall(field(TLV.imuNotifyHz))).toBe(false);
+    expect(isPerBall(field(TLV.imuDlpfMode))).toBe(false);
+  });
+});
+
+describe('DLPF labels follow the chip', () => {
+  it('labels the cut-offs of the selected chip', () => {
+    expect(dlpfOptions(2)).toContainEqual([3, '41 Hz']); // MPU-9250
+    expect(dlpfOptions(1)).not.toContainEqual([3, '41 Hz']); // ICM-20948
+    expect(dlpfOptions(1)).toContainEqual([3, '51,2 Hz']);
+    expect(dlpfOptions(1)).toContainEqual([0, 'automático']);
+    expect(dlpfOptions(2)).toContainEqual([0, 'automático']);
+  });
+  it('the DLPF field resolves its options from the configuration', () => {
+    const f = CONFIG_FIELDS.find((x) => x.id === TLV.imuDlpfMode)!;
+    expect(resolveOptions(f, new Map([[TLV.imuChip, 1]]))).toEqual(dlpfOptions(1));
+    expect(resolveOptions(f, new Map([[TLV.imuChip, 2]]))).toEqual(dlpfOptions(2));
+    expect(f.info).not.toMatch(/do MPU-9250/);
+  });
+});
+
+describe('reboot banner', () => {
+  it('shows only while the selection differs from what the device reports', () => {
+    expect(imuRebootPending(2, 0, undefined)).toBe(true);
+    expect(imuRebootPending(0, 0, undefined)).toBe(false); // back to the value read
+    expect(imuRebootPending(2, undefined, undefined)).toBe(false); // nothing read yet
+  });
+  it('stays after Aplicar: the stored value now equals the selection but the boot chip does not', () => {
+    expect(imuRebootPending(2, 2, 0x05)).toBe(true); // booted ICM, now GY-91
+    expect(imuRebootPending(1, 1, 0x05)).toBe(false);
   });
 });
