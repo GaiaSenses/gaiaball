@@ -11,10 +11,12 @@
 #include "../logic/Filters.h"
 #include "../logic/GaiaConfig.h"
 #include "../logic/GyroBias.h"
+#include "../logic/ImuFrontEnd.h"
 #include "../logic/MagAxisRemap.h"
 #include "../logic/MagCalibration.h"
 #include "../logic/QuatMath.h"
 #include "../logic/QuatSmoother.h"
+#include "Icm20948.h"
 #include "ImuDriver.h"
 #include "Mpu9250.h"
 
@@ -107,11 +109,19 @@ class ImuService {
   // A capture left running would stream for ever; the config-app needs ~30 s.
   static constexpr uint32_t kMagCaptureMaxMs = 180000;
 
-  // I2C init + up to 10 begin() attempts (500 ms apart). Blocking; call from setup().
-  // Returns imuOk. On failure the service stays usable: the queue exists, startTask()
-  // creates an idling task, the rest of the firmware runs.
+  // Reads cfg.imuChip ONCE, points imu_ at that driver, then I2C init + up to 10
+  // begin() attempts (500 ms apart). Blocking; call from setup(). Returns imuOk.
+  // ImuChip::None (a factory-fresh ball) never touches I2C and is NOT an error:
+  // BLE, audio and CO2 must come up normally with the IMU simply off. On any failure
+  // the service stays usable: the queue exists, startTask() creates an idling task,
+  // the rest of the firmware runs.
   bool begin(ConfigStore &store);
   void startTask();
+
+  // The selection in force since boot. A configuration change only takes effect on the
+  // next boot, by design: the app warns the operator and offers a reboot. Feeds
+  // imuStatusByte() together with imuOk(), i.e. the read-only TLV 0x35.
+  ImuChip bootChip() const { return bootChip_; }
 
   QueueHandle_t sampleQueue() const { return queue_; }
   QueueHandle_t magQueue() const { return magQueue_; }
@@ -170,7 +180,9 @@ class ImuService {
   // and imu_ points at the one the configuration selected - or at nothing, which is why
   // every use of imu_ is null-checked.
   Mpu9250 mpu_;
+  Icm20948 icm_;
   ImuDriver *imu_ = nullptr;
+  ImuChip bootChip_ = ImuChip::None;
   Ahrs ahrs_;
   GyroBiasTracker gyroBias_;
   QuatSmoother smoother_;

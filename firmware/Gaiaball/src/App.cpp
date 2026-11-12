@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <esp_system.h>
 
+#include "logic/ImuStatus.h"
 #include "logic/PacketCodec.h"
 #include "logic/Packets.h"
 #include "services/Logger.h"
@@ -69,6 +70,10 @@ void App::begin() {
   if (!ble_.begin(store_, gate_)) GB_LOGE(kTag, "BLE init failed");
 
   if (!imu_.begin(store_)) GB_LOGE(kTag, "IMU not available");
+  // The one writer of the read-only imuDetected register (TLV 0x35): what was selected
+  // at boot plus whether the sensor actually answered, which is how the app tells "no
+  // IMU configured" apart from "configured chip missing".
+  ble_.setImuStatus(imuStatusByte(imu_.bootChip(), imu_.imuOk()));
 
   pot_.begin(cfg);
   threshold_.store(pot_.threshold());

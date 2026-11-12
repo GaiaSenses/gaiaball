@@ -30,6 +30,25 @@ constexpr float kMagCaptureLsbPerUt = 10.0f;
 uint8_t clampMode(uint8_t mode) { return mode == 1 ? 1 : 0; }
 uint8_t clampRate(uint8_t hz) { return hz < 10 ? 10 : (hz > 200 ? 200 : hz); }
 
+// Stored selection -> chip. Anything unexpected means "no IMU": better an IMU that is
+// visibly off, with the app able to fix it, than ten seconds of I2C retries against a
+// chip nobody claimed is there.
+ImuChip chipFromConfig(uint8_t stored) {
+  switch (stored) {
+    case 1: return ImuChip::Icm20948;
+    case 2: return ImuChip::Mpu9250;
+    default: return ImuChip::None;
+  }
+}
+
+const char *chipName(ImuChip chip) {
+  switch (chip) {
+    case ImuChip::Icm20948: return "ICM-20948 (GY-ICM20948V2)";
+    case ImuChip::Mpu9250: return "MPU-9250 (GY-91)";
+    default: return "none";
+  }
+}
+
 // Data-ready poll period for a given sample rate. The GY-91's INT pin is not routed
 // on the board (docs/hardware-pinout.md: INT unconnected), so INT_STATUS is polled
 // over I2C; a quarter of the sample period guarantees every sample is read (the
@@ -109,10 +128,27 @@ bool ImuService::begin(ConfigStore &store) {
   if (queue_ == nullptr) GB_LOGE(kTag, "sample queue allocation failed");
   if (magQueue_ == nullptr) magQueue_ = xQueueCreate(kMagQueueDepth, sizeof(MagRawSample));
 
+  // Read once, kept for the whole run: the drivers are concrete members and imu_ picks
+  // one of them, so the selection can change in NVS without ever changing under the
+  // running IMU task.
+  bootChip_ = chipFromConfig(cfg.imuChip);
+  if (bootChip_ == ImuChip::None) {
+    // No bus init, no probe, no retries: the pins stay untouched. The queue and the
+    // (idling) task still exist, so every caller behaves as it does on a probe failure.
+    imu_ = nullptr;
+    imuOk_ = false;
+    if (cfg.imuChip != 0) GB_LOGW(kTag, "unknown imuChip %u in config", (unsigned)cfg.imuChip);
+    GB_LOGI(kTag, "no IMU selected; configure it in the app");
+    return false;
+  }
+  imu_ = bootChip_ == ImuChip::Icm20948 ? static_cast<ImuDriver *>(&icm_)
+                                        : static_cast<ImuDriver *>(&mpu_);
+  GB_LOGI(kTag, "configured chip: %s, mag axes %s", chipName(bootChip_),
+          magRemapLabel(cfg.magAxisRemap));
+
   Wire.begin(kSdaPin, kSclPin);
   Wire.setClock(kI2cHz);
 
-  imu_ = &mpu_;
   bool found = false;
   for (int attempt = 1; attempt <= kBeginAttempts; ++attempt) {
     if (imu_->begin(Wire, kAd0Val)) {
@@ -123,7 +159,10 @@ bool ImuService::begin(ConfigStore &store) {
     if (attempt < kBeginAttempts) delay(kBeginRetryMs);  // setup-time only
   }
   if (!found) {
-    GB_LOGE(kTag, "MPU-9250 (GY-91) not found; IMU disabled");
+    // The selected chip is not on the bus. Deliberately NOT a fallback to the other
+    // driver: a silent guess would hide a wrong setting, and the app can show the
+    // operator exactly this (TLV 0x35: selection kept, "found" bit clear).
+    GB_LOGE(kTag, "%s not found; IMU disabled", chipName(bootChip_));
     imuOk_ = false;
     return false;
   }
