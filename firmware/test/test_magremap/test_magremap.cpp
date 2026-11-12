@@ -111,6 +111,20 @@ void test_in_place_remap_is_safe(void) {
   }
 }
 
+// Pins Review Focus 5: the magnetometer sample published for the calibration capture is
+// in the CONFIGURED frame, not the native one. ImuService lives in src/services/, which
+// the `native` environment does not compile, so what is testable here is the premise the
+// service relies on: the frame the capture publishes depends on the configured index, so
+// publishing before the remap (or with the wrong index) would feed the browser's
+// hard/soft-iron fit a different vector than the fusion uses.
+void test_capture_publishes_in_the_configured_frame(void) {
+  const float native[3] = {1.0f, 2.0f, 3.0f};
+  float a[3], b[3];
+  applyMagRemap(kMagRemapDefault, native, a);
+  applyMagRemap(0, native, b);  // identity: what publishing the native frame would give
+  TEST_ASSERT_FALSE(a[0] == b[0] && a[1] == b[1] && a[2] == b[2]);
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_default_reproduces_current_behaviour);
@@ -121,5 +135,6 @@ int main(int, char **) {
   RUN_TEST(test_out_of_range_falls_back_to_default);
   RUN_TEST(test_documented_order_is_pinned_at_spread_indices);
   RUN_TEST(test_in_place_remap_is_safe);
+  RUN_TEST(test_capture_publishes_in_the_configured_frame);
   return UNITY_END();
 }

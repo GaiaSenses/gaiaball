@@ -11,9 +11,11 @@
 #include "../logic/Filters.h"
 #include "../logic/GaiaConfig.h"
 #include "../logic/GyroBias.h"
+#include "../logic/MagAxisRemap.h"
 #include "../logic/MagCalibration.h"
 #include "../logic/QuatMath.h"
 #include "../logic/QuatSmoother.h"
+#include "ImuDriver.h"
 #include "Mpu9250.h"
 
 namespace gaia {
@@ -55,24 +57,31 @@ struct ImuSettings {
   float oneEuroFcMinHz = 1.0f;
   float oneEuroBeta = 0.0f;
   MagCal magCal = magCalIdentity();
+  // Index into the 24 proper axis permutations (logic/MagAxisRemap.h): how the
+  // magnetometer's own frame maps onto the gyro/accel frame. Configurable because the
+  // relationship is a property of the board, different per chip, and unknowable without
+  // the hardware in hand.
+  uint8_t magAxisRemap = kMagRemapDefault;
 };
 
 // THE one place that translates stored configuration into pipeline settings (units,
 // fixed-point scaling, derived values). Pure function: host-testable, no I/O.
 ImuSettings imuSettingsFrom(const GaiaConfig &cfg);
 
-// GY-91 (MPU-9250) orientation service.
+// Orientation service, driving whichever IMU the configuration selects (ImuDriver:
+// ICM-20948 or MPU-9250; none at all is a legitimate state, see begin()).
 //
 // A dedicated task (core 1, prio 3) polls the data-ready flag over I2C — the module's
 // INT pin is not routed on the board — at a period adapted to the configured rate
 // (sample period / 4, clamped to 2..5 ms), reads the raw registers (no DMP, no FIFO)
 // and runs this pipeline, in this order and for these reasons:
 //
-//   1. anti-alias     MPU-9250 DLPF matched to the output rate (Mpu9250), so the
-//                     SMPLRT_DIV decimation cannot fold vibration into the band.
+//   1. anti-alias     the chip's DLPF matched to the output rate (ImuDriver), so the
+//                     sample-rate decimation cannot fold vibration into the band.
 //   2. gyro bias      GyroBiasTracker: removes the zero-rate offset that would
 //                     otherwise integrate into unbounded heading drift.
-//   3. mag calibration MagCal: hard/soft-iron correction, without which the 9-axis
+//   3. mag frame + cal applyMagRemap puts the magnetometer in the gyro/accel frame,
+//                     then MagCal: hard/soft-iron correction, without which the 9-axis
 //                     heading can be worse than the magnetometer-free estimate.
 //   4. fusion         Ahrs (revised Madgwick): gyro integration corrected by the
 //                     accelerometer/magnetometer, with acceleration and magnetic
@@ -127,8 +136,11 @@ class ImuService {
 
   // I2C transaction failures since boot (reported in the diag packet's legacy
   // "fifoOverflows" field — same wire slot, new meaning).
+  // Called about once a second by the diagnostics path from boot, i.e. possibly
+  // before/without any driver: no driver means no I2C traffic, hence no errors.
   uint16_t readErrorCount() const {
-    const uint32_t e = mpu_.errorCount();
+    if (imu_ == nullptr) return 0;
+    const uint32_t e = imu_->errorCount();
     return e > 0xFFFF ? 0xFFFF : (uint16_t)e;
   }
   float measuredHz() const { return measuredHz_.load(); }
@@ -154,7 +166,11 @@ class ImuService {
   // Published-accelerometer path (spike filter then EMA), counts in and out.
   void filterAccel(const int16_t raw[3], int16_t out[3]);
 
+  // The drivers are concrete members (no dynamic allocation anywhere in the firmware)
+  // and imu_ points at the one the configuration selected - or at nothing, which is why
+  // every use of imu_ is null-checked.
   Mpu9250 mpu_;
+  ImuDriver *imu_ = nullptr;
   Ahrs ahrs_;
   GyroBiasTracker gyroBias_;
   QuatSmoother smoother_;
@@ -192,7 +208,7 @@ class ImuService {
 
   // IMU-task-only state.
   ImuSettings active_{};
-  float lastMagBody_[3] = {0, 0, 0};  // AK8963 reading remapped to the chip frame
+  float lastMagBody_[3] = {0, 0, 0};  // magnetometer reading in the gyro/accel frame
   bool haveMag_ = false;
   uint32_t lastSampleUs_ = 0;
   uint32_t magCaptureStartMs_ = 0;

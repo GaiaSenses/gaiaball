@@ -70,7 +70,7 @@ ImuSettings imuSettingsFrom(const GaiaConfig &cfg) {
   s.orientationMode = clampMode(cfg.orientationMode);
   s.rateHz = clampRate(cfg.imuNotifyHz);
   s.dlpfMode = cfg.imuDlpfMode > 7 ? 0 : cfg.imuDlpfMode;
-  s.gyroFsSel = cfg.gyroFsSel >= Mpu9250::kGyroFsCount ? 2 : cfg.gyroFsSel;
+  s.gyroFsSel = cfg.gyroFsSel >= ImuDriver::kGyroFsCount ? 2 : cfg.gyroFsSel;
   s.accelAlphaX1000 = cfg.accelLpAlphaX1000 > 1000 ? 1000 : cfg.accelLpAlphaX1000;
   s.accelHampelK = (float)cfg.accelHampelKX10 / 10.0f;
 
@@ -95,6 +95,7 @@ ImuSettings imuSettingsFrom(const GaiaConfig &cfg) {
   s.oneEuroFcMinHz = (float)cfg.oneEuroFcMinX100 / 100.0f;
   s.oneEuroBeta = (float)cfg.oneEuroBetaX1000 / 1000.0f;
   s.magCal = magCalFromFixed(cfg.magHardIron, cfg.magSoftIron);
+  s.magAxisRemap = cfg.magAxisRemap;  // applyMagRemap() clamps out-of-range itself
   return s;
 }
 
@@ -111,9 +112,10 @@ bool ImuService::begin(ConfigStore &store) {
   Wire.begin(kSdaPin, kSclPin);
   Wire.setClock(kI2cHz);
 
+  imu_ = &mpu_;
   bool found = false;
   for (int attempt = 1; attempt <= kBeginAttempts; ++attempt) {
-    if (mpu_.begin(Wire, kAd0Val)) {
+    if (imu_->begin(Wire, kAd0Val)) {
       found = true;
       break;
     }
@@ -133,7 +135,7 @@ bool ImuService::begin(ConfigStore &store) {
   if (imuOk_) {
     GB_LOGI(kTag, "fusion ready (%s, %u Hz, DLPF %.0f Hz, gain %.2f)",
             active_.orientationMode == 1 ? "Quat9" : "Quat6", (unsigned)active_.rateHz,
-            mpu_.dlpfCutoffHz(), active_.ahrs.gain);
+            imu_->dlpfCutoffHz(), active_.ahrs.gain);
   } else {
     GB_LOGE(kTag, "sample-rate setup failed; IMU disabled");
   }
@@ -167,15 +169,16 @@ void ImuService::applyPendingSettings(bool force) {
                                next.dlpfMode != active_.dlpfMode ||
                                next.gyroFsSel != active_.gyroFsSel;
 
-  if (frontEndChanged) {
-    bool ok = mpu_.setGyroFullScale(next.gyroFsSel);
+  if (frontEndChanged && imu_ != nullptr) {
+    bool ok = imu_->setGyroFullScale(next.gyroFsSel);
     if (!ok) GB_LOGE(kTag, "gyro range change failed");
-    const bool rateOk = mpu_.setSampleRateHz(next.rateHz, next.dlpfMode);
+    const bool rateOk = imu_->setSampleRateHz(next.rateHz, next.dlpfMode);
     if (!rateOk) GB_LOGE(kTag, "sample rate change to %u Hz failed", (unsigned)next.rateHz);
     frontEndOk_ = ok && rateOk;
   }
   // The overrange threshold is a property of the hardware range, not of the config.
-  next.ahrs.gyroRangeDps = mpu_.gyroRangeDps();
+  // With no driver there is no range to know: 0 disables overrange detection (Ahrs.h).
+  next.ahrs.gyroRangeDps = imu_ != nullptr ? imu_->gyroRangeDps() : 0.0f;
 
   ahrs_.configure(next.ahrs);
   gyroBias_.configure(next.bias, (float)next.rateHz);
@@ -211,7 +214,7 @@ void ImuService::taskLoop() {
   // Task WDT: registered and fed once per cycle, idle path included (see the
   // watchdog policy in Diagnostics.h).
   esp_task_wdt_add(nullptr);
-  if (!imuOk_ || queue_ == nullptr) {
+  if (!imuOk_ || queue_ == nullptr || imu_ == nullptr) {
     // IMU unavailable: idle forever so the rest of the system keeps running.
     for (;;) {
       esp_task_wdt_reset();
@@ -242,7 +245,7 @@ void ImuService::taskLoop() {
       }
     }
 
-    if (mpu_.dataReady()) processSample(micros());
+    if (imu_->dataReady()) processSample(micros());  // non-null: see the idle guard above
     updateRate(micros());
     vTaskDelay(pollTicks);
   }
@@ -287,15 +290,17 @@ void ImuService::publishMagSample(const float rawUt[3]) {
 
 void ImuService::processSample(uint32_t tUs) {
   int16_t accRaw[3], gyroRaw[3];
-  if (!mpu_.readAccelGyro(accRaw, gyroRaw)) return;
+  // imu_ is non-null here: the only caller is taskLoop()'s polling path, which the
+  // idle guard at the top of taskLoop() never lets run without a driver.
+  if (!imu_->readAccelGyro(accRaw, gyroRaw)) return;
 
   // --- physical units ------------------------------------------------------
   const float accelG[3] = {
-      (float)accRaw[0] / Mpu9250::kAccelLsbPerG,
-      (float)accRaw[1] / Mpu9250::kAccelLsbPerG,
-      (float)accRaw[2] / Mpu9250::kAccelLsbPerG,
+      (float)accRaw[0] / ImuDriver::kAccelLsbPerG,
+      (float)accRaw[1] / ImuDriver::kAccelLsbPerG,
+      (float)accRaw[2] / ImuDriver::kAccelLsbPerG,
   };
-  const float lsbPerDps = mpu_.gyroLsbPerDps();
+  const float lsbPerDps = imu_->gyroLsbPerDps();
   float gDps[3];
   for (int i = 0; i < 3; i++) gDps[i] = (float)gyroRaw[i] / lsbPerDps;
 
@@ -310,9 +315,14 @@ void ImuService::processSample(uint32_t tUs) {
   const bool nine = active_.orientationMode == 1;
   if (nine) {
     float uT[3];
-    if (mpu_.readMag(uT)) {
-      // AK8963 axes differ from the gyro/accel chip frame: X<->Y swapped, Z inverted.
-      const float chipFrame[3] = {uT[1], uT[0], -uT[2]};
+    if (imu_->readMag(uT)) {
+      // readMag() returns the magnetometer's own frame; the configured permutation puts
+      // it in the gyro/accel frame (default index 8 = {+Y, +X, -Z}, the literal this
+      // replaced). Order matters: the capture sample is published AFTER the remap and
+      // before magApply, because the hard/soft-iron fit in the browser runs on exactly
+      // what gets published.
+      float chipFrame[3];
+      applyMagRemap(active_.magAxisRemap, uT, chipFrame);
       if (magCaptureActive_.load()) publishMagSample(chipFrame);  // RAW, for the fit
       magApply(active_.magCal, chipFrame, lastMagBody_);
       haveMag_ = true;

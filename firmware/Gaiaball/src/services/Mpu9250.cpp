@@ -32,8 +32,8 @@ constexpr uint8_t kMagRegAsax = 0x10;
 constexpr float kMagUtPerLsb = 0.15f;  // 16-bit mode
 
 // Gyroscope sensitivity per FS_SEL value, and the matching full-scale magnitude.
-constexpr float kGyroLsbPerDps[Mpu9250::kGyroFsCount] = {131.0f, 65.5f, 32.8f, 16.4f};
-constexpr float kGyroRangeDps[Mpu9250::kGyroFsCount] = {250.0f, 500.0f, 1000.0f, 2000.0f};
+constexpr float kGyroLsbPerDps[ImuDriver::kGyroFsCount] = {131.0f, 65.5f, 32.8f, 16.4f};
+constexpr float kGyroRangeDps[ImuDriver::kGyroFsCount] = {250.0f, 500.0f, 1000.0f, 2000.0f};
 }  // namespace
 
 float Mpu9250::dlpfCutoffHz() const { return dlpfCutoffHzFor(ImuChip::Mpu9250, dlpfMode_); }
