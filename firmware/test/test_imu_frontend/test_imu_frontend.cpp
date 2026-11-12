@@ -49,6 +49,16 @@ void test_icm_lowest_rate_uses_narrowest_filter(void) {
   TEST_ASSERT_EQUAL_UINT16(112, p.gyroDiv);
 }
 
+void test_cutoff_never_above_nyquist_from_20hz_up(void) {
+  // Holds for both chips from 20 Hz up. Below ~12 Hz it cannot (see ImuFrontEnd.h).
+  for (ImuChip chip : {ImuChip::Mpu9250, ImuChip::Icm20948}) {
+    for (uint8_t hz : {20, 50, 100, 200}) {
+      const FrontEndPlan p = planFrontEnd(chip, hz, 0);
+      TEST_ASSERT_TRUE(p.cutoffHz <= 0.5f * p.actualHz);
+    }
+  }
+}
+
 void test_forced_dlpf_is_respected(void) {
   TEST_ASSERT_EQUAL_UINT8(2, planFrontEnd(ImuChip::Icm20948, 50, 2).dlpfMode);
   TEST_ASSERT_EQUAL_UINT8(7, planFrontEnd(ImuChip::Mpu9250, 50, 7).dlpfMode);
@@ -65,6 +75,7 @@ int main(int, char **) {
   RUN_TEST(test_mpu_legacy_extremes);
   RUN_TEST(test_icm_divisors_at_rate_extremes);
   RUN_TEST(test_icm_lowest_rate_uses_narrowest_filter);
+  RUN_TEST(test_cutoff_never_above_nyquist_from_20hz_up);
   RUN_TEST(test_forced_dlpf_is_respected);
   RUN_TEST(test_cutoff_tables_differ_between_chips);
   return UNITY_END();
