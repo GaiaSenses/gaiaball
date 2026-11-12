@@ -5,8 +5,11 @@ namespace gaia {
 namespace {
 // MPU-9250 gyro DLPF_CFG cut-offs (FCHOICE_B = 0); index 7 (3600 Hz) is never automatic.
 constexpr float kMpuDlpfHz[8] = {250.0f, 184.0f, 92.0f, 41.0f, 20.0f, 10.0f, 5.0f, 3600.0f};
-// ICM-20948 GYRO_CONFIG_1.GYRO_DLPFCFG 3 dB bandwidths (InvenSense DS-000189 rev 1.3,
-// GYRO_FCHOICE = 1). Index 7 (361.4 Hz) is never automatic.
+// ICM-20948 GYRO_CONFIG_1.GYRO_DLPFCFG 3 dB bandwidths (GYRO_FCHOICE = 1). Checked
+// against the 3 dB figures encoded in the enumerator names of the SparkFun ICM-20948
+// library this repo vendored until 57f237c (ICM_20948_GYRO_CONFIG_1_DLPCFG_e, e.g.
+// gyr_d196bw6 = 196.6 Hz), not against the InvenSense datasheet (DS-000189) itself,
+// which remains the upstream authority. Index 7 (361.4 Hz) is never automatic.
 constexpr float kIcmDlpfHz[8] = {196.6f, 151.8f, 119.5f, 51.2f, 23.9f, 11.6f, 5.7f, 361.4f};
 
 constexpr float kMpuBaseHz = 1000.0f;

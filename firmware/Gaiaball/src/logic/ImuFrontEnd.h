@@ -22,7 +22,8 @@ struct FrontEndPlan {
 // <= 0.47 * rate (0.47, not 0.5, leaves a guard band for the filter's transition
 // region), falling back to index 6 (the narrowest) at the lowest rates. Rates below
 // 4 Hz are raised to 4. Known limit: below roughly 12 Hz the narrowest filter (5 Hz MPU,
-// 5.7 Hz ICM) is still above Nyquist, so those rates alias on both chips; accepted. Decimation base: 1000 Hz (MPU-9250), 1125 Hz (ICM-20948).
+// 5.7 Hz ICM) is still above Nyquist, so those rates alias on both chips; accepted.
+// Decimation base: 1000 Hz (MPU-9250), 1125 Hz (ICM-20948).
 FrontEndPlan planFrontEnd(ImuChip chip, uint8_t requestedHz, uint8_t forcedDlpfMode);
 
 // Cut-off of DLPF index `mode & 7` for the chip. Named ...For so it cannot be hidden by
