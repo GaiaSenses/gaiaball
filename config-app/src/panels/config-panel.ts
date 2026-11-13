@@ -195,7 +195,7 @@ const GROUPS: Group[] = [
       info: 'Imprime no log serial cada quadro recebido do sensor, em hexadecimal — só para diagnóstico de bancada; desligue depois. Liga/desliga, sem unidade.' },
   ] },
   { title: 'Navegação do globo', fields: [
-    { id: TLV.navMode, label: 'Modo', kind: 'select', options: [[0, 'Desligado'], [1, 'Espelho'], [2, 'Joystick']],
+    { id: TLV.navMode, label: 'Modo de navegação', kind: 'select', options: [[0, 'Desligado'], [1, 'Espelho'], [2, 'Joystick']],
       info: 'Como a rotação da bola move o globo no site. ESPELHO: a rotação da bola é refletida exatamente no globo, sem zona morta nem trava de norte (girou 30° na mão, o globo girou 30°). JOYSTICK: inclinar ou girar a bola a partir do zero faz o globo girar continuamente naquela direção, com velocidade que cresce com o desvio; devolvendo a bola ao zero, o globo para. DESLIGADO: a bola não move o globo. Mudar o modo (ou o ponto de referência, ou zerar a orientação) leva o globo de volta ao ponto de referência; os demais parâmetros de navegação valem na hora, sem reiniciar. Seleção, sem unidade.' },
     { id: TLV.joyMaxSpeedDegS, label: 'Velocidade máxima (°/s)', kind: 'number', min: 1, max: 720, visible: isJoystick,
       info: 'Só no modo Joystick. Velocidade com que o globo gira quando a bola está inclinada pelo “ângulo da velocidade máxima” ou mais. Maior = o globo corre mais rápido com a bola bem inclinada. Unidade: graus por segundo (°/s), de 1 a 720.' },
