@@ -1,5 +1,6 @@
 #include <unity.h>
 #include "../../Gaiaball/src/logic/Co2FrameParser.h"
+#include "../../Gaiaball/src/logic/Co2Trigger.h"
 #include "../../Gaiaball/src/logic/VirtualCo2Pulse.h"
 
 using namespace gaia;
@@ -169,6 +170,61 @@ void test_pulse_millis_wraparound() {
   TEST_ASSERT_FALSE(v.active(t + 6001));
 }
 
+void test_trigger_starts_off_and_hysteresis_band() {
+  Co2Trigger t;
+  t.configure(1200, 50);  // on above 1200, off at or below 1150
+  TEST_ASSERT_FALSE(t.on());
+  TEST_ASSERT_FALSE(t.update(1200, false, false));  // needs strictly above
+  TEST_ASSERT_TRUE(t.update(1201, false, false));
+  TEST_ASSERT_TRUE(t.on());
+  TEST_ASSERT_TRUE(t.update(1200, false, false));  // inside the band: stays on
+  TEST_ASSERT_TRUE(t.update(1151, false, false));
+  TEST_ASSERT_FALSE(t.update(1150, false, false));  // trigger - hyst: off
+  TEST_ASSERT_FALSE(t.update(1180, false, false));  // inside the band: stays off
+  TEST_ASSERT_FALSE(t.update(1200, false, false));
+  TEST_ASSERT_TRUE(t.update(1201, false, false));
+}
+
+void test_trigger_stale_forces_off() {
+  Co2Trigger t;
+  t.configure(1200, 50);
+  TEST_ASSERT_TRUE(t.update(1500, false, false));
+  TEST_ASSERT_FALSE(t.update(1500, true, false));  // last reading too old
+  TEST_ASSERT_FALSE(t.on());
+  TEST_ASSERT_FALSE(t.update(1500, true, false));
+  TEST_ASSERT_TRUE(t.update(1500, false, false));  // fresh again
+}
+
+void test_trigger_pulse_keeps_it_on_while_stale() {
+  Co2Trigger t;
+  t.configure(1200, 50);
+  TEST_ASSERT_TRUE(t.update(1500, false, false));
+  TEST_ASSERT_TRUE(t.update(1500, true, true));  // virtual pulse active
+  TEST_ASSERT_TRUE(t.on());
+  TEST_ASSERT_FALSE(t.update(1500, true, false));  // pulse over: forced off
+  // A pulse can switch it on with no sensor at all.
+  TEST_ASSERT_TRUE(t.update(1500, true, true));
+  TEST_ASSERT_FALSE(t.update(400, true, true));  // hysteresis still applies
+}
+
+void test_trigger_hyst_larger_than_trigger_does_not_underflow() {
+  Co2Trigger t;
+  t.configure(400, 2000);  // off level clamps at 0 ppm
+  TEST_ASSERT_TRUE(t.update(401, false, false));
+  TEST_ASSERT_TRUE(t.update(100, false, false));
+  TEST_ASSERT_TRUE(t.update(1, false, false));
+  TEST_ASSERT_FALSE(t.update(0, false, false));
+}
+
+void test_trigger_reset() {
+  Co2Trigger t;
+  t.configure(1200, 50);
+  TEST_ASSERT_TRUE(t.update(1500, false, false));
+  t.reset();
+  TEST_ASSERT_FALSE(t.on());
+  TEST_ASSERT_FALSE(t.update(1180, false, false));  // band does not re-latch
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_aligned_frame);
@@ -179,5 +235,10 @@ int main() {
   RUN_TEST(test_pulse_timing);
   RUN_TEST(test_pulse_retrigger_ignored_and_cancel);
   RUN_TEST(test_pulse_millis_wraparound);
+  RUN_TEST(test_trigger_starts_off_and_hysteresis_band);
+  RUN_TEST(test_trigger_stale_forces_off);
+  RUN_TEST(test_trigger_pulse_keeps_it_on_while_stale);
+  RUN_TEST(test_trigger_hyst_larger_than_trigger_does_not_underflow);
+  RUN_TEST(test_trigger_reset);
   return UNITY_END();
 }
