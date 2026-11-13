@@ -5,7 +5,9 @@
 
 #include <atomic>
 
+#include "logic/Co2Trigger.h"
 #include "logic/CommandGate.h"
+#include "logic/NavEngine.h"
 #include "logic/NotifyThrottle.h"
 #include "logic/VirtualCo2Pulse.h"
 #include "services/AudioService.h"
@@ -29,6 +31,8 @@ namespace gaia {
 //    refreshes after every PotService::poll() (PotService itself is single-task).
 //  - ConfigStore onChange (NimBLE host task) only sets configDirty_; the App task
 //    re-applies the config to every service.
+//  - Globe navigation (nav_) is App-task-only: it learns about IMU reference changes
+//    from ImuSample::zeroEpoch, which the IMU task stamps on every queued sample.
 class App {
  public:
   // Boots everything and starts all tasks. Call once from setup().
@@ -39,9 +43,15 @@ class App {
   void taskLoop();
 
   void handleImuSample(const ImuSample &s);
+  // Globe navigation, on EVERY IMU sample (before the IMU notify throttle): steps nav_
+  // and notifies the nav characteristic when a packet is due and someone listens.
+  void updateNav(const ImuSample &s);
+  // 1 Hz NavPacket with valid = 0 while navigation is off or the IMU is silent.
+  void maybeSendNavKeepalive(uint32_t nowMs);
   // THE one place that copies config scalars into the App-task mirrors (and derived
-  // settings: gate PIN, throttle rate, virtual-pulse params). begin() and
-  // applyConfigIfDirty() both call it; never copy a field outside it.
+  // settings: gate PIN, throttle rate, virtual-pulse params, CO2 trigger, navigation
+  // engine). begin() and applyConfigIfDirty() both call it; never copy a field outside
+  // it.
   void applySnapshot(const GaiaConfig &cfg);
   void applyConfigIfDirty();
   // Virtual pulse peak while active; otherwise the real reading (co2Enabled=1) or
@@ -78,6 +88,8 @@ class App {
 
   // App-task-only state.
   VirtualCo2Pulse virtualPulse_;  // pure logic; triggered/consumed only here
+  Co2Trigger co2Trigger_;         // pure logic; drives the Co2Packet trigger flag
+  NavEngine nav_;                 // pure logic; fed by updateNav(), configured in applySnapshot
   uint8_t imuNotifyHz_ = 0;
   uint16_t co2AlertPpm_ = 2000;
   bool co2Enabled_ = true;
@@ -94,6 +106,7 @@ class App {
   uint16_t sensorsSeq_ = 0;
   uint16_t audioChunkSeq_ = 0;
   uint16_t magChunkSeq_ = 0;
+  uint16_t navSeq_ = 0;  // shared by pose packets and keepalives (one characteristic)
   uint32_t imuNotifiesInWindow_ = 0;
   uint32_t diagWindowStartMs_ = 0;
   uint32_t lastPotMs_ = 0;

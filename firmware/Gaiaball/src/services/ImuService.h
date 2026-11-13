@@ -31,6 +31,10 @@ struct ImuSample {
   Quat q;          // output orientation (mounting + zero applied, optionally smoothed)
   int16_t acc[3];  // accelerometer counts (±4 g, 8192 LSB/g), optionally filtered
   uint8_t flags;
+  // Reference epoch: changes whenever the frame q is expressed in changes (zero
+  // applied, mounting captured, Quat6/Quat9 switch), so a consumer that integrates
+  // over q (globe navigation) knows to restart instead of reading a jump as motion.
+  uint32_t zeroEpoch;
 };
 
 // One raw magnetometer triplet for a calibration run, in 0.1 µT, already remapped to
@@ -98,7 +102,8 @@ ImuSettings imuSettingsFrom(const GaiaConfig &cfg);
 // EMA): it is a signal for the patch, never an input to the fusion, which always uses
 // the unfiltered reading.
 //
-// Threading: the sample queue is the only cross-task data path for samples. Settings
+// Threading: the sample queue is the only cross-task data path for samples (the
+// reference epoch travels inside each sample, never as shared state). Settings
 // arrive as one struct under a short critical section; one-shot requests (zero,
 // mounting, magnetometer capture) are atomics consumed by the IMU task. Counters and
 // diagnostics are atomics, readable from any task.
@@ -171,7 +176,8 @@ class ImuService {
   void taskLoop();
   void applyPendingSettings(bool force);
   void processSample(uint32_t tUs);
-  void publish(const ImuSample &s);
+  // Stamps the current reference epoch on s, then queues it.
+  void publish(ImuSample &s);
   void publishMagSample(const float rawUt[3]);
   void updateRate(uint32_t nowUs);
   void updateDiagnostics();
@@ -230,6 +236,7 @@ class ImuService {
   bool accSeeded_ = false;
   Quat qMount_{1, 0, 0, 0};
   Quat qZero_{1, 0, 0, 0};
+  uint32_t zeroEpoch_ = 0;  // bumped on every reference change; see ImuSample::zeroEpoch
   Quat prevOut_{1, 0, 0, 0};
   bool havePrev_ = false;
   uint32_t rateWindowStartUs_ = 0;

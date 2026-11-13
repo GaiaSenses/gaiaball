@@ -35,7 +35,7 @@ struct BleCommand {
   uint8_t unlockedAtEnqueue;
 };
 
-// NimBLE GATT server: one service, five characteristics (short ids 1..5):
+// NimBLE GATT server: one service, six characteristics (short ids 1..6):
 //   1 IMU     NOTIFY|READ    ImuPacket
 //   2 command WRITE|WRITE_NR opcode + args (see BleCommand)
 //   3 CO2     NOTIFY|READ    Co2Packet
@@ -43,6 +43,7 @@ struct BleCommand {
 //                            write = ConfigStore::applyTlv, requires the writer's
 //                            connection to be unlocked)
 //   5 diag    NOTIFY|READ    DiagPacket
+//   6 nav     NOTIFY|READ    NavPacket (globe navigation pose)
 //
 // Connections: up to 2 concurrent centrals, mapped to CommandGate slots 0/1.
 // Advertising is restarted after each connect while fewer than 2 are connected and
@@ -57,7 +58,7 @@ struct BleCommand {
 //    quick and non-blocking (set flags / queue work for the App task; no NVS save,
 //    no I2C/UART, no delays). PIN changes must be forwarded to CommandGate::setPin
 //    by that handler.
-//  - notifyImu/Co2/Diag are meant for the App task. Calling setValue()/notify() from
+//  - notifyImu/Co2/Diag/Nav are meant for the App task. Calling setValue()/notify() from
 //    a non-BLE task is the de facto pattern used by NimBLE-Arduino 1.x apps (setValue
 //    copies inside a critical section; notify() hands an mbuf to the host stack).
 //    The library's m_subscribedVec, however, is unsynchronized: a narrow race with a
@@ -88,8 +89,10 @@ class BleService {
   void notifySensors(const SensorsPacket &p);      // same characteristic as diag
   void notifyAudioChunk(const AudioChunkPacket &p);  // same characteristic as diag
   void notifyMagChunk(const MagChunkPacket &p);       // same characteristic as diag
+  void notifyNav(const NavPacket &p);
 
-  // charSel = characteristic short id: 1 (IMU), 3 (CO2) or 5 (diag). Other ids: false.
+  // charSel = characteristic short id: 1 (IMU), 3 (CO2), 5 (diag) or 6 (nav). Other ids:
+  // false.
   bool anySubscriber(uint16_t charSel) const;
 
   // Queue of BleCommand items for the App task (depth 8). nullptr before begin().
@@ -115,7 +118,13 @@ class BleService {
   class ConfigCb;
   class NotifyCb;
 
-  enum NotifyIdx : uint8_t { kIdxImu = 0, kIdxCo2 = 1, kIdxDiag = 2, kNotifyChars = 3 };
+  enum NotifyIdx : uint8_t {
+    kIdxImu = 0,
+    kIdxCo2 = 1,
+    kIdxDiag = 2,
+    kIdxNav = 3,
+    kNotifyChars = 4
+  };
 
   // Host-task-only helpers.
   uint8_t slotOf(uint16_t connHandle) const;
@@ -132,7 +141,7 @@ class BleService {
   ConfigStore *store_ = nullptr;
   CommandGate *gate_ = nullptr;
   NimBLEServer *server_ = nullptr;
-  NimBLECharacteristic *notifyChars_[kNotifyChars] = {nullptr, nullptr, nullptr};
+  NimBLECharacteristic *notifyChars_[kNotifyChars] = {nullptr, nullptr, nullptr, nullptr};
   QueueHandle_t cmdQueue_ = nullptr;
 
   uint16_t connHandles_[kMaxConns] = {0xFFFF, 0xFFFF};  // host task only; 0xFFFF = free
@@ -141,7 +150,7 @@ class BleService {
   std::atomic<uint8_t> connCount_{0};
   std::atomic<uint8_t> imuStatus_{0};  // imuStatusByte(ImuChip::None, false)
   // Bit n set = slot n has notifications enabled on that characteristic.
-  std::atomic<uint8_t> subMask_[kNotifyChars] = {{0}, {0}, {0}};
+  std::atomic<uint8_t> subMask_[kNotifyChars] = {{0}, {0}, {0}, {0}};
 };
 
 }  // namespace gaia
