@@ -4,6 +4,8 @@ App web (Vite + TypeScript) para configurar e testar o Gaiaball v2 via Web Bluet
 
 Interface: **tema claro/escuro** (botão no topo; sem escolha salva, segue o tema do sistema), **tooltips didáticos ⓘ** em cada parâmetro — passe o mouse, foque com Tab ou toque para ver o que o parâmetro faz e sua unidade (em telas estreitas o texto aparece como folha no rodapé) — e **layout responsivo** (desktop com o 3D fixo ao rolar, tablet e celular em uma coluna). Fontes IBM Plex embutidas via `@fontsource`: o app continua funcionando offline na bancada.
 
+No canto superior direito do 3D, o botão de cubo (**Vistas da câmera**) leva a câmera às vistas Frente, Trás, Direita, Esquerda, Superior, Inferior e ISO, como num programa de CAD; a vista inicial continua a mesma.
+
 ## Sensores em tempo real
 
 O painel "Sensores em tempo real" mostra o valor atual de cada sensor com a unidade
