@@ -65,13 +65,15 @@ void test_ref_origin_is_identity() {
   TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.f, quatAngleDeg(kId, r0));
 }
 
-// R0 maps the reference point to +X, local east to +Y and local north to +Z, for
-// references that exercise every branch of the matrix -> quaternion conversion
-// (trace > 0, and each diagonal element dominant), poles included.
+// R0 maps the reference point to +X, local east to +Y and local north to +Z. The
+// references cover the trace > 0 branch, the z-dominant branch and both poles. The
+// y-dominant branch is unreachable for this matrix family, and the x-dominant branch
+// is only reached through float rounding at an exact pole with |lon| > 90, which the
+// (90, 180) and (-90, 135) points exercise.
 void test_ref_maps_local_basis() {
   const float refs[][2] = {{kCampLat, kCampLon}, {0.f, 0.f},    {0.f, 180.f},  {0.f, -90.f},
                            {90.f, 0.f},         {-90.f, 30.f}, {45.f, -135.f}, {-60.f, 120.f},
-                           {10.f, 170.f}};
+                           {10.f, 170.f},       {90.f, 180.f}, {-90.f, 135.f}};
   for (const auto &r : refs) {
     const Quat r0 = navRefRotation(r[0], r[1]);
     float p[3], e[3], n[3], out[3];

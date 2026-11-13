@@ -99,6 +99,25 @@ struct GaiaConfig {
   // EMA over accepted CO2 readings, alpha x1000. 1000 = no smoothing (legacy).
   uint16_t co2EmaAlphaX1000 = 1000;
 
+  // CO2 trigger (TLV 0x29/0x2A): the Co2Packet trigger flag rises at co2TriggerPpm and
+  // falls below co2TriggerPpm - co2TriggerHystPpm.
+  uint16_t co2TriggerPpm = 1200;      // 400..10000
+  uint16_t co2TriggerHystPpm = 50;    // 0..2000
+
+  // --- globe navigation (NavPacket; logic/NavMath.h, MotionSettle.h) -------
+  uint8_t navMode = 1;               // 0=off, 1=mirror, 2=joystick
+  uint8_t navNotifyHz = 50;          // 10..200 NavPacket rate
+  int32_t navRefLatE6 = -22905556;   // reference point shown at identity: lat x 1e6 (Campinas)
+  int32_t navRefLonE6 = -47060833;   // reference point lon x 1e6
+  uint16_t joyMaxSpeedDegS = 90;     // 1..720 joystick speed at full tilt, deg/s
+  uint8_t joyFullAngleDeg = 60;      // 5..90 tilt that commands full speed
+  uint8_t joyCurveX10 = 30;          // 10..40 response exponent x 10 (30 = cubic)
+  uint8_t navStartDegS = 20;         // 1..200 mirror: globe speed that starts motion, deg/s
+  uint8_t navStopDegS = 5;           // 1..100 mirror: speed below which settling counts (< start)
+  uint16_t navStopMs = 420;          // 50..5000 time below the stop speed to declare settled
+  uint16_t joyStartDegSX10 = 10;     // 1..2000 joystick: commanded speed that starts motion, x10
+  uint16_t joyStopDegSX10 = 5;       // 1..2000 joystick: commanded speed that settles, x10 (< start)
+
   // One pin = one function (see firmware/docs/hardware-pinout.md). Defaults follow the
   // KiCAD board: D2 "LED mic" on GPIO2, D1 "LED co2" on GPIO4. The two pins must be
   // distinct (enforced by tlvApply). The legacy BLE LED command (0x00/0x01) was

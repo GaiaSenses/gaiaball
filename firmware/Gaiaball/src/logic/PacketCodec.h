@@ -25,4 +25,16 @@ SensorsPacket makeSensorsPacket(uint16_t seq, uint32_t tMs, float rmsL, float rm
 MagChunkPacket makeMagChunkPacket(uint16_t seq, uint32_t tMs, const int16_t *samples,
                                   uint8_t count, uint8_t flags);
 
+// Pure packing of a navigation pose; the caller supplies already-converted integers.
+NavPacket makeNavPacket(uint16_t seq, uint32_t tUs, uint8_t mode, uint8_t flags, int32_t latE7,
+                        int32_t lonE7, int16_t bearingX100, uint16_t speedDegSX10);
+
+// Conversions from float degrees to the NavPacket integer units: rounded, saturated,
+// and NaN/inf encode as 0 (speed: negative also 0). Latitude clamps to +-90; longitude
+// and bearing are normalised to (-180, 180] (so -180 encodes as +180).
+int32_t navLatE7(float deg);
+int32_t navLonE7(float deg);
+int16_t navBearingX100(float deg);
+uint16_t navSpeedX10(float degS);
+
 }  // namespace gaia
