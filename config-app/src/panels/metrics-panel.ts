@@ -1,6 +1,6 @@
 import type { GaiaballClient } from '../ble/gaiaball-client.ts';
 import type { StreamStats } from '../metrics/stream-stats.ts';
-import { AHRS_FLAG_OVERRANGE, type Co2Sample, type DiagSample } from '../protocol/packets.ts';
+import { AHRS_FLAG_OVERRANGE, type Co2Sample, type DiagSample, type NavSample } from '../protocol/packets.ts';
 import { resolvedTheme } from '../theme.ts';
 import { TLV } from '../protocol/tlv.ts';
 import { imuStatusText } from './config-panel.ts';
@@ -13,6 +13,19 @@ const SPARK = {
   dark: { hz: '#4cc2ff', loss: '#ff8a65' },
   light: { hz: '#0369a1', loss: '#c2410c' },
 };
+
+const NAV_MODES = ['desligado', 'espelho', 'joystick'];
+
+/** One-line navigation state for the metrics panel. */
+export function navText(nav: NavSample | null, missing: boolean): string {
+  if (missing) return 'sem característica de navegação (firmware antigo)';
+  if (!nav) return '–';
+  const mode = NAV_MODES[nav.mode] ?? `modo ${nav.mode}`;
+  if (!nav.valid) return `${mode}, sem dados (modo desligado ou IMU indisponível)`;
+  const num = (v: number, d: number): string => v.toFixed(d).replace('.', ',');
+  return `${mode} · lat ${num(nav.lat, 4)}° · lon ${num(nav.lon, 4)}° · rumo ${num(nav.bearingDeg, 1)}° · ` +
+    `${num(nav.speedDegS, 1)} °/s · ${nav.settled ? 'parado' : 'em movimento'}`;
+}
 
 export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, stats: StreamStats): void {
   root.innerHTML = `
@@ -38,6 +51,7 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
       <dt data-info="Offset de velocidade angular estimado em repouso e subtraído de cada leitura — é ele que, se não fosse removido, viraria deriva de rumo. “aprendendo” aparece enquanto a bola está parada e a estimativa se refina. Unidade: graus por segundo (°/s).">Bias do giroscópio</dt><dd id="d-bias">–</dd><span></span>
       <dt data-info="Se há uma calibração hard/soft-iron gravada na bola. Sem ela, o modo Quat9 pode errar o rumo em dezenas de graus. Sem unidade.">Calibração magnética</dt><dd id="d-magcal">–</dd><span></span>
       <dt data-info="Intervalo de conexão BLE concedido por este navegador. O firmware pede 7,5–15 ms; o navegador decide. É o teto de qualquer taxa de notificação: notificações por segundo ≤ (pacotes por evento de conexão) ÷ intervalo. Com 15 ms e 3 pacotes por evento o teto é 200/s. Unidade: milissegundos (ms).">Intervalo de conexão</dt><dd id="d-itvl">–</dd><span></span>
+      <dt data-info="Posição do globo calculada pela bola: modo (Desligado / Espelho / Joystick), latitude e longitude em graus, rumo (ângulo da direção que aponta para cima na tela, em relação ao norte, no padrão do Mapbox), velocidade angular do globo e se ele está parado ou em movimento. “parado” vale sempre que a bola indica parado, mesmo que a velocidade instantânea ainda esteja acima do limiar de parada. Bola com firmware antigo não tem essa característica. Unidades: graus (°), graus por segundo (°/s).">Navegação</dt><dd id="d-nav">–</dd><span></span>
       <dt data-info="Última leitura de CO₂. “virtual” = pulso disparado por sopro; “desatualizado” = sem quadro novo do sensor dentro do timeout. Unidade: ppm.">CO₂</dt><dd id="d-co2">–</dd><span></span>
     </dl>`;
   decorateInfo(root);
@@ -46,8 +60,12 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
   const spHz = $('sp-hz') as HTMLCanvasElement, spLoss = $('sp-loss') as HTMLCanvasElement;
   let diag: DiagSample | null = null;
   let co2: Co2Sample | null = null;
+  let nav: NavSample | null = null;
+  /** Connected to a ball whose firmware has no navigation characteristic. */
+  let navMissing = false;
 
   client.addEventListener('diag', (ev) => { diag = (ev as CustomEvent<DiagSample>).detail; });
+  client.addEventListener('nav', (ev) => { nav = (ev as CustomEvent<NavSample>).detail; });
   client.addEventListener('co2', (ev) => { co2 = (ev as CustomEvent<Co2Sample>).detail; });
 
   // The configuration is read on connect and after every Aplicar/Ler; 0x35 has no Field, so it is read here.
@@ -59,7 +77,9 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
       : '–';
   });
   client.addEventListener('status', (ev) => {
-    if (!(ev as CustomEvent<{ connected: boolean }>).detail.connected) $('d-imustate').textContent = '–';
+    const connected = (ev as CustomEvent<{ connected: boolean }>).detail.connected;
+    if (!connected) { $('d-imustate').textContent = '–'; nav = null; }
+    navMissing = connected && !client.navAvailable;
   });
 
   const flag = (name: string, ok: boolean) =>
@@ -110,6 +130,7 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
         $('d-itvl').textContent = '–';
       }
     }
+    $('d-nav').textContent = navText(nav, navMissing);
     if (co2) {
       $('d-co2').innerHTML = `${co2.ppm} ppm` +
         (co2.stale ? ' <span class="badge warn">desatualizado</span>' : '') +

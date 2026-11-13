@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BASIC_FIELD_IDS, CONFIG_FIELDS, FIELD_DEFAULTS, dlpfOptions, imuRebootPending, imuStatusText, isPerBall, resolveOptions,
+  BASIC_FIELD_IDS, CONFIG_FIELDS, FIELD_DEFAULTS, dlpfOptions, imuRebootPending, imuStatusText, isPerBall, navRefError, resolveOptions,
+  stopRuleError, toWireRegs,
 } from './config-panel';
-import { encodeTlv, TLV } from '../protocol/tlv';
+import { decodeNavRef, decodeTlv, encodeTlv, navRefToString, parseNavRefString, TLV } from '../protocol/tlv';
 
 describe('config fields', () => {
   it('every field except the PIN has a default to pre-fill', () => {
@@ -25,7 +26,7 @@ describe('config fields', () => {
         if (f.min !== undefined) expect(d, f.label).toBeGreaterThanOrEqual(f.min);
         if (f.max !== undefined) expect(d, f.label).toBeLessThanOrEqual(f.max);
       }
-      expect(() => encodeTlv([{ id: f.id, value: d }]), f.label).not.toThrow();
+      expect(() => encodeTlv(toWireRegs([{ id: f.id, value: d }])), f.label).not.toThrow();
     }
   });
 
@@ -43,7 +44,8 @@ describe('config fields', () => {
     expect(basic.length + advanced.length).toBe(CONFIG_FIELDS.length);
     // The point of the split: the first screen stays readable.
     expect(basic.length).toBeLessThan(advanced.length);
-    expect(basic.length).toBeLessThanOrEqual(16);
+    // 20, not 16: three joystick fields (max speed, full-scale angle, curve) are only visible in joystick mode.
+    expect(basic.length).toBeLessThanOrEqual(20);
     // Operating the globe must not require the advanced tab.
     for (const id of [TLV.orientationMode, TLV.imuNotifyHz, TLV.thresholdFixed, TLV.bleName, TLV.pin]) {
       expect(BASIC_FIELD_IDS.has(id)).toBe(true);
@@ -149,5 +151,105 @@ describe('IMU status line', () => {
   it('does not accuse a good ball of a missing sensor right after a switch', () => {
     expect(imuStatusText(0x05, 2)).not.toMatch(/não encontrado/);
     expect(imuStatusText(0x05, 0)).toBe('trocado, aguardando reinício'); // switched back to off, still running ICM
+  });
+});
+
+describe('navigation fields', () => {
+  const field = (id: number) => CONFIG_FIELDS.find((f) => f.id === id)!;
+  const NEW_IDS = [
+    TLV.co2TriggerPpm, TLV.co2TriggerHystPpm, TLV.navMode, TLV.navNotifyHz, TLV.navRef, TLV.joyMaxSpeedDegS,
+    TLV.joyFullAngleDeg, TLV.joyCurveX10, TLV.navStartDegS, TLV.navStopDegS, TLV.navStopMs,
+    TLV.joyStartDegSX10, TLV.joyStopDegSX10,
+  ];
+  it('every new register is a field with a pt-BR tooltip and a firmware default', () => {
+    for (const id of NEW_IDS) {
+      expect(CONFIG_FIELDS.some((f) => f.id === id), String(id)).toBe(true);
+      expect(field(id).info.length, field(id).label).toBeGreaterThan(60);
+      expect(FIELD_DEFAULTS.has(id), field(id).label).toBe(true);
+    }
+  });
+  it('defaults match the firmware table', () => {
+    const want: [number, number | string][] = [
+      [TLV.co2TriggerPpm, 1200], [TLV.co2TriggerHystPpm, 50], [TLV.navMode, 1], [TLV.navNotifyHz, 50],
+      [TLV.navRef, '-22.905556,-47.060833'], [TLV.joyMaxSpeedDegS, 90], [TLV.joyFullAngleDeg, 60],
+      [TLV.joyCurveX10, 30], [TLV.navStartDegS, 20], [TLV.navStopDegS, 5], [TLV.navStopMs, 420],
+      [TLV.joyStartDegSX10, 10], [TLV.joyStopDegSX10, 5],
+    ];
+    for (const [id, v] of want) expect(FIELD_DEFAULTS.get(id), String(id)).toBe(v);
+  });
+  it('navMode offers off / mirror / joystick', () => {
+    expect(resolveOptions(field(TLV.navMode), new Map())).toEqual([[0, 'Desligado'], [1, 'Espelho'], [2, 'Joystick']]);
+  });
+  it('placement: operating fields in Básico, tuning in Avançado', () => {
+    for (const id of [TLV.navMode, TLV.joyMaxSpeedDegS, TLV.joyFullAngleDeg, TLV.joyCurveX10, TLV.co2TriggerPpm])
+      expect(BASIC_FIELD_IDS.has(id), field(id).label).toBe(true);
+    for (const id of [TLV.navNotifyHz, TLV.navRef, TLV.navStartDegS, TLV.navStopDegS, TLV.navStopMs,
+      TLV.joyStartDegSX10, TLV.joyStopDegSX10, TLV.co2TriggerHystPpm])
+      expect(BASIC_FIELD_IDS.has(id), field(id).label).toBe(false);
+  });
+  it('joystick sensitivity is visible only in joystick mode', () => {
+    for (const id of [TLV.joyMaxSpeedDegS, TLV.joyFullAngleDeg, TLV.joyCurveX10]) {
+      const vis = field(id).visible!;
+      expect(vis(new Map([[TLV.navMode, 2]]))).toBe(true);
+      expect(vis(new Map([[TLV.navMode, 1]]))).toBe(false);
+      expect(vis(new Map([[TLV.navMode, 0]]))).toBe(false);
+      expect(vis(new Map())).toBe(false);
+    }
+    expect(field(TLV.navMode).visible).toBeUndefined();
+  });
+  it('x10 registers are displayed in deg/s (scale 10)', () => {
+    for (const id of [TLV.joyCurveX10, TLV.joyStartDegSX10, TLV.joyStopDegSX10]) expect(field(id).scale).toBe(10);
+  });
+  it('navRef never travels in a preset', () => {
+    expect(isPerBall(field(TLV.navRef))).toBe(true);
+    expect(isPerBall(field(TLV.navMode))).toBe(false);
+  });
+});
+
+describe('stop < start rules', () => {
+  const w = (id: number, value: number) => ({ id, value });
+  it('passes when nothing relevant changes', () => {
+    expect(stopRuleError([w(TLV.navNotifyHz, 50)], new Map())).toBeNull();
+  });
+  it('blocks mirror stop >= start, using the resulting state', () => {
+    expect(stopRuleError([w(TLV.navStopDegS, 20)], new Map())).toMatch(/Espelho.*menor/); // default start 20
+    expect(stopRuleError([w(TLV.navStopDegS, 19)], new Map())).toBeNull();
+    // only the start moves: the stop comes from the snapshot
+    expect(stopRuleError([w(TLV.navStartDegS, 5)], new Map<number, number | string>([[TLV.navStopDegS, 8]]))).toMatch(/Espelho/);
+    expect(stopRuleError([w(TLV.navStartDegS, 30), w(TLV.navStopDegS, 25)], new Map())).toBeNull();
+  });
+  it('blocks joystick stop >= start with values in deg/s', () => {
+    const e = stopRuleError([w(TLV.joyStopDegSX10, 10)], new Map()); // default start 10
+    expect(e).toMatch(/Joystick.*menor/);
+    expect(e).toContain('1,0');
+    expect(stopRuleError([w(TLV.joyStopDegSX10, 9)], new Map())).toBeNull();
+    expect(stopRuleError([w(TLV.joyStartDegSX10, 3)], new Map<number, number | string>([[TLV.joyStopDegSX10, 5]]))).toMatch(/Joystick/);
+  });
+});
+
+describe('navRef string <-> bytes', () => {
+  it('round-trips through the canonical string, the 8-byte record and the TLV', () => {
+    for (const s of ['-22.905556,-47.060833', '0.000000,0.000000', '90.000000,-180.000000', '-90.000000,180.000000', '12.345679,-0.000001']) {
+      const [wire] = toWireRegs([{ id: TLV.navRef, value: s }]);
+      const enc = encodeTlv([wire]);
+      const back = decodeNavRef(decodeTlv(new DataView(enc.buffer)).get(TLV.navRef)!)!;
+      expect(navRefToString(back)).toBe(s);
+    }
+  });
+  it('non-navRef registers pass through toWireRegs untouched', () => {
+    const r = { id: TLV.navMode, value: 2 };
+    expect(toWireRegs([r])[0]).toBe(r);
+  });
+  it('a typed value with extra decimals canonicalises to 6 and stays stable', () => {
+    const ref = parseNavRefString('-22.9055559,-47.0608331')!;
+    const once = navRefToString(ref);
+    expect(once).toBe('-22.905556,-47.060833');
+    expect(navRefToString(parseNavRefString(once)!)).toBe(once);
+  });
+  it('rejects out-of-range and malformed values in pt-BR', () => {
+    expect(navRefError('Ref', '91.000000,0.000000')).toMatch(/latitude/);
+    expect(navRefError('Ref', '0.000000,181.000000')).toMatch(/longitude/);
+    expect(navRefError('Ref', 'x')).toMatch(/numéricas/);
+    expect(navRefError('Ref', '-22.905556,-47.060833')).toBeNull();
   });
 });

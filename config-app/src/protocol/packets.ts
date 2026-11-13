@@ -8,6 +8,7 @@ export const PKT_DIAG = 0x03;
 export const PKT_SENSORS = 0x04;
 export const PKT_AUDIO = 0x05;
 export const PKT_MAG = 0x06;
+export const PKT_NAV = 0x07;
 
 export const IMU_PACKET_SIZE = 31;
 export const CO2_PACKET_SIZE = 12;
@@ -15,6 +16,7 @@ export const DIAG_PACKET_SIZE = 34;
 export const SENSORS_PACKET_SIZE = 23;
 export const AUDIO_PACKET_SIZE = 208;
 export const AUDIO_CHUNK_SAMPLES = 96;
+export const NAV_PACKET_SIZE = 22;
 export const MAG_PACKET_SIZE = 106;
 export const MAG_CHUNK_MAX_SAMPLES = 16;
 /** Magnetometer capture wire scale: int16 in 0.1 uT. */
@@ -41,6 +43,10 @@ export const IMU_FLAG_AUDIO_VALID = 1 << 3;
 export const CO2_FLAG_VALID = 1 << 0;
 export const CO2_FLAG_STALE = 1 << 1;
 export const CO2_FLAG_VIRTUAL_ACTIVE = 1 << 2;
+export const CO2_FLAG_TRIGGER = 1 << 3;
+export const NAV_FLAG_VALID = 1 << 0;
+export const NAV_FLAG_SETTLED = 1 << 1;
+export const NAV_FLAG_MOVING = 1 << 2;
 export const DIAG_FLAG_IMU_OK = 1 << 0;
 export const DIAG_FLAG_AUDIO_OK = 1 << 1;
 export const DIAG_FLAG_CO2_OK = 1 << 2;
@@ -89,6 +95,8 @@ export interface Co2Sample {
   valid: boolean;
   stale: boolean;
   virtualActive: boolean;
+  /** CO2 above the trigger threshold (with hysteresis), decided in the firmware. */
+  trigger: boolean;
 }
 
 export interface DiagSample {
@@ -126,6 +134,27 @@ export interface DiagSample {
   biasAdapting: boolean;
   magCalibrated: boolean;
   magCapturing: boolean;
+}
+
+export interface NavSample {
+  seq: number;
+  tUs: number;
+  /** 0 off, 1 mirror, 2 joystick. */
+  mode: number;
+  flags: number;
+  /** False on the 1 Hz keepalive sent while the mode is off or the IMU is unavailable. */
+  valid: boolean;
+  /** Authority for "parado": set while the globe is held still (even if `moving` is also set). */
+  settled: boolean;
+  /** Reported speed above the active stop threshold (instantaneous, no hold time). */
+  moving: boolean;
+  /** Degrees, positive north / east. */
+  lat: number;
+  lon: number;
+  /** Mapbox bearing in degrees, (-180, 180]. */
+  bearingDeg: number;
+  /** Globe angular speed, deg/s. */
+  speedDegS: number;
 }
 
 export interface MagChunkSample {
@@ -203,6 +232,7 @@ export function decodeCo2Packet(dv: DataView): Co2Sample | null {
     valid: (flags & CO2_FLAG_VALID) !== 0,
     stale: (flags & CO2_FLAG_STALE) !== 0,
     virtualActive: (flags & CO2_FLAG_VIRTUAL_ACTIVE) !== 0,
+    trigger: (flags & CO2_FLAG_TRIGGER) !== 0,
   };
 }
 
@@ -295,4 +325,23 @@ export function decodeMagChunkPacket(dv: DataView): MagChunkSample | null {
     ]);
   }
   return { seq: dv.getUint16(2, true), tMs: dv.getUint32(4, true), samples, flags: dv.getUint8(9) };
+}
+
+/** Globe navigation (nav characteristic, optional in older firmware). */
+export function decodeNav(dv: DataView): NavSample | null {
+  if (!header(dv, NAV_PACKET_SIZE, PKT_NAV)) return null;
+  const flags = dv.getUint8(9);
+  return {
+    seq: dv.getUint16(2, true),
+    tUs: dv.getUint32(4, true),
+    mode: dv.getUint8(8),
+    flags,
+    valid: (flags & NAV_FLAG_VALID) !== 0,
+    settled: (flags & NAV_FLAG_SETTLED) !== 0,
+    moving: (flags & NAV_FLAG_MOVING) !== 0,
+    lat: dv.getInt32(10, true) / 1e7,
+    lon: dv.getInt32(14, true) / 1e7,
+    bearingDeg: dv.getInt16(18, true) / 100,
+    speedDegS: dv.getUint16(20, true) / 10,
+  };
 }

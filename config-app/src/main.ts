@@ -14,7 +14,7 @@ import { mountSensorsPanel } from './panels/sensors-panel.ts';
 import { decorateInfo } from './panels/info.ts';
 import { initTheme, onThemeChange, resolvedTheme, toggleTheme } from './theme.ts';
 import { OrientationScene } from './viz/orientation-scene.ts';
-import type { AudioChunkSample, Co2Sample, ImuSample, SensorsSample } from './protocol/packets.ts';
+import type { AudioChunkSample, Co2Sample, ImuSample, NavSample, SensorsSample } from './protocol/packets.ts';
 
 initTheme();
 
@@ -207,6 +207,27 @@ if (new URLSearchParams(location.search).get('demo')) {
     };
     emit('audio', detail);
   }, 48);
+  // Navigation: lat/lon/bearing drift slowly around the default reference; the globe alternates
+  // between moving (~6 s) and settled (~4 s). Cadence 20 Hz, like the real default notify rate.
+  let navSeq = 0;
+  setInterval(() => {
+    const t = performance.now() / 1000;
+    const moving = (t % 10) < 6;
+    const detail: NavSample = {
+      seq: navSeq++ & 0xffff,
+      tUs: Math.round(t * 1e6) >>> 0,
+      mode: 1,
+      flags: moving ? 0b101 : 0b011,
+      valid: true,
+      settled: !moving,
+      moving,
+      lat: -22.905556 + 8 * Math.sin(t * 0.07),
+      lon: -47.060833 + 12 * Math.sin(t * 0.05),
+      bearingDeg: ((t * 9 + 180) % 360) - 180,
+      speedDegS: moving ? 30 + 20 * Math.sin(t * 0.8) : 0,
+    };
+    emit('nav', detail);
+  }, 50);
   let co2Seq = 0;
   setInterval(() => {
     const t = performance.now() / 1000;
@@ -219,6 +240,7 @@ if (new URLSearchParams(location.search).get('demo')) {
       valid: true,
       stale: false,
       virtualActive: false,
+      trigger: false,
     };
     emit('co2', detail);
   }, 1000);

@@ -42,6 +42,8 @@ export const TLV = {
   co2RawLogMode: 0x26,
   // 0x27 is reserved (was co2Protocol; the SC8-CO2-5K streams actively, nothing to pick).
   co2EmaAlphaX1000: 0x28, // 1000 = no smoothing
+  co2TriggerPpm: 0x29, // 400..10000: ppm above which the Co2Packet trigger flag is set
+  co2TriggerHystPpm: 0x2a, // 0..2000: the flag clears below trigger - hysteresis
   soundLedPin: 0x30,
   co2LedPin: 0x31,
   co2AlertPpm: 0x32,
@@ -52,6 +54,17 @@ export const TLV = {
   bleName: 0x40,
   pin: 0x41,
   serialLogEnabled: 0x50, // default 0: serial formatting steals CPU
+  navMode: 0x60, // 0 off, 1 mirror, 2 joystick
+  navNotifyHz: 0x61, // 10..200
+  navRef: 0x62, // 8 bytes: i32 latE6 + i32 lonE6
+  joyMaxSpeedDegS: 0x63, // 1..720
+  joyFullAngleDeg: 0x64, // 5..90
+  joyCurveX10: 0x65, // 10..40
+  navStartDegS: 0x66, // 1..200; must stay above navStopDegS
+  navStopDegS: 0x67, // 1..100
+  navStopMs: 0x68, // 50..5000
+  joyStartDegSX10: 0x69, // 1..2000; must stay above joyStopDegSX10
+  joyStopDegSX10: 0x6a, // 1..2000
 } as const;
 
 /** Output-capable ESP32 GPIOs (excludes SPI-flash 6–11 and nonexistent pins). Mirrors firmware isValidOutputGpio. */
@@ -100,6 +113,19 @@ const SPECS: Record<number, Spec> = {
   [TLV.audioLpQX100]: U16,
   [TLV.potEmaAlphaX1000]: U16,
   [TLV.co2EmaAlphaX1000]: U16,
+  [TLV.co2TriggerPpm]: U16,
+  [TLV.co2TriggerHystPpm]: U16,
+  [TLV.navMode]: U8,
+  [TLV.navNotifyHz]: U8,
+  [TLV.navRef]: { kind: 'bytes', len: 8 },
+  [TLV.joyMaxSpeedDegS]: U16,
+  [TLV.joyFullAngleDeg]: U8,
+  [TLV.joyCurveX10]: U8,
+  [TLV.navStartDegS]: U8,
+  [TLV.navStopDegS]: U8,
+  [TLV.navStopMs]: U16,
+  [TLV.joyStartDegSX10]: U16,
+  [TLV.joyStopDegSX10]: U16,
   [TLV.serialLogEnabled]: U8,
   [TLV.audioEnabled]: U8,
   [TLV.audioFastAlphaX1000]: U16,
@@ -188,4 +214,40 @@ export function encodeMagCalRecord(hard: Int16Array, soft: Int16Array): Uint8Arr
   for (let i = 0; i < 3; i++) dv.setInt16(2 * i, hard[i], true);
   for (let i = 0; i < 9; i++) dv.setInt16(6 + 2 * i, soft[i], true);
   return out;
+}
+
+/** Navigation reference point: latitude/longitude in degrees, 6 decimals on the wire (E6). */
+export interface NavRef { lat: number; lon: number }
+
+/** Builds the 8-byte navRef record (TLV 0x62): i32 latE6, i32 lonE6, little-endian. */
+export function encodeNavRef(ref: NavRef): Uint8Array {
+  const latE6 = Math.round(ref.lat * 1e6), lonE6 = Math.round(ref.lon * 1e6);
+  if (!Number.isFinite(latE6) || latE6 < -90_000_000 || latE6 > 90_000_000) throw new RangeError('navRef latitude must be -90..90');
+  if (!Number.isFinite(lonE6) || lonE6 < -180_000_000 || lonE6 > 180_000_000) throw new RangeError('navRef longitude must be -180..180');
+  const out = new Uint8Array(8);
+  const dv = new DataView(out.buffer);
+  dv.setInt32(0, latE6, true);
+  dv.setInt32(4, lonE6, true);
+  return out;
+}
+
+/** Parses the 8-byte navRef record; null on any other length. */
+export function decodeNavRef(dv: DataView): NavRef | null {
+  if (dv.byteLength !== 8) return null;
+  return { lat: dv.getInt32(0, true) / 1e6, lon: dv.getInt32(4, true) / 1e6 };
+}
+
+/** Canonical form-state string for a navRef ("lat,lon", 6 decimals), so snapshot comparison works with ===. */
+export function navRefToString(ref: NavRef): string {
+  const f = (v: number): string => {
+    const t = v.toFixed(6);
+    return t === '-0.000000' ? '0.000000' : t;
+  };
+  return `${f(ref.lat)},${f(ref.lon)}`;
+}
+
+/** Inverse of navRefToString; null if not two finite numbers. */
+export function parseNavRefString(s: string): NavRef | null {
+  const m = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(s);
+  return m ? { lat: Number(m[1]), lon: Number(m[2]) } : null;
 }

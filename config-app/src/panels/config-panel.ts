@@ -1,9 +1,9 @@
 import type { GaiaballClient, StatusDetail } from '../ble/gaiaball-client.ts';
 import { PresetStore } from '../presets/preset-store.ts';
-import { encodeTlv, TLV, type TlvWrite } from '../protocol/tlv.ts';
+import { decodeNavRef, encodeNavRef, encodeTlv, navRefToString, parseNavRefString, TLV, type TlvWrite } from '../protocol/tlv.ts';
 import { infoDot } from './info.ts';
 
-type Kind = 'number' | 'range' | 'checkbox' | 'select' | 'text' | 'pin';
+type Kind = 'number' | 'range' | 'checkbox' | 'select' | 'text' | 'pin' | 'navref';
 export interface Field {
   id: number;
   label: string;
@@ -18,6 +18,13 @@ export interface Field {
   offValue?: number;
   /** Value restored in the input when the toggle is turned on with nothing sensible. */
   onDefault?: number;
+  /** Hides the row while false; re-evaluated when navMode changes and after every populate. */
+  visible?: (cfg: Map<number, unknown>) => boolean;
+  /**
+   * Wire units per displayed unit (×10 registers are shown in °/s with one decimal). The form
+   * shows value/scale; getValue converts back. min/max stay in wire units.
+   */
+  scale?: number;
 }
 interface Group { title: string; fields: Field[] }
 
@@ -52,7 +59,7 @@ const MAG_AXIS_OPTIONS: [number, string][] = MAG_AXIS_LABELS.map((l, i) => [i, l
 
 /** Registers that describe one physical ball and must never travel in a preset. */
 export const isPerBall = (f: Field): boolean =>
-  f.id === TLV.pin || f.id === TLV.magCal || f.id === TLV.imuChip || f.id === TLV.magAxisRemap;
+  f.id === TLV.pin || f.id === TLV.magCal || f.id === TLV.imuChip || f.id === TLV.magAxisRemap || f.id === TLV.navRef;
 
 /** Display names of the IMU choices (index = TLV 0x34 value). */
 const IMU_NAMES = ['não configurado', 'ICM-20948', 'GY-91 (MPU-9250)'];
@@ -77,6 +84,8 @@ export function imuStatusText(detected: number | undefined, selected: number): s
   if (!found) return `${IMU_NAMES[boot]} selecionado, não encontrado`;
   return mag ? `${IMU_NAMES[boot]} ok` : `${IMU_NAMES[boot]} ok (sem magnetômetro)`;
 }
+
+const isJoystick = (cfg: Map<number, unknown>): boolean => Number(cfg.get(TLV.navMode)) === 2;
 
 const GROUPS: Group[] = [
   { title: 'Aquisição', fields: [
@@ -178,8 +187,36 @@ const GROUPS: Group[] = [
     { id: TLV.co2EmaAlphaX1000, label: 'Suavização (EMA ×1000)', kind: 'number', min: 1, max: 1000,
       offValue: 1000, onDefault: 300,
       info: 'Média móvel exponencial das leituras reais de CO₂. Valor = alfa ×1000: 1000 = sem filtro; menor = mais liso, porém mais atraso. Adimensional.' },
+    { id: TLV.co2TriggerPpm, label: 'Gatilho de CO₂ (ppm)', kind: 'number', min: 400, max: 10000,
+      info: 'Concentração de CO₂ a partir da qual a bola marca o gatilho no pacote de CO₂ (o site usa esse bit para disparar a composição, sem precisar conhecer o limiar). O ar de uma sala fica perto de 400–800 ppm; um sopro perto do sensor passa de 2000 ppm. Vale na hora. Unidade: partes por milhão (ppm), de 400 a 10000.' },
+    { id: TLV.co2TriggerHystPpm, label: 'Histerese do gatilho (ppm)', kind: 'number', min: 0, max: 2000,
+      info: 'Folga para o gatilho desligar: depois de disparar, ele só volta a zero quando o CO₂ cai abaixo do gatilho MENOS este valor. Evita que uma leitura oscilando em torno do limiar fique ligando e desligando. 0 = desliga assim que cair abaixo do gatilho. Unidade: ppm, de 0 a 2000.' },
     { id: TLV.co2RawLogMode, label: 'Log bruto', kind: 'checkbox',
       info: 'Imprime no log serial cada quadro recebido do sensor, em hexadecimal — só para diagnóstico de bancada; desligue depois. Liga/desliga, sem unidade.' },
+  ] },
+  { title: 'Navegação do globo', fields: [
+    { id: TLV.navMode, label: 'Modo', kind: 'select', options: [[0, 'Desligado'], [1, 'Espelho'], [2, 'Joystick']],
+      info: 'Como a rotação da bola move o globo no site. ESPELHO: a rotação da bola é refletida exatamente no globo, sem zona morta nem trava de norte (girou 30° na mão, o globo girou 30°). JOYSTICK: inclinar ou girar a bola a partir do zero faz o globo girar continuamente naquela direção, com velocidade que cresce com o desvio; devolvendo a bola ao zero, o globo para. DESLIGADO: a bola não move o globo. Mudar o modo (ou o ponto de referência, ou zerar a orientação) leva o globo de volta ao ponto de referência; os demais parâmetros de navegação valem na hora, sem reiniciar. Seleção, sem unidade.' },
+    { id: TLV.joyMaxSpeedDegS, label: 'Velocidade máxima (°/s)', kind: 'number', min: 1, max: 720, visible: isJoystick,
+      info: 'Só no modo Joystick. Velocidade com que o globo gira quando a bola está inclinada pelo “ângulo da velocidade máxima” ou mais. Maior = o globo corre mais rápido com a bola bem inclinada. Unidade: graus por segundo (°/s), de 1 a 720.' },
+    { id: TLV.joyFullAngleDeg, label: 'Ângulo da velocidade máxima (°)', kind: 'number', min: 5, max: 90, visible: isJoystick,
+      info: 'Só no modo Joystick. Quanto a bola precisa estar afastada do zero para o globo atingir a velocidade máxima; abaixo disso a velocidade cresce gradualmente. Menor = mais sensível (basta inclinar um pouco). Unidade: graus (°), de 5 a 90.' },
+    { id: TLV.joyCurveX10, label: 'Curva de resposta (p)', kind: 'number', min: 10, max: 40, scale: 10, visible: isJoystick,
+      info: 'Só no modo Joystick. Forma como a velocidade cresce com o desvio: velocidade = máxima × (desvio ÷ ângulo da velocidade máxima)^p. Com p = 1,0 a resposta é linear; com p = 3,0 o começo é bem suave (inclinações pequenas quase não movem o globo, as grandes aceleram forte), bom para ajuste fino. Adimensional, de 1,0 a 4,0.' },
+    { id: TLV.navNotifyHz, label: 'Taxa de envio (Hz)', kind: 'number', min: 10, max: 200,
+      info: 'Quantas posições do globo (latitude, longitude e rumo) a bola envia por segundo via BLE. Mais alto = movimento mais fluido no site, mais tráfego Bluetooth. Unidade: hertz (Hz), de 10 a 200.' },
+    { id: TLV.navRef, label: 'Ponto de referência (lat, lon)', kind: 'navref',
+      info: 'Lugar do mundo mostrado no centro da tela quando a bola está na posição zero (norte para cima). O padrão é Campinas/SP (−22,905556; −47,060833). Digite latitude (−90 a 90, negativa = sul) e longitude (−180 a 180, negativa = oeste) em graus, com até 6 casas decimais. Mudar o ponto de referência leva o globo para lá. Não entra nos presets, por ser da instalação desta bola. Unidade: graus (°).' },
+    { id: TLV.navStartDegS, label: 'Espelho: velocidade de partida (°/s)', kind: 'number', min: 1, max: 200,
+      info: 'No modo Espelho, velocidade angular do globo a partir da qual ele passa a ser considerado “em movimento”. Precisa ser MAIOR que a velocidade de parada. Vale na hora. Unidade: graus por segundo (°/s), de 1 a 200.' },
+    { id: TLV.navStopDegS, label: 'Espelho: velocidade de parada (°/s)', kind: 'number', min: 1, max: 100,
+      info: 'No modo Espelho, velocidade abaixo da qual o globo começa a contar como parando; precisa durar o “tempo para considerar parado”. Precisa ser MENOR que a de partida (a diferença evita que o estado fique alternando). Vale na hora. Unidade: °/s, de 1 a 100.' },
+    { id: TLV.navStopMs, label: 'Tempo para considerar parado (ms)', kind: 'number', min: 50, max: 5000,
+      info: 'Quanto tempo a velocidade precisa ficar abaixo do limiar de parada para o globo ser declarado “parado” (usado nos dois modos). Maior = menos falsos “parado” durante um gesto lento. Vale na hora. Unidade: milissegundos (ms), de 50 a 5000.' },
+    { id: TLV.joyStartDegSX10, label: 'Joystick: velocidade de partida (°/s)', kind: 'number', min: 1, max: 2000, scale: 10,
+      info: 'No modo Joystick, velocidade COMANDADA (a que o desvio da bola pede) a partir da qual o globo passa a se mover. Precisa ser MAIOR que a de parada. Vale na hora. Unidade: °/s, de 0,1 a 200,0 (um decimal).' },
+    { id: TLV.joyStopDegSX10, label: 'Joystick: velocidade de parada (°/s)', kind: 'number', min: 1, max: 2000, scale: 10,
+      info: 'No modo Joystick, velocidade comandada abaixo da qual o globo começa a contar como parando (depois do “tempo para considerar parado”). Precisa ser MENOR que a de partida. Vale na hora. Unidade: °/s, de 0,1 a 200,0 (um decimal).' },
   ] },
   // No LEDs group on purpose: the LED GPIOs (sound = D2/GPIO2, CO2 = D1/GPIO4)
   // follow the board, and the CO2 alert threshold stays on the firmware default.
@@ -207,7 +244,9 @@ const BASIC_IDS: ReadonlySet<number> = new Set([
   TLV.orientationMode, TLV.imuChip, TLV.imuNotifyHz, TLV.quatSmoothMode,
   TLV.audioEnabled, TLV.potControlsThreshold, TLV.thresholdFixed, TLV.debounceMs,
   TLV.audioBpfEnabled,
-  TLV.co2Enabled, TLV.virtualPeakPpm, TLV.virtualDelayMs, TLV.virtualHoldMs,
+  // Three of the navigation fields (joyMaxSpeedDegS, joyFullAngleDeg, joyCurveX10) only show in joystick mode.
+  TLV.navMode, TLV.joyMaxSpeedDegS, TLV.joyFullAngleDeg, TLV.joyCurveX10,
+  TLV.co2Enabled, TLV.co2TriggerPpm, TLV.virtualPeakPpm, TLV.virtualDelayMs, TLV.virtualHoldMs,
   TLV.bleName, TLV.pin,
 ]);
 
@@ -260,6 +299,19 @@ export const FIELD_DEFAULTS: ReadonlyMap<number, number | string> = new Map<numb
   [TLV.virtualHoldMs, 17000],
   [TLV.co2RawLogMode, 0],
   [TLV.co2EmaAlphaX1000, 1000],
+  [TLV.co2TriggerPpm, 1200],
+  [TLV.co2TriggerHystPpm, 50],
+  [TLV.navMode, 1],
+  [TLV.navNotifyHz, 50],
+  [TLV.navRef, '-22.905556,-47.060833'],
+  [TLV.joyMaxSpeedDegS, 90],
+  [TLV.joyFullAngleDeg, 60],
+  [TLV.joyCurveX10, 30],
+  [TLV.navStartDegS, 20],
+  [TLV.navStopDegS, 5],
+  [TLV.navStopMs, 420],
+  [TLV.joyStartDegSX10, 10],
+  [TLV.joyStopDegSX10, 5],
   [TLV.serialLogEnabled, 0],
   [TLV.bleName, 'Globo_1'],
 ]);
@@ -270,12 +322,56 @@ export const BASIC_FIELD_IDS: ReadonlySet<number> = BASIC_IDS;
 
 function decodeValue(f: Field, dv: DataView): number | string | null {
   if (f.kind === 'text') return new TextDecoder().decode(dv);
+  if (f.kind === 'navref') {
+    const r = decodeNavRef(dv);
+    return r ? navRefToString(r) : null;
+  }
   switch (dv.byteLength) {
     case 1: return dv.getUint8(0);
     case 2: return dv.getUint16(0, true);
     case 4: return dv.getUint32(0, true);
     default: return null;
   }
+}
+
+/** Register values as the form holds them -> what goes on the wire (navRef: "lat,lon" -> 8 bytes). */
+export function toWireRegs(regs: TlvWrite[]): TlvWrite[] {
+  return regs.map((r) => {
+    if (r.id !== TLV.navRef || typeof r.value !== 'string') return r;
+    const ref = parseNavRefString(r.value);
+    if (!ref) throw new RangeError('navRef must be "lat,lon"');
+    return { id: r.id, value: encodeNavRef(ref) };
+  });
+}
+
+/** Validates the canonical navRef string ("lat,lon"): pt-BR message or null. */
+export function navRefError(label: string, v: string): string | null {
+  const ref = parseNavRefString(v);
+  if (!ref) return `${label}: informe latitude e longitude numéricas.`;
+  if (Math.abs(ref.lat) > 90) return `${label}: a latitude vai de −90 a 90.`;
+  if (Math.abs(ref.lon) > 180) return `${label}: a longitude vai de −180 a 180.`;
+  return null;
+}
+
+const STOP_RULE_DEFAULTS: ReadonlyMap<number, number> = new Map([
+  [TLV.navStartDegS, 20], [TLV.navStopDegS, 5], [TLV.joyStartDegSX10, 10], [TLV.joyStopDegSX10, 5],
+]);
+/**
+ * Mirror of the firmware cross rules on the RESULTING state (written value, else last known, else
+ * default): stop < start for both modes. The firmware rejects the whole write otherwise.
+ */
+export function stopRuleError(regs: TlvWrite[], snapshot: ReadonlyMap<number, number | string>): string | null {
+  const ids = [...STOP_RULE_DEFAULTS.keys()];
+  if (!regs.some((r) => ids.includes(r.id))) return null;
+  const finalV = (id: number): number =>
+    Number(regs.find((r) => r.id === id)?.value ?? snapshot.get(id) ?? STOP_RULE_DEFAULTS.get(id));
+  const mStart = finalV(TLV.navStartDegS), mStop = finalV(TLV.navStopDegS);
+  if (mStop >= mStart)
+    return `Espelho: a velocidade de parada (${mStop} °/s) precisa ser menor que a de partida (${mStart} °/s).`;
+  const jStart = finalV(TLV.joyStartDegSX10), jStop = finalV(TLV.joyStopDegSX10);
+  if (jStop >= jStart)
+    return `Joystick: a velocidade de parada (${(jStop / 10).toFixed(1).replace('.', ',')} °/s) precisa ser menor que a de partida (${(jStart / 10).toFixed(1).replace('.', ',')} °/s).`;
+  return null;
 }
 
 export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, store: PresetStore = new PresetStore()): void {
@@ -320,6 +416,10 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   const inputs = new Map<number, HTMLInputElement | HTMLSelectElement>();
   /** On/off checkboxes for fields with offValue (one toggle per filter). */
   const toggles = new Map<number, HTMLInputElement>();
+  /** The row element of every field, so `visible` can hide it. */
+  const rows = new Map<number, HTMLElement>();
+  /** Second input (longitude) of the navRef field; the first one lives in `inputs`. */
+  let navLon!: HTMLInputElement;
 
   const panes: Record<Tier, HTMLElement> = {
     basico: q('[data-el=pane-basico]'),
@@ -340,20 +440,42 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
     const fs = document.createElement('fieldset');
     fs.innerHTML = `<legend>${title}</legend>`;
     for (const f of fields) {
-      const label = document.createElement('label');
+      // navRef has two inputs, so its row is a div (a <label> would bind only the first one).
+      const label = document.createElement(f.kind === 'navref' ? 'div' : 'label');
       label.className = 'cfg-field';
+      rows.set(f.id, label);
       const name = document.createElement('span');
       name.className = 'cfg-name';
       name.append(f.label, infoDot(f.info));
       let el: HTMLInputElement | HTMLSelectElement;
-      if (f.kind === 'select') {
+      let extra: HTMLElement | null = null;
+      if (f.kind === 'navref') {
+        const mk = (aria: string, lim: number): HTMLInputElement => {
+          const i = document.createElement('input');
+          i.type = 'number';
+          i.step = '0.000001';
+          i.min = String(-lim);
+          i.max = String(lim);
+          i.setAttribute('aria-label', `${f.label}: ${aria}`);
+          i.placeholder = aria;
+          return i;
+        };
+        const lat = mk('latitude', 90);
+        navLon = mk('longitude', 180);
+        el = lat;
+        const wrap = document.createElement('span');
+        wrap.className = 'cfg-navref';
+        wrap.append(lat, navLon);
+        extra = wrap;
+      } else if (f.kind === 'select') {
         el = document.createElement('select');
         for (const [v, t] of resolveOptions(f, new Map())) el.add(new Option(t, String(v)));
       } else {
         el = document.createElement('input');
         el.type = f.kind === 'checkbox' ? 'checkbox' : f.kind === 'pin' ? 'password' : f.kind === 'text' ? 'text' : f.kind;
-        if (f.min !== undefined) el.min = String(f.min);
-        if (f.max !== undefined) el.max = String(f.max);
+        if (f.min !== undefined) el.min = String(f.min / (f.scale ?? 1));
+        if (f.max !== undefined) el.max = String(f.max / (f.scale ?? 1));
+        if (f.scale) el.step = String(1 / f.scale);
         if (f.kind === 'text') el.maxLength = 16;
         if (f.kind === 'pin') { el.maxLength = 4; el.inputMode = 'numeric'; el.autocomplete = 'off'; el.placeholder = '····'; }
       }
@@ -369,7 +491,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
         toggles.set(f.id, tg);
         tg.addEventListener('change', () => label.classList.toggle('filter-off', !tg.checked));
       }
-      label.append(name, el);
+      label.append(name, extra ?? el);
       fs.append(label);
       inputs.set(f.id, el);
       if (f.id === TLV.imuChip) {
@@ -393,8 +515,14 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   const dirty = new Set<number>();
   for (const [id, el] of inputs) {
     el.addEventListener('input', () => { dirty.add(id); refreshAdvCount(); });
-    el.addEventListener('change', () => { refreshAdvCount(); if (id === TLV.imuChip) { refreshDependentOptions(); refreshImuBanner(); } });
+    el.addEventListener('change', () => {
+      refreshAdvCount();
+      if (id === TLV.imuChip) { refreshDependentOptions(); refreshImuBanner(); }
+      if (id === TLV.navMode) refreshVisibility();
+    });
   }
+  navLon.addEventListener('input', () => { dirty.add(TLV.navRef); refreshAdvCount(); });
+  navLon.addEventListener('change', () => refreshAdvCount());
   for (const [id, tg] of toggles) tg.addEventListener('change', () => { dirty.add(id); refreshAdvCount(); });
 
   const getValue = (f: Field): number | string | null => {
@@ -403,7 +531,14 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
     if (f.offValue !== undefined && !toggles.get(f.id)!.checked) return f.offValue;
     if (f.kind === 'checkbox') return (el as HTMLInputElement).checked ? 1 : 0;
     if (f.kind === 'text' || f.kind === 'pin') return el.value;
+    if (f.kind === 'navref') {
+      // One canonical string "lat,lon" (6 decimals) keeps snapshot/compare/dirty working with ===.
+      if (el.value.trim() === '' || navLon.value.trim() === '') return null;
+      const lat = Number(el.value), lon = Number(navLon.value);
+      return Number.isFinite(lat) && Number.isFinite(lon) ? navRefToString({ lat, lon }) : null;
+    }
     if (el.value.trim() === '') return null;
+    if (f.scale) return Math.round(Number(el.value) * f.scale);
     return Number(el.value);
   };
   const setValue = (f: Field, v: number | string): void => {
@@ -417,7 +552,18 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       return;
     }
     if (f.kind === 'checkbox') (el as HTMLInputElement).checked = Number(v) !== 0;
+    else if (f.kind === 'navref') {
+      const ref = parseNavRefString(String(v));
+      el.value = ref ? ref.lat.toFixed(6) : '';
+      navLon.value = ref ? ref.lon.toFixed(6) : '';
+    }
+    else if (f.scale) el.value = (Number(v) / f.scale).toFixed(Math.round(Math.log10(f.scale)));
     else el.value = String(v);
+  };
+  /** Shows or hides rows whose `visible` depends on the form (joystick sensitivity follows navMode). */
+  const refreshVisibility = (): void => {
+    const view = formView();
+    for (const f of FIELDS) if (f.visible) rows.get(f.id)!.hidden = !f.visible(view);
   };
   /** Live form values by register id, for fields whose options depend on other fields. */
   const formView = (): Map<number, unknown> => {
@@ -465,6 +611,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
     }
     (inputs.get(TLV.pin) as HTMLInputElement).value = '';
     refreshDependentOptions();
+    refreshVisibility();
     refreshImuBanner();
     hint.textContent = 'Lido do dispositivo. Aplicar envia só o que mudou, confere a aceitação e grava de forma permanente.';
     refreshAdvCount();
@@ -478,6 +625,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       if (d !== undefined) setValue(f, d);
     }
     refreshDependentOptions();
+    refreshVisibility();
   };
 
   /** How many advanced parameters currently sit away from the firmware default. */
@@ -528,13 +676,16 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   /** Validate one field value; returns a pt-BR error or null. */
   const validate = (f: Field, v: number | string | null): string | null => {
     if (v === null || (typeof v === 'number' && !Number.isFinite(v))) return `${f.label}: informe um número.`;
+    if (f.kind === 'navref') return navRefError(f.label, String(v));
     if (typeof v === 'number') {
+      const sc = f.scale ?? 1;
+      const shown = (n: number): string => (sc === 1 ? String(n) : (n / sc).toFixed(1).replace('.', ','));
       if (!Number.isInteger(v)) return `${f.label}: use um número inteiro.`;
-      if (f.min !== undefined && v < f.min) return `${f.label}: mínimo ${f.min}.`;
-      if (f.max !== undefined && v > f.max) return `${f.label}: máximo ${f.max}.`;
+      if (f.min !== undefined && v < f.min) return `${f.label}: mínimo ${shown(f.min)}.`;
+      if (f.max !== undefined && v > f.max) return `${f.label}: máximo ${shown(f.max)}.`;
     }
     if (f.id === TLV.pin && !/^\d{4}$/.test(String(v))) return `${f.label}: exatamente 4 dígitos.`;
-    try { encodeTlv([{ id: f.id, value: v }]); }
+    try { encodeTlv(toWireRegs([{ id: f.id, value: v }])); }
     catch (e) {
       if (e instanceof RangeError) return `${f.label}: valor inválido (${f.kind === 'text' ? 'de 1 a 16 bytes' : 'fora da faixa'}).`;
       throw e;
@@ -574,6 +725,8 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
     }
     const bandErr = bandError(regs);
     if (bandErr) return { regs: [], error: bandErr };
+    const stopErr = stopRuleError(regs, snapshot);
+    if (stopErr) return { regs: [], error: stopErr };
     return { regs, error: null };
   };
 
@@ -595,7 +748,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       const { regs, error } = collectChanged();
       if (error) { say(error); return; }
       if (regs.length === 0) { say('Nenhuma alteração para aplicar.'); return; }
-      await client.writeConfig(regs);
+      await client.writeConfig(toWireRegs(regs));
       // The firmware cannot signal rejected writes: read back and compare.
       const back = await client.readConfig();
       const rejected: string[] = [];
@@ -660,6 +813,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       // part of a preset, even one saved by an older version that did include them.
       if (f && !isPerBall(f) && typeof r.value !== 'object') { setValue(f, r.value); dirty.add(f.id); }
     }
+    refreshVisibility();
     pmsg.textContent = `Preset "${p.name}" carregado no formulário. Clique em Aplicar para enviar.`;
   });
   q('[data-act=pdel]').addEventListener('click', () => {
@@ -689,7 +843,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   });
 
   // ---- connection gating (presets stay usable offline) ----
-  const gated = [...inputs.values(), ...toggles.values(), q<HTMLButtonElement>('[data-act=read]'), q<HTMLButtonElement>('[data-act=apply]')];
+  const gated = [...inputs.values(), navLon, ...toggles.values(), q<HTMLButtonElement>('[data-act=read]'), q<HTMLButtonElement>('[data-act=apply]')];
   const render = (d: StatusDetail): void => {
     for (const el of gated) el.disabled = !d.connected;
     if (!d.connected) { snapshot = new Map(); imuDetected = undefined; refreshImuBanner(); }

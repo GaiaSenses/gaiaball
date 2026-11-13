@@ -5,6 +5,7 @@ import {
   decodeDiagPacket,
   decodeMagChunkPacket,
   decodeImuPacket,
+  decodeNav,
   decodeSensorsPacket,
 } from '../protocol/packets.ts';
 import { buildCommand, decodeTlv, encodeTlv, type TlvWrite } from '../protocol/tlv.ts';
@@ -15,6 +16,8 @@ export const CHAR_COMMAND = '19b10002-e8f2-537e-4f6c-d104768a1214';
 export const CHAR_CO2 = '19b10003-e8f2-537e-4f6c-d104768a1214';
 export const CHAR_CONFIG = '19b10004-e8f2-537e-4f6c-d104768a1214';
 export const CHAR_DIAG = '19b10005-e8f2-537e-4f6c-d104768a1214';
+/** Globe navigation stream. Optional: firmware older than the navigation feature does not expose it. */
+export const CHAR_NAV = '19b10006-e8f2-537e-4f6c-d104768a1214';
 
 export const CMD_UNLOCK = 0x20;
 
@@ -55,6 +58,7 @@ export class GaiaballClient extends EventTarget {
   private cmdChar: BtCharacteristic | null = null;
   private cfgChar: BtCharacteristic | null = null;
   private isConnected = false;
+  private hasNav = false;
   private readonly onDisconnected = (): void => {
     this.cleanup();
     this.emitStatus();
@@ -62,6 +66,11 @@ export class GaiaballClient extends EventTarget {
 
   get connected(): boolean {
     return this.isConnected;
+  }
+
+  /** True when the connected ball exposes the navigation characteristic (newer firmware). */
+  get navAvailable(): boolean {
+    return this.hasNav;
   }
 
   get deviceName(): string | null {
@@ -91,6 +100,13 @@ export class GaiaballClient extends EventTarget {
       ]);
       this.cmdChar = cmd;
       this.cfgChar = cfg;
+      // Optional: an older ball simply lacks it and must still connect.
+      let nav: BtCharacteristic | null = null;
+      try {
+        nav = await service.getCharacteristic(CHAR_NAV);
+      } catch {
+        nav = null;
+      }
       this.subscribe(imu, 'imu', decodeImuPacket);
       this.subscribe(co2, 'co2', decodeCo2Packet);
       // The diag characteristic carries three packet types; each decoder ignores the others'.
@@ -101,6 +117,15 @@ export class GaiaballClient extends EventTarget {
       await imu.startNotifications();
       await co2.startNotifications();
       await diag.startNotifications();
+      if (nav) {
+        this.subscribe(nav, 'nav', decodeNav);
+        try {
+          await nav.startNotifications();
+          this.hasNav = true;
+        } catch {
+          this.hasNav = false;
+        }
+      }
       this.isConnected = true;
       this.emitStatus();
     } catch (err) {
@@ -166,6 +191,7 @@ export class GaiaballClient extends EventTarget {
 
   private cleanup(): void {
     this.isConnected = false;
+    this.hasNav = false;
     this.cmdChar = null;
     this.cfgChar = null;
   }
