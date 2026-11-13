@@ -231,6 +231,35 @@ void test_angular_speed() {
   TEST_ASSERT_EQUAL_FLOAT(0.f, angularSpeedDegS(rotZ(0.0), rotZ(10.0), -0.1f));
 }
 
+// Per-sample rotations far below quatAngleDeg's ~0.04 deg float-acos floor must
+// still read: the settle detector compares against a few deg/s at up to 200 Hz.
+void test_angular_speed_small_angles() {
+  // 0.01 deg in 20 ms = 0.5 deg/s (quatAngleDeg reads 0 here).
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.5f, angularSpeedDegS(kId, rotZ(0.01), 0.02f));
+  // Same step from a non-trivial orientation, about another axis.
+  const Quat a = quatMultiply(rotZ(-63.0), rotX(31.0));
+  const Quat b = quatMultiply(rotY(0.01), a);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.5f, angularSpeedDegS(a, b, 0.02f));
+  // 0.001 deg still reads (0.05 deg/s), not 0.
+  const float tiny = angularSpeedDegS(kId, rotZ(0.001), 0.02f);
+  TEST_ASSERT_TRUE(tiny > 0.f);
+  TEST_ASSERT_FLOAT_WITHIN(0.005f, 0.05f, tiny);
+}
+
+void test_angular_speed_sign_invariant() {
+  // q and -q are the same orientation: same speed, and the short way round.
+  const Quat a = quatMultiply(rotZ(12.0), rotY(-7.0));
+  const Quat b = quatMultiply(rotX(3.0), a);
+  const Quat nb{-b.w, -b.x, -b.y, -b.z};
+  const Quat na{-a.w, -a.x, -a.y, -a.z};
+  const float s = angularSpeedDegS(a, b, 0.1f);
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 30.f, s);
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, s, angularSpeedDegS(a, nb, 0.1f));
+  TEST_ASSERT_FLOAT_WITHIN(1e-4f, s, angularSpeedDegS(na, b, 0.1f));
+  // A 350 deg relative turn is 10 deg the short way.
+  TEST_ASSERT_FLOAT_WITHIN(1e-2f, 100.f, angularSpeedDegS(kId, rotZ(350.0), 0.1f));
+}
+
 // ----------------------------------------------------------------- MotionSettle
 
 void test_settle_starts_settled() {
@@ -335,6 +364,8 @@ int main(int, char **) {
   RUN_TEST(test_joy_dt_clamped);
   RUN_TEST(test_joy_zero_theta_leaves_globe_unchanged);
   RUN_TEST(test_angular_speed);
+  RUN_TEST(test_angular_speed_small_angles);
+  RUN_TEST(test_angular_speed_sign_invariant);
   RUN_TEST(test_settle_starts_settled);
   RUN_TEST(test_settle_below_start_never_moves);
   RUN_TEST(test_settle_start_threshold_and_middle_band);

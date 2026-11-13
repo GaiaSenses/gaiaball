@@ -40,7 +40,12 @@ float joySpeedDegS(float thetaDeg, const JoyParams &p);
 // step is 0).
 Quat joystickStep(const Quat &G, const Quat &qDev, float dtS, const JoyParams &p);
 
-// quatAngleDeg(a, b) / dtS; dtS <= 0 gives 0.
+// Shortest-path angle between a and b, in degrees, divided by dtS; dtS <= 0
+// gives 0. Same quantity as quatAngleDeg(a, b) / dtS, but computed as
+// 2*atan2(|r.xyz|, |r.w|) of r = a* (x) b: quatAngleDeg takes the float acos of
+// a dot product, which reads any step below ~0.04 deg as 0 (about 8 deg/s of
+// resolution at 200 Hz, above the settle stop threshold). quatAngleDeg itself is
+// left as is for QuatSmoother/ImuService.
 float angularSpeedDegS(const Quat &a, const Quat &b, float dtS);
 
 }  // namespace gaia

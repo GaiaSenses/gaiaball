@@ -92,7 +92,12 @@ Quat joystickStep(const Quat &G, const Quat &qDev, float dtS, const JoyParams &p
 
 float angularSpeedDegS(const Quat &a, const Quat &b, float dtS) {
   if (!(dtS > 0.f)) return 0.f;
-  return quatAngleDeg(a, b) / dtS;
+  // Relative rotation r = a* (x) b; its angle from atan2 of the vector part's
+  // length against |w| (shortest path; q and -q agree). Unlike the float acos in
+  // quatAngleDeg, this stays accurate for tiny per-sample steps.
+  const Quat r = quatMultiply(quatConjugate(a), b);
+  const float vn = sqrtf(r.x * r.x + r.y * r.y + r.z * r.z);
+  return 2.f * atan2f(vn, fabsf(r.w)) * kRadToDeg / dtS;
 }
 
 }  // namespace gaia
