@@ -50,6 +50,7 @@ void NavEngine::configure(const GaiaConfig &cfg) {
 
   const bool refChanged =
       !configured_ || next.refLatE6 != cfg_.refLatE6 || next.refLonE6 != cfg_.refLonE6;
+  const bool modeChanged = !configured_ || next.mode != cfg_.mode;
   cfg_ = next;
   configured_ = true;
   if (refChanged) {
@@ -69,8 +70,10 @@ void NavEngine::configure(const GaiaConfig &cfg) {
     startDegS = (float)cfg_.navStartDegS;
     stopDegS_ = (float)cfg_.navStopDegS;
   }
+  // Live: MotionSettle::configure keeps the current state, and the joystick law takes
+  // effect on the next sample. Only a new mode or reference point restarts the globe.
   settle_.configure(startDegS, stopDegS_, cfg_.navStopMs);
-  resetMotion();
+  if (modeChanged || refChanged) resetMotion();
 }
 
 void NavEngine::resetMotion() {
@@ -112,7 +115,8 @@ bool NavEngine::update(uint32_t tUs, const Quat &q, bool quatValid, uint32_t zer
     if (!settle_.settled()) g_ = joystickStep(g_, q, dtS, joy_);
     speed_ = settle_.settled() ? 0.f : instDegS;
   }
-  moving_ = instDegS > stopDegS_;
+  // From the REPORTED speed: a settled joystick (speed 0) never reads as moving.
+  moving_ = speed_ > stopDegS_;
   valid_ = quatValid;
 
   const bool due = count_ == 0;

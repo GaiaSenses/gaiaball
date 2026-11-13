@@ -28,20 +28,21 @@ uint8_t navDivisor(uint8_t imuHz, uint8_t navHz);
 //
 // Reset to G = identity with the settle machine at rest: on the first sample, when the
 // sample's zeroEpoch changes (zero, mounting or orientation-mode change on the IMU
-// side), and when configure() sees a navigation field change (mode, reference point,
-// joystick law or settle parameters). The first sample after a reset has dt = 0 (no
-// speed, no integration). dt between samples comes from their uint32 micros() stamps,
-// wrap-safe.
+// side), and when configure() sees a new navMode or reference point. The joystick law
+// and the settle thresholds / hold time apply live, without moving the globe (a
+// sensitivity slider must not snap it back). The first sample after a reset has dt = 0
+// (no speed, no integration). dt between samples comes from their uint32 micros()
+// stamps, wrap-safe.
 class NavEngine {
  public:
   // Without an IMU sample for longer than this, the 1 Hz keepalive takes over.
   static constexpr uint32_t kKeepaliveSilenceMs = 500;
 
   // Picks up the navigation fields of cfg plus imuNotifyHz (for the divisor). Acts only
-  // on real changes, so it is safe to call on every config apply: a navigation field
-  // change resets the motion (see above); imuNotifyHz / navNotifyHz recompute the
-  // divisor and restart its count (the next sample is due). R0 is recomputed only when
-  // the reference point changes.
+  // on real changes, so it is safe to call on every config apply: a mode or reference
+  // change resets the motion (see above); joystick and settle parameters apply live;
+  // imuNotifyHz / navNotifyHz recompute the divisor and restart its count (the next
+  // sample is due). R0 is recomputed only when the reference point changes.
   void configure(const GaiaConfig &cfg);
 
   // One IMU sample (q = the treated orientation, quatValid = kImuQuatValid, nowMs =
@@ -62,15 +63,16 @@ class NavEngine {
   uint8_t divisor() const { return divisor_; }
   const Quat &globe() const { return g_; }
   bool settled() const { return settle_.settled(); }
-  // Instantaneous speed (measured in mirror, commanded in joystick) above the stop
-  // threshold: NavPacket bit2, no hold time.
+  // Reported speed above the active stop threshold: NavPacket bit2, no hold time. A
+  // settled joystick reports speed 0, so it never reads as moving.
   bool moving() const { return moving_; }
   // Reported speed: mirror = measured; joystick = commanded, 0 while settled.
   float speedDegS() const { return speed_; }
   uint8_t flags() const;
 
  private:
-  // The configuration fields that shape the motion; any change resets it.
+  // The configuration fields that shape the motion. A change of mode or reference
+  // resets it; the others apply live.
   struct MotionCfg {
     uint8_t mode = 0;
     int32_t refLatE6 = 0, refLonE6 = 0;

@@ -214,8 +214,9 @@ void App::applySnapshot(const GaiaConfig &cfg) {
   audioLpHz_ = cfg.audioLpHz;
   virtualPulse_.configure(cfg.virtualPeakPpm, cfg.virtualDelayMs, cfg.virtualHoldMs);
   co2Trigger_.configure(cfg.co2TriggerPpm, cfg.co2TriggerHystPpm);
-  // Acts only on real changes: a navigation field (mode, reference, joystick law,
-  // settle parameters) resets the globe; imuNotifyHz / navNotifyHz re-time the packets.
+  // Acts only on real changes: a new navMode or reference point resets the globe;
+  // joystick and settle parameters apply live; imuNotifyHz / navNotifyHz re-time the
+  // packets.
   nav_.configure(cfg);
   // setRateHz() restarts the schedule: only call it on an actual change.
   if (cfg.imuNotifyHz != imuNotifyHz_) {

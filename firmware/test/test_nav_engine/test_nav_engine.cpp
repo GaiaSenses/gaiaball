@@ -293,12 +293,12 @@ void test_joystick_settles_on_commanded_speed_and_freezes_globe() {
   e.configure(joyCfg());
   Feed f(e);
   // A tilt inside the hysteresis band (1.5 deg -> 2.25 deg/s, stop 1.5 < 2.25 < start
-  // 3) never starts the motion: G stays put, reported speed 0, moving bit set.
+  // 3) never starts the motion: G stays put, reported speed 0, not moving.
   for (int i = 0; i < 50; i++) f.step(rotY(1.5));
   TEST_ASSERT_TRUE(e.settled());
   assertQuat(kId, e.globe(), 0.f);
   TEST_ASSERT_EQUAL_FLOAT(0.f, e.speedDegS());
-  TEST_ASSERT_EQUAL_HEX8(kNavValid | kNavSettled | kNavMoving, e.flags());
+  TEST_ASSERT_EQUAL_HEX8(kNavValid | kNavSettled, e.flags());
 
   // 10 deg -> 15 deg/s: starts, and G integrates on that same sample.
   f.step(rotY(10));
@@ -323,11 +323,26 @@ void test_joystick_settles_on_commanded_speed_and_freezes_globe() {
   TEST_ASSERT_TRUE(e.settled());
   assertQuat(frozen, e.globe(), 0.f);
   TEST_ASSERT_EQUAL_FLOAT(0.f, e.speedDegS());
+  TEST_ASSERT_EQUAL_HEX8(kNavValid | kNavSettled, e.flags());
 
   // The commanded speed (not G's, which is 0) restarts it.
   f.step(rotY(10));
   TEST_ASSERT_FALSE(e.settled());
   TEST_ASSERT_TRUE(angleDeg(frozen, e.globe()) > 0.1f);
+}
+
+// The moving bit follows the REPORTED speed: a settled joystick reports 0, so a tilt
+// between stop and start reads valid | settled only, on the wire too.
+void test_joystick_settled_in_band_is_not_moving() {
+  NavEngine e;
+  e.configure(joyCfg());
+  Feed f(e);
+  for (int i = 0; i < 10; i++) f.step(rotY(1.5));  // commands 2.25 deg/s: 1.5 < 2.25 < 3
+  const NavPacket p = e.packet(0);
+  TEST_ASSERT_EQUAL_HEX8(0x03, p.flags);
+  TEST_ASSERT_EQUAL_HEX8(kNavValid | kNavSettled, p.flags);
+  TEST_ASSERT_EQUAL_UINT16(0, p.speedDegSX10);
+  TEST_ASSERT_FALSE(e.moving());
 }
 
 void test_joystick_epoch_change_resets_globe() {
@@ -351,30 +366,88 @@ static void moveAway(NavEngine &e, Feed &f) {
   TEST_ASSERT_TRUE(angleDeg(kId, e.globe()) > 1.f);
 }
 
-void test_navigation_field_changes_reset_motion() {
-  // Every field that shapes the motion: mode, reference, joystick law, settle.
-  for (int field = 0; field < 10; field++) {
+void test_reference_change_resets_motion() {
+  for (int field = 0; field < 2; field++) {
     GaiaConfig c = joyCfg();
     NavEngine e;
     e.configure(c);
     Feed f(e);
     moveAway(e, f);
-    switch (field) {
-      case 0: c.navRefLatE6 += 1; break;
-      case 1: c.navRefLonE6 -= 1; break;
-      case 2: c.joyMaxSpeedDegS = 91; break;
-      case 3: c.joyFullAngleDeg = 61; break;
-      case 4: c.joyCurveX10 = 11; break;
-      case 5: c.joyStartDegSX10 = 31; break;
-      case 6: c.joyStopDegSX10 = 16; break;
-      case 7: c.navStopMs = 421; break;
-      case 8: c.navStartDegS = 21; break;
-      case 9: c.navStopDegS = 6; break;
-    }
+    if (field == 0)
+      c.navRefLatE6 += 1;
+    else
+      c.navRefLonE6 -= 1;
     e.configure(c);
     assertQuat(kId, e.globe(), 0.f);
     TEST_ASSERT_TRUE(e.settled());
   }
+}
+
+// Joystick law and settle parameters apply live: neither the globe nor the settle
+// state moves when they change (a sensitivity slider must not snap the globe back).
+void test_parameter_changes_keep_globe_and_settle_state() {
+  for (int field = 0; field < 8; field++) {
+    GaiaConfig c = joyCfg();
+    NavEngine e;
+    e.configure(c);
+    Feed f(e);
+    moveAway(e, f);
+    const Quat g = e.globe();
+    switch (field) {
+      case 0: c.joyMaxSpeedDegS = 91; break;
+      case 1: c.joyFullAngleDeg = 61; break;
+      case 2: c.joyCurveX10 = 11; break;
+      case 3: c.joyStartDegSX10 = 31; break;
+      case 4: c.joyStopDegSX10 = 16; break;
+      case 5: c.navStopMs = 421; break;
+      case 6: c.navStartDegS = 21; break;
+      case 7: c.navStopDegS = 6; break;
+    }
+    e.configure(c);
+    assertQuat(g, e.globe(), 0.f);
+    TEST_ASSERT_FALSE(e.settled());
+    f.step(rotY(30));  // keeps integrating from where it was (dt not cleared)
+    TEST_ASSERT_TRUE(angleDeg(g, e.globe()) > 0.3f);
+  }
+}
+
+void test_joystick_law_change_takes_effect_on_next_sample() {
+  GaiaConfig c = joyCfg();
+  NavEngine e;
+  e.configure(c);
+  Feed f(e);
+  moveAway(e, f);  // 30 deg tilt: 45 deg/s
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 45.f, e.speedDegS());
+  const Quat g = e.globe();
+  c.joyMaxSpeedDegS = 180;  // twice the gain: 90 deg/s at the same tilt
+  e.configure(c);
+  f.step(rotY(30));
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 90.f, e.speedDegS());
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.9f, angleDeg(g, e.globe()));  // 90 deg/s x 10 ms
+}
+
+void test_settle_thresholds_take_effect_live() {
+  GaiaConfig c = joyCfg();
+  NavEngine e;
+  e.configure(c);
+  Feed f(e);
+  moveAway(e, f);  // 45 deg/s, moving
+  // Raise the band above the commanded speed: 45 <= stop 50 now counts as low time.
+  c.joyStartDegSX10 = 600;
+  c.joyStopDegSX10 = 500;
+  e.configure(c);
+  TEST_ASSERT_FALSE(e.settled());
+  const uint32_t t0 = f.ms;
+  while (f.ms - t0 <= 410) {
+    f.step(rotY(30));
+    TEST_ASSERT_FALSE(e.settled());
+    TEST_ASSERT_FALSE(e.moving());  // reported 45 is not above the new stop (50)
+  }
+  f.step(rotY(30));
+  TEST_ASSERT_TRUE(e.settled());
+  const Quat frozen = e.globe();
+  f.step(rotY(30));  // 45 < start 60: stays frozen
+  assertQuat(frozen, e.globe(), 0.f);
 }
 
 void test_mode_change_resets_motion() {
@@ -450,8 +523,12 @@ int main() {
   RUN_TEST(test_valid_flag_follows_quat_valid);
   RUN_TEST(test_joystick_integrates_commanded_speed);
   RUN_TEST(test_joystick_settles_on_commanded_speed_and_freezes_globe);
+  RUN_TEST(test_joystick_settled_in_band_is_not_moving);
   RUN_TEST(test_joystick_epoch_change_resets_globe);
-  RUN_TEST(test_navigation_field_changes_reset_motion);
+  RUN_TEST(test_reference_change_resets_motion);
+  RUN_TEST(test_parameter_changes_keep_globe_and_settle_state);
+  RUN_TEST(test_joystick_law_change_takes_effect_on_next_sample);
+  RUN_TEST(test_settle_thresholds_take_effect_live);
   RUN_TEST(test_mode_change_resets_motion);
   RUN_TEST(test_unrelated_config_changes_keep_state);
   RUN_TEST(test_reference_change_moves_identity_pose);
