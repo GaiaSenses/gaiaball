@@ -10,7 +10,7 @@ compositions (Pure Data).
 ```
  ┌─────────────────────────── Gaiaball (this repo) ───────────────────────────┐
  │                                                                            │
- │  GY-91 IMU ──┐                                                             │
+ │  IMU ────────┐                                                             │
  │  2× INMP441 ─┤   ESP32 firmware          BLE (binary protocol v1)          │
  │  SC8 CO2 ────┼─▶ FreeRTOS + NimBLE  ───────────────┬──────────────▶ GaiaSenses site
  │  Pot + LEDs ─┘   (firmware/)                       └──────────────▶ config-app
@@ -41,15 +41,24 @@ The full netlist cross-check against the KiCAD board design lives in
 - **Blow detection.** The mics are band-passed (configurable HP/LP biquads, default
   10–200 Hz) before an RMS peak detector; a detected blow triggers a "virtual CO₂"
   pulse that the site turns into a composition. The raw (unfiltered) audio is also
-  streamed, decimated to 2 kHz, so the config-app can show a live spectrum for
-  tuning the band.
+  available as an **opt-in** stream (TLV `0x1F`, off by default), decimated to 2 kHz,
+  so the config-app can show a live spectrum for tuning the band. What the application
+  uses arrives on every orientation packet instead: the measured RMS and peak per
+  channel.
+- **Globe navigation.** The ball itself computes where the virtual globe points: in
+  **mirror** mode the globe is the ball's orientation, in **joystick** mode the tilt of
+  the ball steers the globe at a speed set by the tilt angle, and a moving/settled state
+  machine with hysteresis tells the site when it has stopped. The result (centre
+  latitude/longitude, Mapbox bearing, speed, flags) leaves the ball as a 22-byte
+  NavPacket on its own BLE characteristic, so the site only has to draw it. Frames,
+  laws and parameters are in [`firmware/docs/protocol.md`](firmware/docs/protocol.md).
 - **CO₂.** The SC8-CO2-5K streams one checksummed 16-byte frame per second on its
   own. The firmware is strictly listen-only — per the SC8 datasheet, any query
   halts the active stream until the next power cycle — and resynchronizes on the
   frame header after any byte loss.
 - **Transport.** Everything leaves the ball as small, versioned, little-endian
-  binary packets with sequence numbers and timestamps (23 B orientation packets at
-  up to 200 Hz), over a NimBLE GATT server that accepts **two centrals at once** —
+  binary packets with sequence numbers and timestamps (31 B orientation packets, microphone
+  envelope included, at up to 200 Hz), over a NimBLE GATT server that accepts **two centrals at once** —
   the site and the config-app side by side. Sensitive commands and configuration
   writes require a 4-digit PIN unlock per connection.
 - **Configuration.** Every parameter (rates, filters, thresholds, pins, names) is a

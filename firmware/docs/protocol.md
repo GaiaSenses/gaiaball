@@ -10,12 +10,23 @@ Service `19b10000-e8f2-537e-4f6c-d104768a1214`.
 
 | UUID | Dir | Purpose |
 |---|---|---|
-| `19b10001-e8f2-537e-4f6c-d104768a1214` | notify | IMU packets |
-| `19b10002-e8f2-537e-4f6c-d104768a1214` | write | commands |
-| `19b10003-e8f2-537e-4f6c-d104768a1214` | notify | CO2 packets |
-| `19b10004-e8f2-537e-4f6c-d104768a1214` | read/write | config TLV |
-| `19b10005-e8f2-537e-4f6c-d104768a1214` | notify | diagnostics (0x03, 1 Hz), live-sensor (0x04, 5 Hz), raw-audio (0x05, ~21 Hz, **only while TLV 0x1F is on**) and raw-magnetometer (0x06, ~3 Hz while calibrating) packets |
+| `19b10001-e8f2-537e-4f6c-d104768a1214` | notify + read | IMU packets |
+| `19b10002-e8f2-537e-4f6c-d104768a1214` | write + write-without-response | commands |
+| `19b10003-e8f2-537e-4f6c-d104768a1214` | notify + read | CO2 packets |
+| `19b10004-e8f2-537e-4f6c-d104768a1214` | read + write | config TLV |
+| `19b10005-e8f2-537e-4f6c-d104768a1214` | notify + read | diagnostics (0x03, 1 Hz), live-sensor (0x04, 5 Hz), raw-audio (0x05, ~21 Hz, **only while TLV 0x1F is on**) and raw-magnetometer (0x06, ~3 Hz while calibrating) packets |
+| `19b10006-e8f2-537e-4f6c-d104768a1214` | notify + read | globe-navigation packets (0x07, see [NavPacket](#navpacket-22-bytes-type-0x07-own-characteristic)) |
 
+The navigation characteristic (`…0006`) is **optional for clients**: firmware that
+predates it does not expose it, so a client must treat its absence as "navigation not
+supported" and keep working with the other five. A read on it returns the last value
+the firmware set (an all-zero packet right after boot).
+
+**The firmware never acknowledges what it receives.** A command write (`…0002`) or a
+config write (`…0004`) produces no response payload, and a config write that is
+rejected (locked connection, invalid TLV) is dropped silently: the ATT write itself still
+succeeds. A client therefore reads `…0004` back to see what took effect, and sends
+command `0x11` to persist it.
 ### Connection parameters
 
 On every connect the firmware requests **7.5–15 ms** interval, 0 latency, 4 s
@@ -49,8 +60,9 @@ produces data.
 ## Packet type ids
 
 `0x01` ImuSample, `0x02` Co2Sample, `0x03` Diagnostics, `0x04` Sensors, `0x05`
-AudioChunk, `0x06` MagChunk. The diag characteristic carries 0x03, 0x04, 0x05 and
-0x06; receivers must dispatch on the type byte.
+AudioChunk, `0x06` MagChunk, `0x07` Nav. The diag characteristic carries 0x03, 0x04,
+0x05 and 0x06; receivers must dispatch on the type byte. The nav packet (0x07) has a
+characteristic of its own.
 
 ## ImuPacket (31 bytes)
 
@@ -99,7 +111,15 @@ tick also guarantees that the envelope and the orientation share a timestamp.
 | 10 | 1 | u8 | flags |
 | 11 | 1 | u8 | ageS |
 
-Flags: bit0 `valid`, bit1 `stale`, bit2 `virtualActive`.
+Flags: bit0 `valid`, bit1 `stale`, bit2 `virtualActive`, bit3 `trigger`.
+
+`trigger` is a level with hysteresis on the **reported** ppm (the virtual pulse counts):
+it rises when `ppm > co2TriggerPpm` (TLV 0x29, default 1200) and falls when
+`ppm <= co2TriggerPpm - co2TriggerHystPpm` (TLV 0x2A, default 50; a hysteresis not
+smaller than the trigger level means "falls at 0"). A `stale` reading forces it off
+unless the virtual pulse is active (the pulse then supplies the ppm). A flip changes the
+flags, so the packet is sent immediately instead of waiting for the 1 Hz keepalive. The
+packet stays 12 bytes and older decoders simply ignore the new bit.
 
 `ppm` is the virtual pulse peak while a pulse is active; otherwise it is the real
 reading when `co2Enabled=1`, or the constant **600** when `co2Enabled=0` — the
@@ -164,7 +184,107 @@ samples in RAM plus a least-squares solve, for no better result.
 
 Flags: bit0 `calibrated` (set only if the stream ever carries corrected values; the
 calibration capture always clears it). Samples beyond `count` are zero. Values are
-already remapped to the gyro/accel chip frame (AK8963 X↔Y swapped, Z inverted).
+already remapped to the gyro/accel chip frame by the configurable magnetometer axis
+remap (TLV 0x36; default 8 = `+Y +X -Z`, i.e. the AK8963's X and Y swapped and Z
+inverted). The capture (`0x15`) only produces samples in **Quat9** mode
+(`orientationMode` = 1): the magnetometer is not read in Quat6.
+
+## NavPacket (22 bytes, type 0x07, own characteristic)
+
+The globe pose, computed **on the ball** from the orientation (mirror or joystick) and
+sent on characteristic `19b10006-…` so the site only has to draw it. Needs MTU >= 25
+(22-byte payload + 3-byte ATT header).
+
+| Offset | Size | Type | Field |
+|---|---|---|---|
+| 0 | 1 | u8 | version (1) |
+| 1 | 1 | u8 | type (0x07) |
+| 2 | 2 | u16 | seq |
+| 4 | 4 | u32 | timestampUs (of the IMU sample the pose was computed from) |
+| 8 | 1 | u8 | mode (0 off, 1 mirror, 2 joystick) |
+| 9 | 1 | u8 | flags |
+| 10 | 4 | i32 | latE7 — screen-centre latitude, degrees × 1e7, −90..90 |
+| 14 | 4 | i32 | lonE7 — screen-centre longitude, degrees × 1e7, (−180, 180] |
+| 18 | 2 | i16 | bearingX100 — Mapbox bearing, degrees × 100, (−180, 180] |
+| 20 | 2 | u16 | speedDegSX10 — reported globe speed, deg/s × 10 |
+
+Flags: bit0 `valid` (the pose is live: the IMU orientation is valid), bit1 `settled`,
+bit2 `moving`.
+
+- **`settled` is the authority for "stopped".** It is the output of the motion state
+  machine below (hysteresis plus hold time).
+- `moving` is instantaneous and has no hold time: the **reported** speed is above the
+  active stop threshold. It is not the complement of `settled`: in mirror mode the speed
+  can sit between the stop and the start threshold while the machine is still settled
+  (or still moving), so flags `0x07` (valid + settled + moving) is a legal value. In
+  joystick mode the reported speed is 0 while settled, so `moving` is never set then.
+- Reported speed: mirror = the measured angular speed of the globe; joystick = the
+  commanded speed S(θ), and **0 while settled** (the globe is not integrated then).
+  `u16` saturates at 65535 (6553.5 deg/s).
+
+### Frames and conventions
+
+- Reference frame, after the ball is zeroed (command `0x10`): **X = the ball's "front"**
+  (the nose of the plane in the config-app 3D view), pointing **toward the person using
+  it**; Z = up; **Y = the ball's left = the user's right** (right-handed).
+- Globe frame E (unit sphere): x → (lat 0, lon 0), y → (lat 0, lon 90° E), z → north pole.
+- **Identity orientation shows the reference point** (TLV 0x62, default Campinas/SP,
+  lat −22.905556, lon −47.060833) **at the screen centre with north up** (bearing 0).
+- Bearing: Mapbox convention, degrees clockwise from north of the direction that points
+  UP on the screen, normalised to (−180, 180].
+- The `lat ±85.05°` clamp of Mapbox's map centre is a **client** limitation: the packet
+  carries the true pose up to ±90° and the client decides how to render near the poles.
+
+### Laws
+
+- **Mirror** (`navMode` 1): the globe orientation G is the ball's orientation q (already
+  relative to the zero).
+- **Joystick** (`navMode` 2): (u, θ) is the shortest axis-angle of q. The commanded speed
+  is `S(θ) = joyMaxSpeedDegS · min(θ / joyFullAngleDeg, 1) ^ (joyCurveX10 / 10)` deg/s,
+  and G′ = normalize(Δ ⊗ G) with Δ the rotation about u by `S · dt` (dt clamped to
+  [0, 0.05] s). The tilt thus steers the globe; the globe does not follow the ball.
+- **Motion state machine:** the initial state is settled. Speed ≥ start → moving. While
+  moving, speed ≤ stop accumulates low time (reset whenever speed > stop); low time ≥
+  `navStopMs` → settled. Mirror uses `navStartDegS` / `navStopDegS` on the measured globe
+  speed; joystick uses `joyStartDegSX10` / `joyStopDegSX10` (÷10) on the **commanded**
+  speed S(θ), not on G's own speed (G is frozen while settled, so its speed could never
+  restart it).
+
+### Rate, keepalive and resets
+
+- A packet is produced every N IMU samples, **N = max(1, round(imuNotifyHz / navNotifyHz))**
+  (integer count, so the spacing is regular and the nav rate never exceeds the IMU rate).
+  The count runs whether or not anyone is subscribed; packets are only sent to
+  subscribers. With the defaults (50 Hz and 50 Hz) N = 1; at imuNotifyHz 100 or 200 and
+  navNotifyHz 50, N = 2 or 4. The timestamp is that of the sample behind the pose.
+- **Keepalive:** a packet with `valid = 0` and every pose field 0 (`mode` = the current
+  mode) is sent at **1 Hz** when `navMode = 0`, or when no IMU sample arrived for
+  more than 500 ms (no IMU configured, sensor stalled). It also covers "no sample since
+  boot".
+- **Live parameters:** the joystick law (0x63–0x65) and the settle thresholds and hold
+  time (0x66–0x6A) apply live and do **not** move the globe (a sensitivity slider must
+  not snap it back).
+- **Reset to the reference point** (G = identity, state settled, first sample after it
+  has dt = 0): only on a `navMode` change, a `navRef` change, or a change of the IMU's
+  reference — zero (`0x10`), mounting calibration (`0x14`), or switching Quat6 ↔ Quat9
+  (`orientationMode`). **The zero is not persisted** across power cycles: after a reboot
+  the user zeroes again.
+
+Golden vectors (hex, byte order as transmitted):
+
+A — seq 258, timestampUs 12345678, mode 1, flags 0x03 (valid + settled),
+latE7 −229055560, lonE7 −470608330, bearingX100 4500, speedDegSX10 123
+
+```
+01 07 02 01 4E 61 BC 00 01 03 B8 E3 58 F2 36 16 F3 E3 94 11 7B 00
+```
+
+B — seq 65535, timestampUs 4294967295, mode 2, flags 0x06 (settled + moving),
+latE7 900000000, lonE7 −1800000000, bearingX100 −18000, speedDegSX10 65535
+
+```
+01 07 FF FF FF FF FF FF 02 06 00 E9 A4 35 00 2E B6 94 B0 B9 FF FF
+```
 
 ## SensorsPacket (23 bytes, type 0x04, 5 Hz, diag characteristic)
 
@@ -212,7 +332,8 @@ Units:
 Decimated RAW audio for the config-app's spectrum analyzer — **the FFT runs in the
 frontend**, the firmware only ships band-limited samples. Mono mix (L+R)/2,
 DC-removed, decimated 16 kHz -> 2 kHz by average-of-8 (crude anti-alias, adequate
-for a tuning visualizer), int16 = top 16 bits of the 24-bit samples. ~4.3 kB/s.
+for a tuning visualizer), int16 = top 16 bits of the 24-bit samples. 208 B × 20.8
+packets/s ≈ 4.3 kB/s.
 Requires MTU >= 211.
 
 **Opt-in since firmware v8:** sent only while `audioRawStream` (TLV `0x1F`) is set AND
@@ -240,18 +361,22 @@ to tune the band-pass against the live spectrum, then turn it off.
 | Opcode | Meaning |
 |---|---|
 | `0x00` / `0x01` | reserved (legacy LED command, removed — no client ever sent it; ignored, never reuse) |
-| `0x10` | zero orientation |
+| `0x10` | zero orientation (also resets the navigation globe; **not** persisted across power cycles) |
 | `0x11` | save config |
 | `0x12` | factory reset |
 | `0x13` | reboot |
-| `0x14` | mounting calibration |
-| `0x15` | start raw magnetometer capture (streams 0x06 packets; auto-stops after 180 s) |
+| `0x14` | mounting calibration (also clears the zero and resets the navigation globe) |
+| `0x15` | start raw magnetometer capture (streams 0x06 packets; auto-stops after 180 s; samples only in Quat9 mode) |
 | `0x16` | stop raw magnetometer capture |
 | `0x20` + ASCII PIN | unlock (PIN bytes follow the opcode) |
 
 Unlock is per connection and rate-limited: after 5 consecutive failed attempts the
 connection's unlock requests are refused (even with the correct PIN) until 30 s
 after the last failure. A successful unlock or a disconnect clears the streak.
+
+Commands get no response either (see the note under the UUID table): an unlock is
+confirmed by a subsequent config write taking effect, and a saved config by reading it
+back after a reboot.
 
 ## Config TLV (characteristic `...0004`)
 
@@ -307,6 +432,8 @@ TLV register and are persisted under their own NVS keys.
 | 0x25 | u16 | 17000 | virtualHoldMs |
 | 0x26 | u8 | 0 | co2RawLogMode |
 | 0x28 | u16 | 1000 | co2EmaAlphaX1000 — EMA over accepted readings (1000 = off) |
+| 0x29 | u16 | 1200 | co2TriggerPpm — level at which the Co2Packet `trigger` flag rises (400–10000) |
+| 0x2A | u16 | 50 | co2TriggerHystPpm — the flag falls at or below `co2TriggerPpm − this` (0–2000) |
 | 0x30 | u8 | 2 | soundLedPin (valid output GPIOs only; 6–11 (flash) and nonexistent pins rejected) |
 | 0x31 | u8 | 4 | co2LedPin (same validation as 0x30) |
 | 0x32 | u16 | 2000 | co2AlertPpm |
@@ -316,12 +443,24 @@ TLV register and are persisted under their own NVS keys.
 | 0x40 | char[≤16] | "Globo_1" | bleName |
 | 0x41 | char[4] | "1234" | pin (write-only: never serialized/readable) |
 | 0x50 | u8 | 0 | serialLogEnabled — USB serial logging master switch (default OFF: log formatting steals CPU) |
+| 0x60 | u8 | 1 | navMode — 0 = off, 1 = mirror, 2 = joystick (0–2). A change resets the globe |
+| 0x61 | u8 | 50 | navNotifyHz — NavPacket rate (10–200); the effective rate is imuNotifyHz / N, see [NavPacket](#navpacket-22-bytes-type-0x07-own-characteristic) |
+| 0x62 | 8 bytes | −22905556, −47060833 | navRef — reference point shown at identity: `i32 latE6` (−90000000..90000000) then `i32 lonE6` (−180000000..180000000), degrees × 1e6 (default Campinas/SP). A change resets the globe |
+| 0x63 | u16 | 90 | joyMaxSpeedDegS — joystick speed at full tilt, deg/s (1–720) |
+| 0x64 | u8 | 60 | joyFullAngleDeg — tilt that commands full speed (5–90) |
+| 0x65 | u8 | 30 | joyCurveX10 — response exponent × 10 (10–40; 30 = cubic) |
+| 0x66 | u8 | 20 | navStartDegS — mirror: globe speed that starts motion, deg/s (1–200) |
+| 0x67 | u8 | 5 | navStopDegS — mirror: speed at or below which settling counts, deg/s (1–100; must stay < 0x66) |
+| 0x68 | u16 | 420 | navStopMs — time continuously below the stop speed to declare settled (50–5000) |
+| 0x69 | u16 | 10 | joyStartDegSX10 — joystick: commanded speed that starts motion, deg/s × 10 (1–2000) |
+| 0x6A | u16 | 5 | joyStopDegSX10 — joystick: commanded speed that settles, deg/s × 10 (1–2000; must stay < 0x69) |
 
 The magnetometer calibration (0x1E) is the only multi-value register: writes must be
 exactly 24 bytes, and a record whose soft-iron **diagonal** contains a zero is rejected
 (it would silently zero the magnetometer and make Quat9 unusable).
 
-A full config read is now ~190 bytes, so a central that cannot do a long attribute read
+A full config read is now ~240 bytes (239 of serialized registers plus the 3-byte
+read-only `0x35`), so a central that cannot do a long attribute read
 will truncate it; Web Bluetooth and NimBLE handle this transparently.
 
 The two LED pins (0x30, 0x31) are additionally validated **as a set**: a write
@@ -331,6 +470,14 @@ co2ChecksumVariant) and 0x27 (was co2Protocol) — both removed when the SC8-CO2
 datasheet fixed the frame format; 0x33 (was statusLedPin; removed with the legacy
 LED command). `0x35` is a read-only status register, not configuration: it has no NVS key
 and no write path.
+
+Two more cross-field rules apply to the **resulting** state of a write, exactly like
+`audioLpHz > audioHpHz`: `navStopDegS` (0x67) < `navStartDegS` (0x66), and
+`joyStopDegSX10` (0x6A) < `joyStartDegSX10` (0x69). A write that would leave either pair
+inverted or equal is rejected whole, so changing one half of a pair alone must respect the
+stored value of the other. `navRef` (0x62) must be exactly 8 bytes with both coordinates
+inside their range. All navigation registers are persisted by `0x11` like the rest; a
+config loaded from NVS that breaks a pair falls back to that pair's defaults.
 
 ## CO2 sensor protocol (UART1, 9600 8N1, listen-only)
 
@@ -364,6 +511,8 @@ Matches the legacy firmware: `qw = w`, `qx = y`, `qy = x`, `qz = -z`, then the
 standard aerospace roll/pitch/yaw formulas on (qw, qx, qy, qz).
 
 ## Golden vectors (hex, byte order as transmitted)
+
+The two NavPacket vectors are listed in the [NavPacket](#navpacket-22-bytes-type-0x07-own-characteristic) section.
 
 ImuPacket: seq=258, timestampUs=0x0A0B0C0D, q=(1,0,0,0), acc=(1,-2,3), flags=0b1011
 (quatValid+nineAxis+audioValid), rms=(0.00, −20.00) dBFS, peak=(0.00, −6.02) dBFS
