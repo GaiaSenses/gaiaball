@@ -1,0 +1,80 @@
+# Gaiaball Config
+
+App web (Vite + TypeScript) para configurar e testar o Gaiaball v2 via Web Bluetooth: visualização 3D da orientação (o quaternion tratado, exatamente como chega por BLE), métricas do fluxo (taxa, perda, jitter), parâmetros do firmware, presets e um painel de **sensores em tempo real** com gráficos de linha (Plotly.js).
+
+Interface: **tema claro/escuro** (botão no topo; sem escolha salva, segue o tema do sistema), **tooltips didáticos ⓘ** em cada parâmetro — passe o mouse, foque com Tab ou toque para ver o que o parâmetro faz e sua unidade (em telas estreitas o texto aparece como folha no rodapé) — e **layout responsivo** (desktop com o 3D fixo ao rolar, tablet e celular em uma coluna). Fontes IBM Plex embutidas via `@fontsource`: o app continua funcionando offline na bancada.
+
+## Sensores em tempo real
+
+O painel "Sensores em tempo real" mostra o valor atual de cada sensor com a unidade
+correta e, abaixo, gráficos de linha empilhados verticalmente que **compartilham o
+mesmo eixo X (tempo, em segundos)** — janela de 120 s amostrada a 10 Hz, cada gráfico
+com uma cor própria. Arraste para dar zoom; duplo clique restaura.
+
+| Sensor | Unidade | Derivação |
+|---|---|---|
+| Orientação (IMU GY-91/MPU-9250) | graus (°) | fusão Madgwick no firmware → quaternion → Euler na convenção legada (mesma saída que o site entrega ao patch Pd) |
+| Aceleração (IMU) | g | contagens do MPU-9250 ÷ 8192 (fundo de escala ±4 g) |
+| Microfones esq./dir. (INMP441) | dBFS (AES17) + dB SPL estimado | **RMS e pico medidos no firmware** (janela de 20 ms; o pico amostrado no 16 kHz cheio) e enviados em cada pacote de orientação — ou seja, na taxa de orientação, não a 5 Hz. 0 dBFS do RMS = seno de fundo de escala (AES17); 0 dBFS do pico = amostra de fundo de escala, 3,01 dB abaixo para a mesma senoide. SPL ≈ dBFS + 120 (sensibilidade do INMP441: −26 dBFS @ 94 dB SPL, 1 kHz) |
+| CO₂ (Senseair S8) | ppm | leitura Modbus do firmware (EMA opcional, TLV `0x28`) |
+| Potenciômetro | % do curso | ADC filtrado 0–4095 → 0–100 % (o limiar mapeado aparece no cartão e como linha pontilhada nos gráficos dos microfones) |
+
+O limiar do detector, o potenciômetro e as flags de saúde chegam num pacote próprio
+(`SensorsPacket`, 5 Hz, na característica de diagnóstico — ver
+`firmware/docs/protocol.md`); o envelope dos microfones (RMS e pico por canal) viaja
+junto com a orientação no `ImuPacket`, com o mesmo carimbo de tempo. No modo demo o
+painel roda com dados sintéticos.
+
+### Analisador de espectro (ajuste do passa-banda do sopro)
+
+A bola transmite o **áudio bruto decimado** (mono, 2 kHz, int16, ~4,3 kB/s) e o
+**FFT roda aqui no navegador** (512 pontos, janela Hann de 256 ms, bins de ~3,9 Hz,
+0–1000 Hz).
+
+> **Esse stream vem desligado de fábrica.** Ligue em **Configuração › Avançado › Áudio ›
+> Stream de áudio cru (2 kHz)** e aplique; enquanto está desligado o gráfico mostra o
+> aviso correspondente. Ele é o item mais caro do enlace (~45 ms/s de tempo de ar,
+> ~53 % do total quando ligado) e nada mais depende dele: o RMS e o pico vêm medidos do
+> firmware. Desligue ao terminar o ajuste.
+
+Sopre na bola e observe quais frequências sobem; as linhas tracejadas
+mostram os cortes HP/LP configurados (ecoados pelo firmware em cada pacote). Os
+filtros (HP 10 Hz / LP 200 Hz, Q 5,00 por padrão) são aplicados **no firmware**,
+antes do detector de pico — o espectro mostra o sinal **cru**, justamente para
+escolher os cortes. Atenção: Q > 0,71 cria um pico ressonante de ~20·log₁₀(Q) dB
+exatamente no corte; a inclinação da atenuação vem da ordem do filtro, não do Q.
+
+### Persistência
+
+**Aplicar** envia só os campos alterados, confere a aceitação relendo o dispositivo
+e, se tudo foi aceito, **já grava na NVS** (comando `0x11`): as configurações feitas
+pela UI sobrevivem a desligar/reiniciar a bola.
+
+## Requisitos
+
+- Chrome ou Edge (Web Bluetooth não existe no Firefox/Safari).
+- Servir em `localhost` ou HTTPS (requisito do Web Bluetooth).
+- Node.js e npm.
+
+## Uso
+
+```bash
+npm install
+npm run dev        # servidor de desenvolvimento (com --host: acessível na rede local)
+npm run build      # gera dist/
+npm run preview    # serve dist/ localmente (ou sirva dist/ com qualquer servidor estático)
+npm test           # testes (vitest)
+```
+
+**Modo demo:** abra `http://localhost:5173/?demo=1` para ver a visualização 3D, as métricas e o painel de sensores com dados sintéticos, sem dispositivo.
+
+## Roteiro de bancada
+
+1. **Conectar** (painel Conexão) e escolher o Gaiaball na lista do navegador.
+2. **Desbloquear** com o PIN (padrão de fábrica: `1234`). O firmware não confirma o PIN; sem ele, comandos e escritas sensíveis são ignorados.
+3. **Ler do dispositivo** (painel Configuração) para preencher o formulário.
+4. Em **superfície plana**, gire a bola e acompanhe **Taxa**, **Perda** e **Jitter** no painel Métricas.
+5. Acompanhe a vista 3D — ela mostra o quaternion tratado exatamente como chega da bola — e ajuste Modo e Taxa (Hz). Para suavizar o movimento, use **Suavização do quaternion (slerp)** no painel Configuração: como a vista reflete o fluxo real, o efeito do slerp (e o atraso que ele adiciona) aparece nela ao aplicar.
+6. **Aplicar**: só os campos alterados são enviados; em seguida o app relê o dispositivo para verificar. Se algum valor voltar ao anterior, aparece o aviso "alguns valores não foram aceitos (desbloqueou com o PIN?)".
+7. **Salvar no dispositivo** (painel Conexão) para persistir. "Aplicar" vale somente até reiniciar.
+8. **Presets**: salve a configuração atual com um nome, carregue (só preenche o formulário; clique em Aplicar para enviar), exclua, exporte/importe JSON. O PIN nunca entra nos presets nem é lido do dispositivo.

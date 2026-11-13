@@ -1,0 +1,371 @@
+// Live per-sensor readouts + stacked time-series charts (Plotly), all subplots
+// sharing one X axis (time in seconds since the panel started).
+//
+// Units (sources documented in firmware/docs/protocol.md and hardware-pinout.md):
+//  - Orientation: degrees, legacy Euler convention (same output the site feeds to Pd).
+//  - Acceleration: g — MPU-9250 full scale is ±4 g, 8192 LSB/g.
+//  - Microphones (INMP441): dBFS per AES17 (0 dBFS = full-scale sine, FS = 2^23 for
+//    the 32-bit I2S config with >>8). Estimated dB SPL = dBFS + 120, from the
+//    INMP441 sensitivity spec (-26 dBFS @ 94 dB SPL, 1 kHz).
+//  - CO2 (SC8-CO2-5K): ppm.
+//  - Potentiometer: % of full travel (raw 0..4095).
+import Plotly from 'plotly.js-dist-min';
+
+import type { GaiaballClient } from '../ble/gaiaball-client.ts';
+import { computeSpectrum } from '../metrics/fft.ts';
+import { onThemeChange, resolvedTheme } from '../theme.ts';
+import { quatToEulerLegacy } from '../protocol/euler.ts';
+import {
+  ACCEL_LSB_PER_G,
+  rmsToDbfs,
+  type AudioChunkSample,
+  type Co2Sample,
+  type ImuSample,
+  type SensorsSample,
+} from '../protocol/packets.ts';
+
+const TICK_MS = 100; // chart sampling period (10 Hz)
+const FFT_SIZE = 512; // 256 ms window at 2 kHz -> 3.9 Hz bins
+const FFT_MS = 250; // spectrum refresh period
+const WINDOW_S = 120; // visible history
+const MAX_POINTS = Math.ceil((WINDOW_S * 1000) / TICK_MS);
+/** INMP441 sensitivity: -26 dBFS @ 94 dB SPL -> SPL ~= dBFS + 120 (1 kHz, estimate). */
+const DBFS_TO_SPL = 120;
+
+// One color family per chart (each chart visually distinct), picked per theme so
+// every line keeps contrast on both backgrounds.
+interface ChartPalette {
+  euler: [string, string, string]; // roll, pitch, yaw — blues
+  acc: [string, string, string]; // X, Y, Z — oranges
+  micL: string;
+  micR: string;
+  co2: string;
+  pot: string;
+  threshold: string; // dashed guide on both mic charts
+  peak: string;
+  rms: string;
+  spectrum: string;
+  grid: string;
+  font: string;
+}
+const PALETTES: Record<'dark' | 'light', ChartPalette> = {
+  dark: {
+    euler: ['#60a5fa', '#2563eb', '#bfdbfe'],
+    acc: ['#fb923c', '#ea580c', '#fed7aa'],
+    micL: '#4ade80', micR: '#2dd4bf', co2: '#c084fc', pot: '#f472b6', threshold: '#9ca3af',
+    peak: '#f87171', rms: '#fbbf24', spectrum: '#eac23d', grid: '#27333f', font: '#8da0ab',
+  },
+  light: {
+    euler: ['#2563eb', '#1e3a8a', '#60a5fa'],
+    acc: ['#ea580c', '#9a3412', '#fb923c'],
+    micL: '#15803d', micR: '#0f766e', co2: '#7c3aed', pot: '#be185d', threshold: '#6b7280',
+    peak: '#dc2626', rms: '#b45309', spectrum: '#9a6a10', grid: '#d3dcd8', font: '#5a6c74',
+  },
+};
+const pal = (): ChartPalette => PALETTES[resolvedTheme()];
+/** Line colors in trace order (must match the `traces` list below). */
+const traceColors = (p: ChartPalette): string[] => [
+  p.euler[0], p.euler[1], p.euler[2],
+  p.acc[0], p.acc[1], p.acc[2],
+  p.micL, p.threshold, p.micR, p.threshold,
+  p.peak, p.rms, p.co2, p.pot,
+];
+
+interface Latest {
+  imu: ImuSample | null;
+  sensors: SensorsSample | null;
+  co2: Co2Sample | null;
+}
+
+const fmt = (v: number, digits = 1): string =>
+  v.toLocaleString('pt-BR', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+
+export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): void {
+  root.innerHTML = `
+    <h2>Sensores em tempo real</h2>
+    <div class="sensor-cards">
+      <div class="sensor-card" data-el="card-ori"><h3>Orientação (IMU)</h3><p data-el="v-euler">—</p><small>graus (°) · convenção legada roll/pitch/yaw</small></div>
+      <div class="sensor-card" data-el="card-acc"><h3>Aceleração (IMU)</h3><p data-el="v-acc">—</p><small>g · fundo de escala ±4 g (8192 LSB/g)</small></div>
+      <div class="sensor-card" data-el="card-micl"><h3>Microfone esquerdo</h3><p data-el="v-micl">—</p><small>dBFS (AES17) · dB SPL estimado (INMP441: −26 dBFS @ 94 dB SPL)</small></div>
+      <div class="sensor-card" data-el="card-micr"><h3>Microfone direito</h3><p data-el="v-micr">—</p><small>dBFS (AES17) · dB SPL estimado</small></div>
+      <div class="sensor-card" data-el="card-co2"><h3>CO₂ (SC8)</h3><p data-el="v-co2">—</p><small>ppm · partes por milhão</small></div>
+      <div class="sensor-card" data-el="card-pot"><h3>Potenciômetro</h3><p data-el="v-pot">—</p><small>% do curso (ADC 0–4095) · limiar em contagens RMS</small></div>
+    </div>
+    <h3 class="spec-title">Espectro do áudio (cru) — ajuste do passa-banda</h3>
+    <p class="msg">FFT de 512 pontos calculado aqui no navegador sobre o fluxo bruto de 2 kHz vindo da bola (janela de 256 ms, bins de ~3,9 Hz). Sopre na bola e observe quais frequências sobem; as linhas tracejadas marcam os cortes HP/LP configurados.</p>
+    <div data-el="spectrum" class="sensor-chart sensor-spectrum" role="img" aria-label="Espectro de frequências do áudio"></div>
+    <div data-el="chart" class="sensor-chart" role="img" aria-label="Gráficos de linha dos sensores no tempo"></div>
+    <p class="msg">Janela de ${WINDOW_S} s, amostrada a ${1000 / TICK_MS} Hz. Todos os gráficos compartilham o eixo X (tempo, s). Arraste para dar zoom; duplo clique restaura.</p>`;
+
+  const q = <T extends HTMLElement>(sel: string): T => root.querySelector<T>(sel)!;
+  const chartEl = q<HTMLDivElement>('[data-el=chart]');
+
+  const latest: Latest = { imu: null, sensors: null, co2: null };
+  const t0 = performance.now();
+
+  // --- spectrum (frontend FFT over the raw 2 kHz stream) ----------------------
+  const specEl = q<HTMLDivElement>('[data-el=spectrum]');
+  const audioRing: number[] = [];
+  let lastChunk: AudioChunkSample | null = null;
+  let lastChunkAt = 0;
+  let specIdle: boolean | null = null;
+  let specShapesKey = '';
+  const p0 = pal();
+  client.addEventListener('audio', (ev) => {
+    const c = (ev as CustomEvent<AudioChunkSample>).detail;
+    lastChunk = c;
+    lastChunkAt = performance.now();
+    for (const v of c.samples) audioRing.push(v);
+    if (audioRing.length > FFT_SIZE * 2) audioRing.splice(0, audioRing.length - FFT_SIZE * 2);
+  });
+  void Plotly.newPlot(
+    specEl,
+    [{
+      name: 'espectro (dBFS)',
+      x: [] as number[],
+      y: [] as number[],
+      mode: 'lines',
+      line: { color: p0.spectrum, width: 1.5 },
+      hovertemplate: '%{x:.0f} Hz · %{y:.1f} dBFS<extra></extra>',
+    }],
+    {
+      height: 260,
+      margin: { l: 56, r: 8, t: 8, b: 40 },
+      paper_bgcolor: 'rgba(0,0,0,0)',
+      plot_bgcolor: 'rgba(0,0,0,0)',
+      font: { color: p0.font, size: 11 },
+      showlegend: false,
+      xaxis: { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font, title: { text: 'frequência (Hz)' }, range: [0, 1000] },
+      yaxis: { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font, title: { text: 'nível (dBFS)' }, range: [-120, 0] },
+    },
+    { responsive: true, displaylogo: false },
+  );
+  const refreshSpectrum = (): void => {
+    // The raw stream is opt-in (TLV 0x1F) because it costs ~45 ms/s of BLE air time.
+    // When it is off there is simply nothing to transform, so say so on the chart
+    // instead of leaving a dead plot: the RMS and peak readouts keep working, they
+    // come measured from the firmware on every orientation packet.
+    const idle = performance.now() - lastChunkAt > 2000;
+    if (idle !== specIdle) {
+      specIdle = idle;
+      specShapesKey = '';  // force the HP/LP markers to redraw when it comes back
+      if (idle) {
+        audioRing.length = 0;  // never splice pre-pause samples into a fresh FFT
+        void Plotly.restyle(specEl, { x: [[] as number[]], y: [[] as number[]] }, [0]);
+        void Plotly.relayout(specEl, {
+          shapes: [],
+          annotations: [{
+            xref: 'paper', yref: 'paper', x: 0.5, y: 0.5, showarrow: false, align: 'center',
+            text: 'Stream de áudio cru desligado.<br>Ligue em Configuração › Avançado › Áudio'
+              + ' para ver o espectro.',
+            font: { size: 12, color: pal().font },
+          }],
+        });
+      }
+    }
+    if (idle || !lastChunk || audioRing.length < FFT_SIZE) return;
+    const sp = computeSpectrum(audioRing.slice(-FFT_SIZE), FFT_SIZE, lastChunk.sampleRateHz || 2000);
+    void Plotly.restyle(specEl, { x: [Array.from(sp.freqsHz)], y: [Array.from(sp.dbfs)] }, [0]);
+    // Dashed cutoff markers follow the configured band (echoed in every chunk).
+    const key = `${lastChunk.hpHz}|${lastChunk.lpHz}|${lastChunk.bpfEnabled}`;
+    if (key !== specShapesKey) {
+      specShapesKey = key;
+      const mark = (hz: number) => ({
+        type: 'line', x0: hz, x1: hz, y0: -120, y1: 0,
+        line: { color: pal().threshold, width: 1, dash: 'dot' },
+      });
+      void Plotly.relayout(specEl, {
+        shapes: lastChunk.bpfEnabled ? [mark(lastChunk.hpHz), mark(lastChunk.lpHz)] : [],
+        annotations: lastChunk.bpfEnabled
+          ? [
+              { x: lastChunk.hpHz, y: -4, text: `HP ${lastChunk.hpHz} Hz`, showarrow: false, font: { size: 10, color: pal().font }, xanchor: 'left' },
+              { x: lastChunk.lpHz, y: -12, text: `LP ${lastChunk.lpHz} Hz`, showarrow: false, font: { size: 10, color: pal().font }, xanchor: 'left' },
+            ]
+          : [],
+      });
+    }
+  };
+  const specTimer = setInterval(() => {
+    if (!document.hidden) refreshSpectrum();
+  }, FFT_MS);
+
+  // --- chart ----------------------------------------------------------------
+  const line = (name: string, color: string, axis: number, dash?: string) => ({
+    name,
+    x: [] as number[],
+    y: [] as (number | null)[],
+    mode: 'lines',
+    line: { color, width: 1.5, ...(dash ? { dash } : {}) },
+    xaxis: axis === 1 ? 'x' : `x${axis}`,
+    yaxis: axis === 1 ? 'y' : `y${axis}`,
+    hovertemplate: '%{y:.2f}<extra>' + name + '</extra>',
+  });
+
+  const traces = [
+    line('roll (°)', p0.euler[0], 1),
+    line('pitch (°)', p0.euler[1], 1),
+    line('yaw (°)', p0.euler[2], 1),
+    line('acc X (g)', p0.acc[0], 2),
+    line('acc Y (g)', p0.acc[1], 2),
+    line('acc Z (g)', p0.acc[2], 2),
+    line('mic E (dBFS)', p0.micL, 3),
+    line('limiar (dBFS)', p0.threshold, 3, 'dot'),
+    line('mic D (dBFS)', p0.micR, 4),
+    line('limiar (dBFS)', p0.threshold, 4, 'dot'),
+    line('pico E (dBFS)', p0.peak, 5),
+    line('pico D (dBFS)', p0.rms, 5),
+    line('CO₂ (ppm)', p0.co2, 6),
+    line('pot (%)', p0.pot, 7),
+  ];
+
+  const N_ROWS = 7;
+  const axisStyle = { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font };
+  const layout: Record<string, unknown> = {
+    height: 1040,
+    margin: { l: 56, r: 8, t: 8, b: 40 },
+    paper_bgcolor: 'rgba(0,0,0,0)',
+    plot_bgcolor: 'rgba(0,0,0,0)',
+    font: { color: p0.font, size: 11 },
+    showlegend: false,
+    grid: { rows: N_ROWS, columns: 1, pattern: 'independent', ygap: 0.08 },
+  };
+  const rowTitles = ['Orientação (°)', 'Aceleração (g)', 'Mic esquerdo (dBFS)', 'Mic direito (dBFS)', 'Pico por canal (dBFS)', 'CO₂ (ppm)', 'Potenciômetro (%)'];
+  for (let i = 1; i <= N_ROWS; i++) {
+    const xk = i === 1 ? 'xaxis' : `xaxis${i}`;
+    const yk = i === 1 ? 'yaxis' : `yaxis${i}`;
+    layout[xk] = {
+      ...axisStyle,
+      // Every subplot follows the bottom axis: one shared X (time).
+      ...(i === N_ROWS ? { title: { text: 'tempo (s)' } } : { matches: `x${N_ROWS}`, showticklabels: false }),
+    };
+    layout[yk] = { ...axisStyle, title: { text: rowTitles[i - 1], font: { size: 11 } } };
+  }
+  void Plotly.newPlot(chartEl, traces as unknown[], layout, {
+    responsive: true,
+    displaylogo: false,
+    modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+  });
+
+  // Re-skin both Plotly charts when the theme flips (axes, fonts and line colors).
+  const applyChartTheme = (): void => {
+    const p = pal();
+    const cols = traceColors(p);
+    void Plotly.restyle(chartEl, { 'line.color': cols }, cols.map((_, i) => i));
+    const re: Record<string, unknown> = { 'font.color': p.font };
+    for (let i = 1; i <= N_ROWS; i++) {
+      const sfx = i === 1 ? '' : String(i);
+      for (const ax of [`xaxis${sfx}`, `yaxis${sfx}`]) {
+        re[`${ax}.gridcolor`] = p.grid;
+        re[`${ax}.zerolinecolor`] = p.grid;
+        re[`${ax}.color`] = p.font;
+      }
+    }
+    void Plotly.relayout(chartEl, re);
+    void Plotly.restyle(specEl, { 'line.color': p.spectrum }, [0]);
+    void Plotly.relayout(specEl, {
+      'font.color': p.font,
+      'xaxis.gridcolor': p.grid, 'xaxis.zerolinecolor': p.grid, 'xaxis.color': p.font,
+      'yaxis.gridcolor': p.grid, 'yaxis.zerolinecolor': p.grid, 'yaxis.color': p.font,
+    });
+    specShapesKey = ''; // force the HP/LP markers to redraw with the new colors
+  };
+  onThemeChange(applyChartTheme);
+
+  // --- live readouts (updated per packet) ------------------------------------
+  client.addEventListener('imu', (ev) => {
+    latest.imu = (ev as CustomEvent<ImuSample>).detail;
+  });
+  client.addEventListener('sensors', (ev) => {
+    latest.sensors = (ev as CustomEvent<SensorsSample>).detail;
+  });
+  client.addEventListener('co2', (ev) => {
+    latest.co2 = (ev as CustomEvent<Co2Sample>).detail;
+  });
+
+  const renderCards = (): void => {
+    const { imu, sensors, co2 } = latest;
+    if (imu) {
+      const e = quatToEulerLegacy(imu.quat);
+      q('[data-el=v-euler]').textContent = imu.quatValid
+        ? `roll ${fmt(e.rollDeg)}° · pitch ${fmt(e.pitchDeg)}° · yaw ${fmt(e.yawDeg)}°`
+        : 'quaternion inválido';
+      q('[data-el=v-acc]').textContent = `X ${fmt(imu.acc[0] / ACCEL_LSB_PER_G, 2)} g · Y ${fmt(
+        imu.acc[1] / ACCEL_LSB_PER_G, 2)} g · Z ${fmt(imu.acc[2] / ACCEL_LSB_PER_G, 2)} g`;
+    }
+    if (sensors) {
+      // RMS and peak come from the orientation packet (firmware, 20 ms window at the
+      // full 16 kHz) when they are live; the 5 Hz sensors packet is the fallback and
+      // still carries the threshold, the pot and the health flags.
+      const live = imu !== null && imu.audioValid;
+      const dbL = live ? imu.audioRmsDbfs[0] : rmsToDbfs(sensors.rmsL);
+      const dbR = live ? imu.audioRmsDbfs[1] : rmsToDbfs(sensors.rmsR);
+      const audioNote =
+        (!sensors.audioOk ? ' · falha de I²S' : !sensors.audioEnabled ? ' · detector desativado' : '') +
+        (sensors.audioFiltered ? ' · filtrado (HP/LP)' : ' · cru');
+      const peakNote = (ch: 0 | 1) =>
+        live ? ` · pico ${fmt(imu.audioPeakDbfs[ch])} dBFS` : '';
+      q('[data-el=v-micl]').textContent =
+        `${fmt(dbL)} dBFS ≈ ${fmt(dbL + DBFS_TO_SPL, 0)} dB SPL${peakNote(0)}${audioNote}`;
+      q('[data-el=v-micr]').textContent =
+        `${fmt(dbR)} dBFS ≈ ${fmt(dbR + DBFS_TO_SPL, 0)} dB SPL${peakNote(1)}${audioNote}`;
+      const potPct = (sensors.potRaw / 4095) * 100;
+      const thrSrc = sensors.potControls ? 'potenciômetro' : 'fixo';
+      q('[data-el=v-pot]').textContent = `${fmt(potPct)} % (bruto ${sensors.potRaw}) · limiar ${sensors.threshold.toLocaleString('pt-BR')} (${thrSrc})`;
+    }
+    if (co2) {
+      const estado = co2.virtualActive ? 'virtual' : co2.stale ? 'sem leitura (stale)' : co2.valid ? 'real' : 'inválido';
+      q('[data-el=v-co2]').textContent = `${co2.ppm} ppm · ${estado}`;
+    }
+  };
+
+  // --- shared-X sampler: one tick appends one point to every trace ------------
+  const tick = (): void => {
+    renderCards();
+    const { imu, sensors, co2 } = latest;
+    if (!imu && !sensors && !co2) return; // nothing received yet
+    const t = (performance.now() - t0) / 1000;
+    const e = imu && imu.quatValid ? quatToEulerLegacy(imu.quat) : null;
+    const thrDb = sensors ? rmsToDbfs(sensors.threshold) : null;
+    // The envelope is measured in the firmware, at the notify rate: RMS over a 20 ms
+    // window and peak at the full 16 kHz. The browser no longer derives either from
+    // the decimated stream, which averaged 8 samples together and so under-read every
+    // transient -- and which is now off by default anyway.
+    const envLive = imu !== null && imu.audioValid;
+    const rmsLDb = envLive ? imu.audioRmsDbfs[0] : null;
+    const rmsRDb = envLive ? imu.audioRmsDbfs[1] : null;
+    const peakLDb = envLive ? imu.audioPeakDbfs[0] : null;
+    const peakRDb = envLive ? imu.audioPeakDbfs[1] : null;
+    const ys: (number | null)[] = [
+      e ? e.rollDeg : null,
+      e ? e.pitchDeg : null,
+      e ? e.yawDeg : null,
+      imu ? imu.acc[0] / ACCEL_LSB_PER_G : null,
+      imu ? imu.acc[1] / ACCEL_LSB_PER_G : null,
+      imu ? imu.acc[2] / ACCEL_LSB_PER_G : null,
+      rmsLDb,
+      thrDb,
+      rmsRDb,
+      thrDb,
+      peakLDb,
+      peakRDb,
+      co2 ? co2.ppm : null,
+      sensors ? (sensors.potRaw / 4095) * 100 : null,
+    ];
+    void Plotly.extendTraces(
+      chartEl,
+      { x: ys.map(() => [t]), y: ys.map((v) => [v]) },
+      ys.map((_, i) => i),
+      MAX_POINTS,
+    );
+  };
+
+  const timer = setInterval(() => {
+    if (!document.hidden) tick();
+  }, TICK_MS);
+  window.addEventListener('pagehide', () => {
+    clearInterval(timer);
+    clearInterval(specTimer);
+    Plotly.purge(chartEl);
+    Plotly.purge(specEl);
+  });
+}
