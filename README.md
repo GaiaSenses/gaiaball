@@ -66,8 +66,12 @@ The full netlist cross-check against the KiCAD board design lives in
   settings survive power cycles.
 
 The wire format — packets, TLV registry, commands — is specified in
-[`firmware/docs/protocol.md`](firmware/docs/protocol.md). The task/queue
-architecture, including a per-core execution diagram, is in
+[`firmware/docs/protocol.md`](firmware/docs/protocol.md). For readers new to BLE (artists,
+students, makers) and for engineers integrating another device, the same protocol is
+explained step by step in Portuguese in [`docs/protocolo-ble.md`](docs/protocolo-ble.md):
+BLE basics, why binary instead of JSON, every packet byte by byte, globe navigation, the
+PIN and the TLV configuration, runnable JavaScript, Python and C clients, and the golden
+vectors. The task/queue architecture, including a per-core execution diagram, is in
 [`firmware/docs/architecture.md`](firmware/docs/architecture.md).
 
 ## Repository map
@@ -77,6 +81,7 @@ architecture, including a per-core execution diagram, is in
 | `firmware/` | **The v2 firmware** (ESP32, FreeRTOS, NimBLE, binary protocol). Dual toolchain: PlatformIO and Arduino IDE/CLI. See [`firmware/README.md`](firmware/README.md). |
 | `config-app/` | **Bench & configuration web app** (Vite + TypeScript, Web Bluetooth): 3D orientation view, per-sensor real-time charts with a shared time axis, audio spectrum analyzer, stream metrics, full parameter editor with presets. See [`config-app/README.md`](config-app/README.md). |
 | `pd-gaiaball/` | **Pure Data object `[gaiaball]`** (vanilla abstraction + cross-platform BLE→UDP bridge in Python/bleak): read-only access to every Gaiaball reading from inside Pd on Windows, Linux and macOS. Audio arrives as the treated envelope (per-channel RMS and peak, at the orientation rate), never as samples — the spectrum stays in the browser. See [`pd-gaiaball/README.md`](pd-gaiaball/README.md). |
+| `docs/protocolo-ble.md` | **Didactic BLE protocol guide** (pt-BR): BLE basics, every packet and TLV register, navigation, runnable JavaScript/Python/C clients and golden vectors. An identical copy lives in `Gaiasenses-web` as `docs/gaiaball-protocolo-ble.md`; this one is the reference. See [`docs/protocolo-ble.md`](docs/protocolo-ble.md). |
 | `docs/bench-validation.md` | Step-by-step hardware validation script (flash, rates, loss, filters, CO₂, 24 h soak). |
 | `relatorio/index.html` | Interactive report (pt-BR): every defect found in the legacy firmware, the fix, the expected impact, and the bench checklist. Open it in a browser. |
 | `firmware-original.ino` | The legacy (v1) firmware, **preserved untouched as a historical reference**; no longer built. |
