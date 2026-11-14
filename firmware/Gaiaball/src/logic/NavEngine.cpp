@@ -82,6 +82,24 @@ void NavEngine::resetMotion() {
   haveT_ = false;  // the next sample has no predecessor: dt = 0
   speed_ = 0.f;
   moving_ = false;
+  ringHead_ = 0;  // nor any pose for the mirror window
+  ringCount_ = 0;
+  haveSettlePose_ = false;  // captured on the next mirror sample
+}
+
+float NavEngine::mirrorSpeedDegS(uint32_t tUs) {
+  ring_[ringHead_] = PoseSample{g_, tUs};
+  ringHead_ = (uint8_t)((ringHead_ + 1u) % kMirrorRingSize);
+  if (ringCount_ < kMirrorRingSize) ringCount_++;
+  // Walk back from the previous sample to the newest one at least the window old; on
+  // the first samples after a reset (or above 200 Hz), the oldest one held.
+  const PoseSample *ref = nullptr;
+  for (uint8_t back = 1; back < ringCount_; back++) {
+    ref = &ring_[(ringHead_ + kMirrorRingSize - 1u - back) % kMirrorRingSize];
+    if ((uint32_t)(tUs - ref->tUs) >= kMirrorWindowUs) break;
+  }
+  if (!ref) return 0.f;  // a single sample: no speed yet
+  return angularSpeedDegS(ref->q, g_, (float)(uint32_t)(tUs - ref->tUs) * 1e-6f);
 }
 
 bool NavEngine::update(uint32_t tUs, const Quat &q, bool quatValid, uint32_t zeroEpoch,
@@ -101,10 +119,18 @@ bool NavEngine::update(uint32_t tUs, const Quat &q, bool quatValid, uint32_t zer
 
   float instDegS;
   if (cfg_.mode == kModeMirror) {
-    const Quat prev = g_;
     g_ = q;
-    instDegS = angularSpeedDegS(prev, g_, dtS);
+    instDegS = mirrorSpeedDegS(tUs);
+    const bool wasSettled = settle_.settled();
     settle_.update(instDegS, nowMs);
+    if (settle_.settled()) {
+      if (!wasSettled || !haveSettlePose_) {
+        settlePose_ = g_;  // settled now (or first sample after a reset): drift origin
+        haveSettlePose_ = true;
+      } else if (angularSpeedDegS(settlePose_, g_, 1.f) >= kMirrorDriftStartDeg) {
+        settle_.start();  // a slow turn below navStartDegS: the clients must follow it
+      }
+    }
     speed_ = instDegS;
   } else {
     float axis[3], thetaRad;

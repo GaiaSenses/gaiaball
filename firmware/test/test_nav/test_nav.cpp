@@ -349,6 +349,19 @@ void test_settle_reset() {
   TEST_ASSERT_TRUE(m.settled());
 }
 
+void test_settle_start_leaves_settled() {
+  MotionSettle m;
+  m.configure(20.f, 5.f, 420);
+  m.start();  // forced out of settled (NavEngine's mirror drift), whatever the speed
+  TEST_ASSERT_TRUE(m.moving());
+  // The low period starts on the next update, not before.
+  m.update(1.f, 100);
+  m.update(1.f, 519);
+  TEST_ASSERT_TRUE(m.moving());
+  m.update(1.f, 520);
+  TEST_ASSERT_TRUE(m.settled());
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_ref_origin_is_identity);
@@ -375,5 +388,6 @@ int main(int, char **) {
   RUN_TEST(test_settle_spike_resets_low_timer);
   RUN_TEST(test_settle_millis_wraparound);
   RUN_TEST(test_settle_reset);
+  RUN_TEST(test_settle_start_leaves_settled);
   return UNITY_END();
 }

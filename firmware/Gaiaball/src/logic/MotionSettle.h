@@ -39,6 +39,13 @@ class MotionSettle {
     if ((uint32_t)(nowMs - lowSinceMs_) >= stopMs_) reset();
   }
 
+  // Leaves settled now, whatever the speed (NavEngine's mirror drift rule); the low
+  // period starts on the next update.
+  void start() {
+    settled_ = false;
+    lowActive_ = false;
+  }
+
   bool settled() const { return settled_; }
   bool moving() const { return !settled_; }
 

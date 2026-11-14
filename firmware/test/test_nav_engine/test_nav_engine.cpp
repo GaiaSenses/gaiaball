@@ -37,18 +37,21 @@ static void assertQuat(const Quat &e, const Quat &g, float tol) {
   TEST_ASSERT_FLOAT_WITHIN(tol, e.z, s * g.z);
 }
 
-// Sample feeder: 100 Hz, micros and millis advancing together, epoch 0, valid.
+// Sample feeder: 100 Hz by default, micros and millis advancing together, epoch 0,
+// valid.
 struct Feed {
   NavEngine &e;
   uint32_t tUs;
   uint32_t ms;
+  uint32_t dtUs = kDtUs;
+  uint32_t dtMs = kDtMs;
   uint32_t epoch = 0;
   Feed(NavEngine &eng, uint32_t t0Us = 1000000, uint32_t t0Ms = 1000)
       : e(eng), tUs(t0Us), ms(t0Ms) {}
   bool step(const Quat &q, bool valid = true) {
     const bool due = e.update(tUs, q, valid, epoch, ms);
-    tUs += kDtUs;
-    ms += kDtMs;
+    tUs += dtUs;
+    ms += dtMs;
     return due;
   }
 };
@@ -225,16 +228,121 @@ void test_mirror_follows_q_measures_speed_and_settles() {
   TEST_ASSERT_UINT16_WITHIN(5, 1000, e.packet(0).speedDegSX10);
   for (int d = 2; d <= 5; d++) f.step(rotZ(d));
   assertQuat(rotZ(5), e.globe(), 0.f);  // G = q exactly
-  // Still: speed 0 <= stop (5); 420 ms of continuous low time settles.
-  const uint32_t t0 = f.ms;
+  // Still. The speed is measured over a 100 ms window (against the newest sample at
+  // least 100 ms old), so the turn stays in it for 100 ms after its last sample: the
+  // speed decays (83 ... 10 deg/s) and the moving bit holds until rotZ(5) itself is
+  // the reference.
+  const uint32_t tLast = f.ms - kDtMs;  // stamp of the rotZ(5) sample
+  while (f.ms - tLast < NavEngine::kMirrorWindowUs / 1000u) {
+    f.step(rotZ(5));
+    TEST_ASSERT_FALSE(e.settled());
+    TEST_ASSERT_TRUE(e.moving());
+  }
+  f.step(rotZ(5));  // 100 ms after rotZ(5): the window holds no motion
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.f, e.speedDegS());
+  TEST_ASSERT_FALSE(e.moving());  // instantaneous: below stop right away
+  // From here, speed 0 <= stop (5); 420 ms of continuous low time settles.
+  const uint32_t t0 = f.ms - kDtMs;  // first low sample
   while (f.ms - t0 <= 410) {
     f.step(rotZ(5));
     TEST_ASSERT_FALSE(e.settled());
-    TEST_ASSERT_FALSE(e.moving());  // instantaneous: below stop right away
+    TEST_ASSERT_FALSE(e.moving());
   }
   f.step(rotZ(5));  // now - t0 == 420
   TEST_ASSERT_TRUE(e.settled());
   TEST_ASSERT_EQUAL_HEX8(kNavValid | kNavSettled, e.flags());
+}
+
+// Hand tremor (8-12 Hz) on a held ball. Sample to sample, a +-0.3 deg 10 Hz shake
+// reads 5-18 deg/s at 50 Hz, above the stop threshold (5) on most samples, so a
+// single-sample speed would never settle. Over the 100 ms window (one whole 10 Hz
+// period) it reads ~0: the ball settles one window plus navStopMs after the turn.
+void test_mirror_tremor_settles_within_stop_ms() {
+  GaiaConfig c = mirrorCfg();
+  c.imuNotifyHz = 50;
+  c.navNotifyHz = 50;
+  NavEngine e;
+  e.configure(c);
+  Feed f(e);
+  f.dtUs = 20000;
+  f.dtMs = 20;
+  for (int d = 0; d <= 10; d += 2) f.step(rotZ(d));  // 100 deg/s turn: moving
+  TEST_ASSERT_FALSE(e.settled());
+
+  const uint32_t t0 = f.ms;  // first tremor sample (phase 0 = rotZ(10))
+  const uint32_t settleBy = NavEngine::kMirrorWindowUs / 1000u + c.navStopMs;
+  Quat prev = rotZ(10);
+  float maxSampleDegS = 0.f;
+  bool settled = false;
+  for (int i = 0; i < 75; i++) {  // 1.5 s
+    const Quat q = rotZ(10.0 + 0.3 * std::sin(2.0 * M_PI * 10.0 * (i * 0.02)));
+    const float single = angleDeg(prev, q) / 0.02f;
+    if (single > maxSampleDegS) maxSampleDegS = single;
+    prev = q;
+    const uint32_t t = f.ms;
+    f.step(q);
+    if (e.settled()) {
+      if (!settled)
+        TEST_ASSERT_TRUE_MESSAGE(t - t0 <= settleBy, "settled later than window + navStopMs");
+      settled = true;
+    } else {
+      TEST_ASSERT_FALSE_MESSAGE(settled, "a settled ball moved again under tremor");
+    }
+  }
+  TEST_ASSERT_TRUE(maxSampleDegS > (float)c.navStopDegS);  // the shake is real
+  TEST_ASSERT_TRUE(settled);
+}
+
+// A slow, deliberate rotation below navStartDegS: the speed alone never leaves
+// settled, but 3 deg of drift from the pose the ball settled at does.
+void test_mirror_slow_rotation_unsettles_after_drift() {
+  NavEngine e;
+  e.configure(mirrorCfg());
+  Feed f(e);
+  // 5 deg/s from rest at 100 Hz: 0.05 deg per sample, 3 deg at sample 60.
+  for (int i = 0; i <= 58; i++) {  // up to 2.9 deg
+    f.step(rotZ(0.05 * i));
+    TEST_ASSERT_TRUE(e.settled());
+  }
+  TEST_ASSERT_TRUE(e.speedDegS() < (float)mirrorCfg().navStartDegS);
+  for (int i = 59; i <= 61; i++) f.step(rotZ(0.05 * i));  // 3.05 deg
+  TEST_ASSERT_FALSE(e.settled());
+  TEST_ASSERT_EQUAL_HEX8(0, e.packet(0).flags & kNavSettled);
+}
+
+static void settleAt(NavEngine &e, Feed &f, const Quat &q) {
+  for (int i = 0; i < 80 && !e.settled(); i++) f.step(q);  // window + 420 ms < 800 ms
+  TEST_ASSERT_TRUE(e.settled());
+}
+
+// The drift is measured from the pose captured when the ball last settled: each
+// settle recaptures it (else the first slow turn would leave settled at once).
+void test_mirror_settle_pose_recaptured_on_each_settle() {
+  NavEngine e;
+  e.configure(mirrorCfg());
+  Feed f(e);
+  for (int d = 0; d <= 30; d += 3) f.step(rotZ(d));  // 300 deg/s turn away from rest
+  TEST_ASSERT_FALSE(e.settled());
+  settleAt(e, f, rotZ(30));
+  for (int i = 0; i < 20; i++) f.step(rotZ(30));  // 30 deg from the boot pose: stays
+  TEST_ASSERT_TRUE(e.settled());
+
+  // Slow turn from 30 deg: settled up to 32.9, out by 33.05.
+  for (int i = 1; i <= 58; i++) {
+    f.step(rotZ(30 + 0.05 * i));
+    TEST_ASSERT_TRUE(e.settled());
+  }
+  for (int i = 59; i <= 61; i++) f.step(rotZ(30 + 0.05 * i));
+  TEST_ASSERT_FALSE(e.settled());
+
+  // Settles again where it stopped (33.05) and measures the next drift from there.
+  settleAt(e, f, rotZ(33.05));
+  for (int i = 1; i <= 58; i++) {
+    f.step(rotZ(33.05 + 0.05 * i));
+    TEST_ASSERT_TRUE(e.settled());
+  }
+  for (int i = 59; i <= 61; i++) f.step(rotZ(33.05 + 0.05 * i));
+  TEST_ASSERT_FALSE(e.settled());
 }
 
 void test_mirror_dt_is_wrap_safe() {
@@ -518,6 +626,9 @@ int main() {
   RUN_TEST(test_keepalive_packet_is_invalid_with_zero_pose);
   RUN_TEST(test_mirror_identity_reports_reference_point);
   RUN_TEST(test_mirror_follows_q_measures_speed_and_settles);
+  RUN_TEST(test_mirror_tremor_settles_within_stop_ms);
+  RUN_TEST(test_mirror_slow_rotation_unsettles_after_drift);
+  RUN_TEST(test_mirror_settle_pose_recaptured_on_each_settle);
   RUN_TEST(test_mirror_dt_is_wrap_safe);
   RUN_TEST(test_mirror_epoch_change_reads_no_spurious_speed);
   RUN_TEST(test_valid_flag_follows_quat_valid);
