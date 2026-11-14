@@ -4,7 +4,7 @@ Target: ESP32 (esp32dev), Arduino core 2.0.17, NimBLE-Arduino 1.4.3. All code li
 namespace `gaia` under `Gaiaball/src/`:
 
 - `logic/` — pure, host-testable code (packets, TLV codec, filters, SC8 CO2 frame
-  parser, peak detector, PIN gate, notify throttle). Covered by `pio test -e native`.
+  parser, breath detector, PIN gate, notify throttle). Covered by `pio test -e native`.
   LEDs have NO arbitration layer: each LED pin has exactly one driver
   (sound events → GPIO2, CO2 alert → GPIO4).
 - `services/` — hardware/RTOS wrappers, one per peripheral.
@@ -30,7 +30,7 @@ After `setup()` returns, `loop()` blocks in `vTaskDelay(portMAX_DELAY)`.
 | Task | Core | Prio | Stack | Wakes on | Owns |
 |---|---|---|---|---|---|
 | `imu` | 1 | 3 | 6144 | `vTaskDelay` (adaptive: sample period / 4, clamped 2–5 ms — the GY-91 INT pin is not routed on the board) | MPU-9250 (I2C), Madgwick fusion, gyro-bias tracker, mounting/zero state |
-| `audio` | 1 | 2 | 4096 | `i2s_read` (80 frames @ 16 kHz = 5 ms; 100 ms timeout) | I2S0, AudioLevelWindow, PeakDetector |
+| `audio` | 1 | 2 | 4096 | `i2s_read` (80 frames @ 16 kHz = 5 ms; 100 ms timeout) | I2S0, AudioLevelWindow, BreathDetector |
 | `app` | 1 | 2 | 6144 | IMU queue (`xQueueReceive`, 20 ms timeout) | LEDs, pot ADC, virtual pulse (`VirtualCo2Pulse` member), NVS saves |
 | `co2` | 1 | 1 | 3072 | `vTaskDelay(20 ms)` | UART1 RX (listen-only), SC8 Co2FrameParser |
 | NimBLE host | 0 | (lib) | (lib) | BLE events | GATT, CommandGate unlock, config TLV apply |
@@ -73,7 +73,15 @@ silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen b
   `VirtualCo2Pulse` (pure logic, App-task-only member) and drives the sound LED. The
   `Co2Service` is real-sensor-only and has no pulse state.
 - **App → Audio**: `PotService` is single-task (App). After each `poll()` the App stores
-  `threshold()` in an `std::atomic<float>`; the audio task's threshold provider reads it.
+  `thresholdDbfs()` (the breath threshold in dBFS: potentiometer, or TLV 0x2B) in an
+  `std::atomic<float>`; the audio task's threshold provider reads it, converts it to counts
+  of the active metric (RMS or peak) and reconfigures the `BreathDetector` when it changed.
+- **Audio → App (breath bit)**: the audio task stores `breathRecognized` (fire until
+  re-arm) and sets a latch on every block where it is true; the App task ORs both into
+  ImuPacket flags bit 4 and clears the latch (`exchange(false)`) at every notify slot
+  (also when nobody is subscribed, so a late subscriber never gets an old breath); a
+  breath shorter than one notify interval still reaches the next packet. The effective
+  trigger level for the SensorsPacket is a third atomic.
 - **Audio → App (envelope)**: the audio task publishes the pooled 20 ms levels (RMS and
   peak per channel) into four `std::atomic<float>`; the App task snapshots them with
   `AudioService::levels()` and appends them to the ImuPacket it was already sending.
@@ -150,7 +158,7 @@ CORE 0 (PRO_CPU) - radio only              CORE 1 (APP_CPU) - acquisition + app 
 │   (mutex) → dirty flag        │          │ audio task · prio 2 · blocks on i2s_read    │
 ├───────────────────────────────┤          │  block DC-removal → mono → decimator 2 kHz  │
 │ BLE controller + radio ISRs   │          │  → chunk 48 ms ─▶ app (mux)                 │
-└───────────────────────────────┘          │  → HP/LP biquads → RMS L/R → peak detector  │
+└───────────────────────────────┘          │  → HP/LP biquads → RMS/peak → breath detect │
         ▲        │                         ├─────────────────────────────────────────────┤
         │ notify │ commands                │ co2 task · prio 1 · 20 ms tick              │
         │        ▼                         │  drain RX → SC8 frame parse → EMA → ppm    │

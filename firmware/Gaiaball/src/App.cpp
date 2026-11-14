@@ -76,7 +76,7 @@ void App::begin() {
   ble_.setImuStatus(imuStatusByte(imu_.bootChip(), imu_.imuOk(), imu_.magFound()));
 
   pot_.begin(cfg);
-  threshold_.store(pot_.threshold());
+  threshold_.store(pot_.thresholdDbfs());
   // Both callbacks run on the audio task: atomics only.
   audio_.onPeak([this](uint32_t nowMs) {
     lastPeakMs_.store(nowMs);
@@ -135,7 +135,7 @@ void App::taskLoop() {
     if (elapsed(nowMs, lastPotMs_, kPotPeriodMs)) {
       lastPotMs_ = nowMs;
       pot_.poll(nowMs);
-      threshold_.store(pot_.threshold());
+      threshold_.store(pot_.thresholdDbfs());
     }
 
     if (elapsed(nowMs, lastLedMs_, kLedPeriodMs)) {
@@ -172,7 +172,12 @@ void App::handleImuSample(const ImuSample &s) {
   // notify rate is.
   updateNav(s);
   if (!imuThrottle_.shouldSend(s.tUs)) return;
-  if (!ble_.anySubscriber(1)) return;
+  if (!ble_.anySubscriber(1)) {
+    // Nobody to report to: drop the breath latch here too, so whoever subscribes later
+    // does not get a breath that ended long before.
+    audio_.takeBreathLatch();
+    return;
+  }
   const float q[4] = {s.q.w, s.q.x, s.q.y, s.q.z};
   // The microphone envelope rides on this packet: one notification per tick carries
   // orientation and sound with the same timestamp, which is both cheaper on the BLE
@@ -183,6 +188,9 @@ void App::handleImuSample(const ImuSample &s) {
     levels = audio_.levels();
     flags = (uint8_t)(flags | kImuAudioValid);
   }
+  // Bitwise OR, not ||: the latch must be taken (cleared) on every packet sent, so a
+  // recognition that started and ended between two packets is reported exactly once.
+  if (audio_.breathRecognized() | audio_.takeBreathLatch()) flags = (uint8_t)(flags | kImuBreath);
   const ImuPacket p = makeImuPacket(imuSeq_++, s.tUs, q, s.acc, flags, levels);
   ble_.notifyImu(p);
   imuNotifiesInWindow_++;
@@ -210,6 +218,8 @@ void App::applySnapshot(const GaiaConfig &cfg) {
   audioEnabled_ = cfg.audioEnabled != 0;
   potControls_ = cfg.potControlsThreshold != 0;
   audioBpf_ = cfg.audioBpfEnabled != 0;
+  breathMetricPeak_ = cfg.breathMetric != 0;
+  breathAdaptive_ = cfg.breathDetector != 0;
   audioHpHz_ = cfg.audioHpHz;
   audioLpHz_ = cfg.audioLpHz;
   virtualPulse_.configure(cfg.virtualPeakPpm, cfg.virtualDelayMs, cfg.virtualHoldMs);
@@ -235,7 +245,7 @@ void App::applyConfigIfDirty() {
   audio_.applyConfig(cfg);
   co2_.applyConfig(cfg);
   pot_.applyConfig(cfg);
-  threshold_.store(pot_.threshold());
+  threshold_.store(pot_.thresholdDbfs());
   applySnapshot(cfg);
   Logger::setEnabled(cfg.serialLogEnabled != 0);
   GB_LOGI(kTag, "config applied");
@@ -310,9 +320,12 @@ void App::sendSensors(uint32_t nowMs) {
   if (audioEnabled_) flags |= kSensAudioEnabled;
   if (potControls_) flags |= kSensPotControls;
   if (audioBpf_) flags |= kSensAudioFiltered;
+  if (breathMetricPeak_) flags |= kSensMetricPeak;
+  if (breathAdaptive_) flags |= kSensAdaptive;
+  // The detector's effective trigger level, in counts of the active metric.
   const SensorsPacket p =
       makeSensorsPacket(sensorsSeq_++, nowMs, audio_.lastRmsLeft(), audio_.lastRmsRight(),
-                        pot_.threshold(), pot_.filteredRaw(), flags);
+                        audio_.triggerLevelCounts(), pot_.filteredRaw(), flags);
   ble_.notifySensors(p);
 }
 

@@ -102,7 +102,7 @@ void test_reject_bad_length() {
 }
 
 void test_reject_truncated() {
-  const uint8_t trunc_value[] = {0x02, 1, 20, 0x15, 4, 1, 2};  // u32 cut short
+  const uint8_t trunc_value[] = {0x02, 1, 20, 0x2B, 2, 0xDE};  // live u16 cut short
   assertRejected(trunc_value, sizeof trunc_value);
   const uint8_t trunc_header[] = {0x02, 1, 20, 0x03};  // id without len
   assertRejected(trunc_header, sizeof trunc_header);

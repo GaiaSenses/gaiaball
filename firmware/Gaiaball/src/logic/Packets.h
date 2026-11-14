@@ -3,7 +3,8 @@
 
 #include "AudioFeatures.h"
 
-// Binary BLE wire protocol v1. Little-endian, packed. See firmware/docs/protocol.md.
+// Binary BLE wire protocol: every packet is v1 except the movement (IMU) packet, which
+// is v2. Little-endian, packed. See firmware/docs/protocol.md.
 namespace gaia {
 
 constexpr uint8_t kProtocolVersion = 1;
@@ -28,6 +29,10 @@ constexpr uint8_t kImuQuatValid = 1u << 0;
 constexpr uint8_t kImuNineAxis = 1u << 1;
 constexpr uint8_t kImuMoving = 1u << 2;
 constexpr uint8_t kImuAudioValid = 1u << 3;  // the appended microphone levels are live
+// Breath recognized: set while the detector is past its line (fire .. re-arm), and
+// latched so that a recognition shorter than one notify interval still reaches the
+// next packet sent.
+constexpr uint8_t kImuBreath = 1u << 4;
 
 // Co2Packet.flags
 constexpr uint8_t kCo2Valid = 1u << 0;
@@ -50,6 +55,8 @@ constexpr uint8_t kSensAudioOk = 1u << 0;
 constexpr uint8_t kSensAudioEnabled = 1u << 1;
 constexpr uint8_t kSensPotControls = 1u << 2;
 constexpr uint8_t kSensAudioFiltered = 1u << 3;  // RMS computed after the HP/LP band-pass
+constexpr uint8_t kSensMetricPeak = 1u << 4;     // breath metric is the peak (else RMS)
+constexpr uint8_t kSensAdaptive = 1u << 5;       // breath detector is adaptive (else absolute)
 
 // AudioChunkPacket.flags
 constexpr uint8_t kAudioBpfEnabled = 1u << 0;  // band-pass active (chunk itself is RAW)
@@ -142,8 +149,11 @@ struct __attribute__((packed)) MagChunkPacket {
 
 // Live sensor levels for the config-app charts, notified on the diag characteristic
 // at 5 Hz. RMS values are in 24-bit sample counts (INMP441 data, sample >> 8; full
-// scale 2^23): dBFS = 20*log10(rms*sqrt(2)/2^23). Threshold is in the same RMS
-// counts; potRaw is the EMA-filtered 12-bit ADC reading (0..4095).
+// scale 2^23): dBFS = 20*log10(rms*sqrt(2)/2^23). audioThreshold is the breath
+// detector's effective trigger level, in counts of the ACTIVE metric (flags bit 4):
+// RMS counts (AES17 scale above) or peak counts (dBFS = 20*log10(peak/2^23)). Absolute
+// detector: the line itself; adaptive (flags bit 5): the slow baseline plus the
+// threshold. potRaw is the EMA-filtered 12-bit ADC reading (0..4095).
 struct __attribute__((packed)) SensorsPacket {
   uint8_t version, type;
   uint16_t seq;

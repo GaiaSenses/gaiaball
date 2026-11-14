@@ -185,6 +185,96 @@ O RMS e o pico dos microfones agora são medidos no firmware (janela de 20 ms, p
 | Bytes no ar | Métricas › **Notify** e a tabela de orçamento do `firmware/README.md` | com stream cru desligado e 50 Hz: ~1,7 kB/s (era ~5,6 kB/s na v7) |
 | Pacote maior não derrubou a taxa | Métricas › **Taxa** e **Perda** | 23 → 31 bytes custa ~9 % de tempo de ar; a taxa não deve cair |
 
+### 3.2 Detector de sopro (absoluto e adaptativo)
+
+O firmware tem dois detectores de sopro (TLV `0x2D`), medindo RMS ou pico (TLV `0x2C`), com o
+limiar em dBFS vindo do potenciômetro ou de um valor fixo (TLV `0x14` escolhe; o valor fixo é
+o `0x2B`). Os dois acionam o mesmo que antes: o flash do LED de som e o pulso de CO₂ virtual.
+O estado "sopro reconhecido" vai no bit 4 do pacote de movimento, travado até ser enviado.
+Na config-app: Configuração › Básico, grupo **Detecção de sopro**; em Sensores, a linha de
+limiar (contínua, no nível efetivo de disparo) e o gráfico **Detecção de sopro** (degrau 0/1).
+Desbloqueie com o PIN antes de mudar qualquer campo.
+
+**Preparação.** Conecte e abra Sensores (o bit de sopro viaja no pacote de movimento, o
+mesmo da orientação). Cada mudança abaixo vale depois de **Aplicar**. Comece pelos
+padrões: detector **Absoluto**, fonte **Potenciômetro**, medida **RMS**, rearme 3 dB,
+debounce 300 ms.
+
+**A. Absoluto, potenciômetro, RMS, sala silenciosa**
+
+1. Gire o potenciômetro de um batente ao outro. O gráfico do potenciômetro vai de 0 a 100 % e
+   a linha de limiar nos gráficos **Mic esquerdo/direito** vai de −60 a 0 dBFS, sempre
+   horizontal. Com o potenciômetro parado, a linha não oscila (histerese de 0,5 dB).
+2. Deixe a linha perto de −35 dBFS e sopre num microfone. Quando a curva RMS desse microfone
+   passa da linha: o LED de som pisca, o CO₂ sobe com o pulso virtual e o gráfico
+   **Detecção de sopro** vai a 1. Ele volta a 0 quando o som cai uns 3 dB abaixo da linha.
+   Um sopro longo dá **um** disparo só.
+3. Tape esse microfone e sopre no outro: também dispara (basta **qualquer** microfone passar
+   da linha).
+4. Sopros curtos em sequência, mais próximos que 300 ms: só o primeiro dispara (debounce,
+   TLV `0x13`).
+5. Um sopro bem curto (um "tuf"): o degrau aparece no gráfico de sopro mesmo quando dura
+   menos que o intervalo entre dois pacotes de movimento.
+
+**B. Valor fixo**
+
+1. Mude a fonte para **Valor fixo** e ponha a sensibilidade em −35,5 dBFS. Girar o
+   potenciômetro mexe o gráfico do potenciômetro, mas a linha de limiar fica parada.
+2. Mude para −20 dBFS e aplique: a linha sobe para −20 e é preciso soprar mais forte. Use
+   **Ler do dispositivo**: o campo continua em −20 (o `0x2B` guarda 2000).
+3. Volte para **Potenciômetro**: a linha volta para a posição do potenciômetro.
+
+**C. Pico**
+
+1. Mude a medida para **Pico**. A linha de limiar sai dos gráficos Mic esquerdo/direito e
+   passa para **Pico por canal (dBFS)**.
+2. Com o mesmo dBFS, o pico dispara mais fácil que o RMS (o pico fica alguns dB acima do RMS,
+   o fator de crista). Suba a linha alguns dB para ter a mesma sensação do RMS.
+3. Uma palma seca dispara no pico; no RMS ela pode não disparar.
+
+**D. Rearme**
+
+1. Rearme 0 dB: o detector rearma assim que o som cai abaixo da linha. Um sopro que oscila
+   perto da linha pode dar vários disparos, separados pelo debounce.
+2. Rearme 10 dB: o degrau de **Detecção de sopro** fica mais largo, e um novo disparo só vem
+   depois de o som cair 10 dB abaixo da linha.
+3. Volte para 3 dB.
+
+**E. Adaptativo, sala silenciosa**
+
+1. Mude o detector para **Adaptativo**. Os campos Alfa rápido e Alfa lento aparecem no
+   Avançado (só valem para o adaptativo).
+2. Deixe a bola quieta por uns 3 s: a linha de limiar fica um pouco acima do ruído da sala
+   (ruído mais a sensibilidade) e sobe e desce com ele.
+3. Sopre: dispara quando o som sobe acima do ruído pelo valor da sensibilidade. O disparo pode
+   vir um instante depois de a curva cruzar a linha (o detector compara o envelope
+   suavizado).
+4. Repita com a medida **Pico**: mesmo comportamento, no gráfico de pico.
+
+**F. Sala barulhenta** (música, ventilador ou conversa perto da bola)
+
+1. **Absoluto**, linha em −35,5 dBFS: se o ruído passar da linha, a bola dispara sozinha (o
+   gráfico de sopro fica em 1 ou pulsa sem ninguém soprar). Suba a linha pelo potenciômetro
+   até parar de disparar; o sopro continua disparando, só que precisa ser mais forte.
+2. **Adaptativo**, sem mexer na sensibilidade: depois de uns 3 s a linha sobe junto com o
+   ruído e a bola para de disparar sozinha; o sopro continua disparando.
+3. Repita os dois com **Pico** e com **Valor fixo**: o resultado tem de ser o mesmo.
+
+**G. Áudio desligado**
+
+1. Desligue o áudio (TLV `0x10` = 0): nenhum sopro dispara, o gráfico de sopro fica em 0 e o
+   LED de som não pisca.
+2. Religue: o detector recomeça do zero (o adaptativo reaprende o ruído em uns 3 s).
+
+| Critério | Meta |
+|---|---|
+| Um sopro longo | exatamente 1 disparo (LED, pulso de CO₂, degrau de sopro) em qualquer combinação de detector, medida e fonte |
+| Absoluto | a curva que dispara é a que aparece no gráfico; qualquer um dos microfones dispara |
+| Adaptativo | não dispara sozinho em sala barulhenta depois de uns 3 s |
+| Potenciômetro | −60 a 0 dBFS de batente a batente, sem oscilar parado |
+| Valor fixo | a linha não acompanha o potenciômetro; o valor gravado volta na releitura |
+| Pico | a linha passa para o gráfico de pico |
+
 ## 4. Precisão de movimento
 
 1. Com a bola na posição de referência e parada, clique **Calibrar montagem** (comando

@@ -86,7 +86,16 @@ characteristic of its own.
 | 25 | 1 | u8 | audioPeakHalfDb[0] (left) |
 | 26 | 1 | u8 | audioPeakHalfDb[1] (right) |
 
-Flags: bit0 `quatValid`, bit1 `nineAxis`, bit2 `moving`, bit3 `audioValid`.
+Flags: bit0 `quatValid`, bit1 `nineAxis`, bit2 `moving`, bit3 `audioValid`, bit4
+`breath` (breath recognized).
+
+`breath` is 1 from the moment the breath detector fires until it re-arms (the level
+falls `breathRearmDb` below the line, TLV 0x2E), and it is **latched until sent**: if the
+state was 1 at any moment since the previous movement packet, the next one carries 1, so
+a breath never falls between two packets. The audio task writes the state and the latch;
+the App task reads and clears the latch at every notify slot: when it builds the packet,
+or when nobody is subscribed, so a late subscriber never gets an old breath (atomics). With
+`audioEnabled = 0` (TLV 0x10) the detector does not run and the bit stays 0.
 
 The microphone envelope is measured in the firmware over the 20 ms window that ended
 with this orientation sample, with the peak tracked at the full 16 kHz. While
@@ -326,15 +335,24 @@ Live audio/potentiometer levels for the config-app's real-time charts.
 | 22 | 1 | u8 | flags |
 
 Flags: bit0 `audioOk`, bit1 `audioEnabled`, bit2 `potControlsThreshold`, bit3
-`audioFiltered` (the RMS values were computed AFTER the HP/LP band-pass).
+`audioFiltered` (the RMS values were computed AFTER the HP/LP band-pass), bit4
+`metricPeak` (the breath detector measures the peak; 0 = RMS, TLV 0x2C), bit5 `adaptive`
+(the breath detector is adaptive; 0 = absolute, TLV 0x2D).
 
 Units:
-- `audioRmsL/R` and `audioThreshold` are RMS values in 24-bit sample counts. The
+- `audioRmsL/R` are RMS values in 24-bit sample counts. The
   INMP441 data arrives on a 32-bit I2S frame and is shifted (`sample >> 8`), so the
   full-scale amplitude is 2^23 = 8388608. dBFS (AES17, 0 dBFS = full-scale sine):
   `dBFS = 20*log10(rms*sqrt(2)/2^23)`. Estimated sound pressure: `SPL ≈ dBFS + 120`
   (INMP441 sensitivity −26 dBFS @ 94 dB SPL, 1 kHz). **This scale assumes the
   32-bit I2S configuration with `>>8`; a 16-bit I2S configuration would change it.**
+- `audioThreshold` is the breath detector's **effective trigger level**, in 24-bit
+  counts of the **active metric** (bit 4). Absolute detector: the line itself.
+  Adaptive detector (bit 5): the slow baseline plus the threshold, so it follows the
+  room noise. To draw it in dBFS use the formula of the metric bit 4 names: RMS
+  `dBFS = 20*log10(v*sqrt(2)/2^23)`, peak `dBFS = 20*log10(v/2^23)`. The threshold itself
+  is configured in dBFS (potentiometer, or TLV 0x2B when 0x14 = 0); the firmware converts
+  it to counts of the active metric.
 - `potRaw` is the EMA-filtered 12-bit ADC reading (0..4095) of the threshold
   potentiometer; percent of travel = potRaw / 4095 × 100.
 - IMU acceleration (ImuPacket) is in mg (MPU-9250 or ICM-20948, per TLV 0x34; the device
@@ -433,11 +451,10 @@ TLV register and are persisted under their own NVS keys.
 | 0x0E | u8 | 0 | quatSmoothMode — 0=off, 1=fixed slerp (uses 0x03), 2=1-euro filter (uses 0x0F/0x1C) |
 | 0x0F | u16 | 100 | oneEuroFcMinX100 — 1-euro cut-off at rest, Hz ×100 (1–5000) |
 | 0x10 | u8 | 1 | audioEnabled |
-| 0x11 | u16 | 250 | audioFastAlphaX1000 |
-| 0x12 | u16 | 995 | audioSlowAlphaX1000 |
-| 0x13 | u16 | 300 | debounceMs |
-| 0x14 | u8 | 1 | potControlsThreshold |
-| 0x15 | u32 | 100000 | thresholdFixed (used when 0x14=0) |
+| 0x11 | u16 | 250 | audioFastAlphaX1000 — fast envelope weight; **adaptive detector only** (0x2D = 1) |
+| 0x12 | u16 | 995 | audioSlowAlphaX1000 — slow baseline weight; **adaptive detector only** (0x2D = 1) |
+| 0x13 | u16 | 300 | debounceMs — minimum time between two breath fires (both detectors) |
+| 0x14 | u8 | 1 | potControlsThreshold — breath threshold source: 1 = potentiometer (ADC 0…4095 → −60…0 dBFS, linear, 0.5 dB hysteresis), 0 = fixed value 0x2B |
 | 0x16 | u8 | 1 | audioBpfEnabled — breath band-pass (HP then LP) before the RMS/peak detector |
 | 0x17 | u16 | 10 | audioHpHz (1–7000) |
 | 0x18 | u16 | 500 | audioHpQX100 (10–2000; 500 = Q 5.00. Q > 0.707 peaks ~20·log10(Q) dB at the cutoff) |
@@ -457,6 +474,10 @@ TLV register and are persisted under their own NVS keys.
 | 0x28 | u16 | 1000 | co2EmaAlphaX1000 — EMA over accepted readings (1000 = off) |
 | 0x29 | u16 | 1200 | co2TriggerPpm — level at which the Co2Packet `trigger` flag rises (400–10000) |
 | 0x2A | u16 | 50 | co2TriggerHystPpm — the flag falls at or below `co2TriggerPpm − this` (0–2000) |
+| 0x2B | u16 | 3550 | breathThresholdNegDbX100 — fixed breath threshold, stored unsigned as −dBFS × 100 (0–9000; 3550 = −35.5 dBFS), in the scale of the active metric (0x2C). Used when 0x14 = 0. Absolute detector: the line; adaptive: how far the sound must rise above the slow baseline |
+| 0x2C | u8 | 0 | breathMetric — level the detector measures: 0 = RMS, 1 = peak (0–1) |
+| 0x2D | u8 | 0 | breathDetector — 0 = absolute (every 5 ms block, fires when **either** microphone passes the line), 1 = adaptive (every 3rd block, fast envelope − slow baseline of the louder microphone) (0–1) |
+| 0x2E | u8 | 3 | breathRearmDb — the detector re-arms once the level falls below `threshold × 10^(−this/20)`, whole dB (0–20) |
 | 0x30 | u8 | 2 | soundLedPin (valid output GPIOs only; 6–11 (flash) and nonexistent pins rejected) |
 | 0x31 | u8 | 4 | co2LedPin (same validation as 0x30) |
 | 0x32 | u16 | 2000 | co2AlertPpm |
@@ -482,7 +503,7 @@ The magnetometer calibration (0x1E) is the only multi-value register: writes mus
 exactly 24 bytes, and a record whose soft-iron **diagonal** contains a zero is rejected
 (it would silently zero the magnetometer and make Quat9 unusable).
 
-A full config read is now ~240 bytes (239 of serialized registers plus the 3-byte
+A full config read is now ~250 bytes (246 of serialized registers plus the 3-byte
 read-only `0x35`), so a central that cannot do a long attribute read
 will truncate it; Web Bluetooth and NimBLE handle this transparently.
 
@@ -491,8 +512,12 @@ whose resulting configuration puts both LED functions on the same GPIO is reject
 atomically (one pin = one function). Reserved ids, never to be reused: 0x21 (was
 co2ChecksumVariant) and 0x27 (was co2Protocol) — both removed when the SC8-CO2-5K
 datasheet fixed the frame format; 0x33 (was statusLedPin; removed with the legacy
-LED command). `0x35` is a read-only status register, not configuration: it has no NVS key
-and no write path.
+LED command); 0x15 (was thresholdFixed, a u32 in RMS counts over the adaptive baseline;
+replaced by the dBFS threshold 0x2B — this is the TLV id, not the command opcode 0x15).
+Like any unknown id, a write that contains one of them is rejected whole, and the lenient
+NVS load skips it; a 0x15 value saved by older firmware is **not** converted, 0x2B starts
+at its default. `0x35` is a read-only status register, not configuration: it has no NVS
+key and no write path.
 
 Two more cross-field rules apply to the **resulting** state of a write, exactly like
 `audioLpHz > audioHpHz`: `navStopDegS` (0x67) < `navStartDegS` (0x66), and
@@ -545,6 +570,13 @@ rms=(0.00, −20.00) dBFS, peak=(0.00, −6.02) dBFS (half-dB bytes 240, 200, 24
 02 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 E8 03 0C FE 97 00 0B F0 C8 F0 E4
 ```
 
+ImuPacket (version 2) with the breath bit: the same packet with flags=0b11011
+(quatValid+nineAxis+audioValid+breath)
+
+```
+02 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 E8 03 0C FE 97 00 1B F0 C8 F0 E4
+```
+
 Co2Packet: seq=258, timestampMs=0x0A0B0C0D, ppm=1000, flags=0b101 (valid+virtualActive), ageS=7
 
 ```
@@ -556,6 +588,14 @@ potRaw=2048, flags=0b111
 
 ```
 01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 07
+```
+
+SensorsPacket with the breath bits: the same fields with flags=0b110111
+(audioOk+audioEnabled+potControlsThreshold+metricPeak+adaptive; threshold=100000 is then
+peak counts)
+
+```
+01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 37
 ```
 
 DiagPacket: seq=1, uptimeS=0x00010203, imuHzX10=500, notifyHzX10=500, fifoOverflows=1,
