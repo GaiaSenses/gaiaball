@@ -510,3 +510,7 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
 .cfg-pot { color: var(--muted); font-family: 'IBM Plex Mono', monospace; font-size: 0.82rem; }
 .cfg-sens { display: inline-flex; align-items: center; gap: 8px; }
 .cfg-field input:disabled { opacity: 0.55; }
+
+.chart-window { display: flex; align-items: center; gap: 6px; margin: 8px 0; font-size: 0.8rem; color: var(--muted); }
+.chart-window-btn { background: var(--raised); color: inherit; border: 1px solid transparent; border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; }
+.chart-window-btn[aria-pressed="true"] { border-color: currentColor; color: var(--text, inherit); font-weight: 600; }

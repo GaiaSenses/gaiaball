@@ -15,7 +15,7 @@ import { decorateInfo } from './panels/info.ts';
 import { initTheme, onThemeChange, resolvedTheme, toggleTheme } from './theme.ts';
 import { OrientationScene } from './viz/orientation-scene.ts';
 import { VIEW_PRESETS, type ViewId } from './viz/view-presets.ts';
-import type { AudioChunkSample, Co2Sample, ImuSample, NavSample, SensorsSample } from './protocol/packets.ts';
+import { AUDIO_FULL_SCALE, type AudioChunkSample, type Co2Sample, type ImuSample, type NavSample, type SensorsSample } from './protocol/packets.ts';
 
 initTheme();
 
@@ -201,7 +201,7 @@ if (new URLSearchParams(location.search).get('demo')) {
       // Microphone envelope, as the firmware publishes it on every orientation packet:
       // a breath every ~6 s on top of a -58 dBFS room floor, peak ~8 dB above the RMS.
       audioValid: true,
-      breath: false,
+      breath: t % 6 < 0.1, // latched flag: a few packets at the start of each blow
       audioRmsDbfs: [
         -58 + (Math.sin(t * 1.05) > 0.85 ? 30 : 0) + 2 * Math.sin(t * 7),
         -60 + (Math.sin(t * 1.05) > 0.85 ? 28 : 0) + 2 * Math.sin(t * 6.3),
@@ -217,19 +217,23 @@ if (new URLSearchParams(location.search).get('demo')) {
   setInterval(() => {
     const t = performance.now() / 1000;
     const rms = (base: number, f: number) => base * (1 + 0.6 * Math.sin(t * f)) + (Math.sin(t * 31) > 0.95 ? 400000 : 0);
+    // The active metric alternates every 20 s so both threshold rows can be seen;
+    // -35.5 dBFS expressed in counts of the metric in use.
+    const demoPeak = Math.floor(t / 20) % 2 === 1;
+    const demoThreshold = Math.round(AUDIO_FULL_SCALE * 10 ** (-35.5 / 20) / (demoPeak ? 1 : Math.SQRT2));
     const detail: SensorsSample = {
       seq: sensSeq++ & 0xffff,
       tMs: Math.round(t * 1000),
       rmsL: Math.max(0, Math.round(rms(22000, 0.8))),
       rmsR: Math.max(0, Math.round(rms(18000, 1.1))),
-      threshold: 100000,
+      threshold: demoThreshold,
       potRaw: Math.round(2048 + 1800 * Math.sin(t * 0.15)),
-      flags: 0b1111,
+      flags: 0b1111 | (demoPeak ? 0b10000 : 0),
       audioOk: true,
       audioEnabled: true,
       potControls: true,
       audioFiltered: true,
-      metricPeak: false,
+      metricPeak: demoPeak,
       adaptive: false,
     };
     emit('sensors', detail);

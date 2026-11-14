@@ -5,6 +5,7 @@ import { resolvedTheme } from '../theme.ts';
 import { TLV } from '../protocol/tlv.ts';
 import { imuStatusText } from './config-panel.ts';
 import { decorateInfo } from './info.ts';
+import { sparkRange } from './chart-model.ts';
 import { RingBuffer, drawSparkline } from './sparkline.ts';
 
 const POINTS = 60;
@@ -61,6 +62,8 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
   let diag: DiagSample | null = null;
   let co2: Co2Sample | null = null;
   let nav: NavSample | null = null;
+  /** Configured notify rate (TLV 0x02) from the latest 'config' event; null until one arrives (rate sparkline auto-scales). */
+  let configuredHz: number | null = null;
   /** Connected to a ball whose firmware has no navigation characteristic. */
   let navMissing = false;
 
@@ -71,6 +74,8 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
   // The configuration is read on connect and after every Aplicar/Ler; 0x35 has no Field, so it is read here.
   client.addEventListener('config', (ev) => {
     const regs = (ev as CustomEvent<Map<number, DataView>>).detail;
+    const hzReg = regs.get(TLV.imuNotifyHz);
+    if (hzReg && hzReg.byteLength === 1 && hzReg.getUint8(0) > 0) configuredHz = hzReg.getUint8(0);
     const det = regs.get(TLV.imuDetected), sel = regs.get(TLV.imuChip);
     $('d-imustate').textContent = sel && sel.byteLength === 1
       ? imuStatusText(det && det.byteLength === 1 ? det.getUint8(0) : undefined, sel.getUint8(0))
@@ -95,8 +100,8 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
     const age = stats.ageMs();
     $('m-age').textContent = Number.isFinite(age) ? `${Math.round(age)} ms` : '–';
     const spark = SPARK[resolvedTheme()];
-    drawSparkline(spHz, hzBuf.values(), spark.hz);
-    drawSparkline(spLoss, lossBuf.values(), spark.loss);
+    drawSparkline(spHz, hzBuf.values(), spark.hz, configuredHz ? sparkRange('rate', configuredHz) : undefined);
+    drawSparkline(spLoss, lossBuf.values(), spark.loss, sparkRange('loss', configuredHz ?? 0));
     if (diag) {
       $('d-imuhz').textContent = `${(diag.imuHzX10 / 10).toFixed(1)} Hz`;
       $('d-nothz').textContent = `${(diag.notifyHzX10 / 10).toFixed(1)} Hz`;
