@@ -1,4 +1,4 @@
-# Gaiaball — aceleração em g, ponte para o Pd pela config-app, detector de sopro, gráficos e modo palco
+# Gaiaball — aceleração em mg, ponte para o Pd pela config-app, detector de sopro, gráficos e modo palco
 
 Data: 2026-11-14 · Repo: `gaiaball` · Branch: `feat/pd-via-config-app`, criada a partir de
 `feat/navegacao-globo` (PR #3), porque a ponte repassa o NavPacket que só existe lá. O PR desta
@@ -17,10 +17,11 @@ num terminal). O objetivo é que a pessoa:
 
 Junto vêm as mudanças que o uso no palco pede:
 
-- **Aceleração em g, pronta para uso.** Hoje a bola manda a aceleração em contagens brutas
-  do sensor (8192 = 1 g) e cada consumidor converte (ou não: o site repassa contagens aos
-  patches, embora o vocabulário diga "g"). A bola passa a mandar g, e todos os consumidores
-  leem o número direto.
+- **Aceleração em mg (mili-g), pronta para uso.** Hoje a bola manda a aceleração em
+  contagens brutas do sensor (8192 = 1 g) e cada consumidor converte (ou não: o site repassa
+  contagens aos patches, embora o vocabulário diga "g"). A bola passa a mandar números
+  inteiros em mg (1 g = 1000 mg), a unidade das fichas técnicas de acelerômetros, e todos os
+  consumidores usam o número direto.
 
 - **Detector de sopro escolhível: absoluto ou adaptativo.** O detector atual é adaptativo
   (dispara quando o som sobe acima de uma linha de base do ruído ambiente) e por isso a
@@ -50,9 +51,9 @@ Junto vêm as mudanças que o uso no palco pede:
   gráfico novo com o pulso de detecção vindo da própria bola.
 - Gráficos de linha da config-app com a faixa do eixo Y certa desde o início, janela de 5, 8
   ou 12 s e todos os pacotes recebidos.
-- A bola emite a aceleração em g pelo BLE; protocolo, config-app, site, `[gaiaball]` e
-  patches aceitam esse formato. `gaia.acc.*` e `gaia.sensors` chegam aos patches em g, a
-  unidade que o vocabulário do site já declara.
+- A bola emite a aceleração em mg (inteiros de 16 bits) pelo BLE; protocolo, config-app,
+  site, `[gaiaball]`, patches e documentação usam mg. `gaia.acc.*` e `gaia.sensors` chegam
+  aos patches em mg.
 - Modo palco e modo ajuste, com a diferença explicada na tela.
 
 ## Não objetivos
@@ -67,8 +68,8 @@ Junto vêm as mudanças que o uso no palco pede:
   follow-up, ver "Follow-ups").
 - Mudanças incompatíveis no protocolo além da aceleração: só o pacote de movimento muda de
   formato (versão 2); todo o resto é aditivo dentro da versão 1.
-- Aproveitar a aceleração em float para mudar o fundo de escala do acelerômetro (±4 g). Isso
-  passa a ser possível sem mexer no protocolo, mas não entra agora.
+- Mudar o fundo de escala do acelerômetro (±4 g). O `int16` em mg comporta até ±32,767 g,
+  então isso passa a ser possível sem mexer no protocolo, mas não entra agora.
 
 ## Anti-objetivos
 
@@ -102,8 +103,8 @@ Junto vêm as mudanças que o uso no palco pede:
   contagens brutas do acelerômetro (8192 = 1 g)**, embora `lib/gaia-vocabulary.json` declare
   "g". O `paraisoGaia43` é o único patch que usa esses canais e divide por 8000 em vários
   pontos (11 objetos `[/ 8000]` em `patches/paraisoGaia43/main.pd`) e usa o `gaia.acc.z` em
-  contagens como "gravidade" (`[s gravidade_$0]`). Decisão do usuário: a bola emite g, e
-  protocolo, site e patches mudam para aceitar.
+  contagens como "gravidade" (`[s gravidade_$0]`). Decisão do usuário: a bola emite mg
+  (inteiros), e protocolo, site, patches e documentação passam a usar mg.
 - **Euler do site:** `quatToEulerLegacy` em `Gaiasenses-web/app/[locale]/map3/ble-decode.ts`
   (troca de eixos legada: `qw=w, qx=y, qy=x, qz=-z`). O `[gaiaball]` usa exatamente a mesma
   conversão para `gaia.sensors`.
@@ -135,7 +136,7 @@ possa ser acrescentado depois sem mudar nenhum patch.
 
 ## Ordem de entrega
 
-0. Parte 0: aceleração em g (ImuPacket versão 2) no firmware, na config-app e no site.
+0. Parte 0: aceleração em mg (ImuPacket versão 2) no firmware, na config-app e no site.
    Vem primeiro porque todo o resto decodifica esse pacote.
 1. Parte 1: detector de sopro e gráficos (firmware + config-app). Produz o bit de sopro que
    a Parte 2 publica no Pd.
@@ -148,13 +149,13 @@ protocolo.
 
 ---
 
-## Parte 0 — Aceleração em g (ImuPacket versão 2)
+## Parte 0 — Aceleração em mg (ImuPacket versão 2)
 
 ### Formato
 
-O pacote de movimento troca as três acelerações `int16` em contagens por três `float32`
-(IEEE 754, little-endian) em g. A ordem dos campos se mantém; o pacote passa de 31 para
-**37 bytes**.
+O pacote de movimento troca o **significado** dos três `int16` de aceleração: de contagens do
+sensor (8192 = 1 g) para **mg** (1 g = 1000 mg). Tamanho, ordem e posição dos campos ficam
+iguais: o pacote continua com **31 bytes**.
 
 | Offset | Bytes | Tipo | Campo |
 |---|---|---|---|
@@ -163,31 +164,27 @@ O pacote de movimento troca as três acelerações `int16` em contagens por trê
 | 2 | 2 | u16 | `seq` |
 | 4 | 4 | u32 | `timestampUs` |
 | 8 | 8 | 4 × i16 | quaternion Q14 (`w x y z`) |
-| 16 | 12 | 3 × f32 | **aceleração X, Y, Z em g** |
-| 28 | 1 | u8 | `flags` (bit 4 = sopro, da Parte 1) |
-| 29 | 4 | 2 × i16 | RMS dos microfones (E, D), dBFS ×100 |
-| 33 | 4 | 2 × i16 | pico dos microfones (E, D), dBFS ×100 |
+| 16 | 6 | 3 × i16 | **aceleração X, Y, Z em mg** |
+| 22 | 1 | u8 | `flags` (bit 4 = sopro, da Parte 1) |
+| 23 | 4 | 2 × i16 | RMS dos microfones (E, D), dBFS ×100 |
+| 27 | 4 | 2 × i16 | pico dos microfones (E, D), dBFS ×100 |
 
 - **Versão por pacote, como manda a regra 8 do guia** ("mudança incompatível = versão nova;
-  os decodificadores v1 descartam esses pacotes"): só o pacote de movimento passa a levar
-  `version = 2`. CO₂, navegação, diagnóstico e os demais continuam na versão 1.
-- **Conversão no firmware:** contagens ÷ 8192, **arredondado a 4 casas decimais**
-  (0,0001 g), só no momento de montar o pacote, depois dos filtros que já existem (pico e
-  EMA); os filtros continuam trabalhando com o valor sem arredondar.
-  - Por que 4 casas não perde nada: o menor passo do sensor é 1/8192 = 0,000122 g, maior que
-    0,0001 g, então duas leituras diferentes nunca viram o mesmo número.
-  - O arredondamento é só para leitura (pedido do usuário). Um `float32` não guarda 0,1234
-    exatamente; guarda o vizinho mais próximo, que o Pd e o `printf("%g")` mostram como
-    `0.1234`.
-  - **Os decodificadores em JavaScript arredondam de novo a 4 casas depois do
-    `getFloat32`** (config-app, site e o exemplo do guia). Sem isso, o JavaScript converte o
-    `float32` para `double` e mostra `0.12340000271797180`, e o arredondamento do firmware não
-    apareceria para quem lê no site ou numa sketch p5. O exemplo em Python faz o mesmo com
-    `round(x, 4)`; o de C imprime com `%.4f`.
-- **MTU:** o pacote de movimento passa a exigir MTU ≥ 40 (era 34).
-- **Custo no rádio** (modelo do README do firmware): `(37 + 17) × 8 + 380` = 812 µs por
-  pacote, +48 µs; a 50 Hz, +2,4 ms de ar por segundo (o total padrão vai de 77,7 para
-  80,1 ms/s, 8,0 % do tempo).
+  os decodificadores v1 descartam esses pacotes"): mesmo sem mudar de tamanho, os bytes 16–21
+  mudam de significado, e um decodificador antigo leria mg como contagens (8,192 vezes menor).
+  Só o pacote de movimento passa a levar `version = 2`; CO₂, navegação, diagnóstico e os
+  demais continuam na versão 1.
+- **Conversão no firmware:** `lroundf(contagens × 1000 / 8192)`, só no momento de montar o
+  pacote, depois dos filtros que já existem (pico e EMA); os filtros continuam trabalhando
+  com as contagens.
+  - **Resolução de 1 mg.** O sensor mede em passos de 0,122 mg, mas o ruído próprio do
+    acelerômetro (pelas fichas técnicas dos dois chips) fica em torno de 1 a 2 mg; o erro de
+    arredondar para 1 mg (≈0,3 mg) fica abaixo dele. 1 mg ≈ 0,06° de inclinação.
+  - **Faixa:** ±4 g viram ±4000 mg; o `int16` comporta até ±32 767 mg.
+  - Números inteiros saem limpos em qualquer linguagem (sem o problema de mostrar
+    `0.12340000271…` de um `float32`).
+- **Sem custo no rádio:** o tamanho não muda; MTU continua ≥ 34 e o orçamento do README do
+  firmware continua valendo.
 - **Golden novo** do pacote de movimento em `test_protocol.cpp`, copiado à mão para
   `protocol.md`, `protocolo-ble.md`, `packets.test.ts` e o teste do site, como hoje.
 
@@ -198,44 +195,46 @@ O pacote de movimento troca as três acelerações `int16` em contagens por trê
   versão 1 é descartado. Uma bola com firmware antigo já é reconhecida pela falta da
   característica `…0006`, e a mensagem "atualize o firmware da bola" passa a cobrir também
   este caso.
-- **config-app:** `IMU_PACKET_SIZE` 37 e versão 2; a aceleração é lida em g direto (sai o
-  `ACCEL_LSB_PER_G` dos gráficos); o gerador do `?demo=1` passa a emitir a versão 2.
+- **Ninguém converte para g:** a aceleração é publicada e mostrada em mg em toda a cadeia.
+- **config-app:** decodificador com versão 2 e aceleração em mg; sai o `ACCEL_LSB_PER_G`; o
+  gráfico "Aceleração" passa a "Aceleração (mg)" (faixa na Parte 1); o gerador do `?demo=1`
+  emite a versão 2.
 - **Site (`Gaiasenses-web`):**
-  - `app/[locale]/map3/ble-decode.ts`: pacote de movimento versão 2, tamanho mínimo 37,
-    aceleração `float32`, envelope dos microfones nos offsets 29–36; testes com o golden novo.
-  - `gaia.acc.*` e os três valores de aceleração de `gaia.sensors` passam a chegar aos patches
-    em g, sem conversão adicional. `lib/gaiaball-live.ts` (sketches p5) também expõe g.
-  - `lib/gaia-vocabulary.json`: `gaia.acc.*` com faixa `[-4, 4]` g (era `[-16, 16]`);
-    `gaia.sensors` com "aceX aceY aceZ em g" na ajuda.
-  - `patches/paraisoGaia43/patch.json` (editado pelo Gabriel, junto com o adaptador abaixo,
-    para o arquivo ter um único editor): `tuning.accEpsilon` de `0.05` para `0.0001`. Em
-    contagens, 0,05 não filtrava nada (a menor mudança é 1 contagem); 0,0001 g é menor que
-    1 contagem (0,000122 g) e preserva esse comportamento. O padrão do site recebe a mesma
-    conversão (`DEFAULT_TUNING.accEpsilon` em `scripts/gen-patch-registry.mjs`, 0.05 →
-    0.0001, regenerando `pd4web-patches.generated.ts`), e o máximo do controle de ajuste no
-    registro de patches (`ACC_EPSILON_MAX = 100`, em contagens, em
-    `app/[locale]/map3/pd4web-patch-log.tsx`) passa a 1 g.
-  - README, `docs/musico/README.md` e `vocabulario.md`: unidade g.
-- **`paraisoGaia43` passa a trabalhar em g** (decisão do usuário). Quem faz é o Gabriel, na
-  mesma edição em que já está adaptando o patch (um único editor no arquivo, sem conflito); o
-  PR do site não é publicado antes disso. O que muda, rastreado no `main.pd`:
-  - os 11 `[/ 8000]` aplicados à aceleração saem, e o valor em g é ligado direto. O patch
-    usava 8000 como "1 g"; o certo é 8192. A diferença é de 2,4 %, o equivalente a inclinar a
-    bola cerca de 1° a mais ou a menos;
-  - outras constantes em contagens viram g, com o mesmo efeito de hoje: `[> 6000]` e
-    `[< -6000]` (gatilhos ligados ao `aceX`) → `[> 0.73]` e `[< -0.73]`; `[/ 7000]` (gravidade
-    → `vline~` → `pow~ 8`) → `[* 1.17]`; `[/ 11000]` (gravidade → `abs` → `pow 0.7`) →
-    `[* 0.745]`; `[+ 11000]` seguido de `[/ 22000]` → `[+ 1.34]` e `[/ 2.69]`;
-  - o `[1 6000(` ligado à gravidade não muda (ali 6000 é tempo, em ms).
-- **`[gaiaball]`** (Parte 2): lê os `float32` direto.
+  - `app/[locale]/map3/ble-decode.ts`: pacote de movimento versão 2, aceleração em mg (os
+    offsets não mudam); testes com o golden novo.
+  - `gaia.acc.*` e os três valores de aceleração de `gaia.sensors` chegam aos patches em mg.
+    `lib/gaiaball-live.ts` (sketches p5) e o cartão de informações do mapa (`accX`/`accY`/
+    `accZ` em `gaiasenses-map.tsx`) também mostram mg.
+  - `lib/gaia-vocabulary.json`: `gaia.acc.*` com unidade `mg` e faixa `[-4000, 4000]` (era
+    "g" e `[-16, 16]`); `gaia.sensors` com "aceX aceY aceZ em mg" na ajuda.
+  - **Zona morta (`accEpsilon`):** os valores em mg são inteiros, então a menor mudança é
+    1 mg, e o padrão `0.05` continua deixando passar toda mudança, exatamente como hoje com
+    contagens. O padrão (`DEFAULT_TUNING` em `scripts/gen-patch-registry.mjs`) e o do
+    `paraisoGaia43` ficam como estão. O máximo do controle de ajuste no registro de patches
+    (`ACC_EPSILON_MAX = 100`, em `app/[locale]/map3/pd4web-patch-log.tsx`) passa a `1000`
+    (1 g em mg). A documentação explica a zona morta em mg.
+  - README, `docs/musico/README.md` e `vocabulario.md`: unidade mg.
+- **`paraisoGaia43` passa a trabalhar em mg** (decisão do usuário). Quem faz é o Gabriel, na
+  mesma edição em que já está adaptando o patch (um único editor no arquivo, sem conflito);
+  o PR do site não é publicado antes disso. O que muda, rastreado no `main.pd`:
+  - os 11 `[/ 8000]` aplicados à aceleração viram `[/ 1000]`. O patch usava 8000 contagens
+    como "1 g"; o certo era 8192, e em mg 1 g é exatamente 1000. A diferença é de 2,4 %, o
+    equivalente a inclinar a bola cerca de 1° a mais ou a menos;
+  - outras constantes em contagens viram mg, com o mesmo efeito de hoje (contagens ÷ 8,192):
+    `[> 6000]` e `[< -6000]` (gatilhos ligados ao `aceX`) → `[> 732]` e `[< -732]`;
+    `[/ 7000]` (gravidade → `vline~` → `pow~ 8`) → `[/ 854.5]`; `[/ 11000]` (gravidade →
+    `abs` → `pow 0.7`) → `[/ 1343]`; `[+ 11000]` seguido de `[/ 22000]` → `[+ 1343]` e
+    `[/ 2686]`;
+  - o `[1 6000(` ligado à gravidade não muda (ali 6000 é tempo, em ms);
+  - o `accEpsilon` do `patch.json` pode ficar em `0.05`.
+- **`[gaiaball]`** (Parte 2): publica a aceleração em mg, como chega.
 
 ### Testes da Parte 0
 
-- Firmware: o golden novo; `sizeof(ImuPacket) == 37`; a conversão com arredondamento
-  (contagens conhecidas → g em 4 casas, incluindo ±4 g, 0 e valores que arredondam para cima
-  e para baixo); contagens vizinhas continuam dando números diferentes.
+- Firmware: o golden novo; `sizeof(ImuPacket) == 31`; a conversão (contagens conhecidas → mg,
+  incluindo ±32768 contagens → ±4000 mg, 0, e valores que arredondam para cima e para baixo).
 - config-app e site: decodificação do golden; recusa do pacote de movimento versão 1 e de
-  pacotes curtos; envelope dos microfones nos offsets novos.
+  pacotes curtos; o envelope dos microfones continua nos offsets 23–30.
 - Guia: os exemplos em JavaScript, Python e C rodam contra o golden novo, como na primeira
   versão do guia.
 
@@ -384,7 +383,7 @@ O pacote de movimento troca as três acelerações `int16` em contagens por trê
   | Gráfico | Faixa | Motivo |
   |---|---|---|
   | Orientação | −180 a 180 ° | faixa dos ângulos de Euler |
-  | Aceleração | −4 a 4 g | fundo de escala do acelerômetro, fixado pelo protocolo |
+  | Aceleração | −4000 a 4000 mg | fundo de escala do acelerômetro (±4 g) |
   | Mic esquerdo, Mic direito (RMS) | −120 a 0 dBFS | piso do protocolo até o fundo de escala |
   | Pico por canal | −120 a 0 dBFS | idem |
   | CO₂ | 0 a 5000 ppm, ou até o pico virtual configurado (TLV `0x23`) se ele for maior | faixa do sensor SC8-CO2-5K; o pulso virtual não pode sair cortado |
@@ -466,9 +465,9 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
   |---|---|---|---|
   | `gaia.lat`, `gaia.lon` | Nav (`valid`=1) | graus | sim |
   | `gaia.speed` | Nav | °/s | sim |
-  | `gaia.acc.x`, `.y`, `.z` | IMU | g | sim (o site passa a mandar g, Parte 0) |
+  | `gaia.acc.x`, `.y`, `.z` | IMU | mg (inteiros) | sim (o site passa a mandar mg, Parte 0) |
   | `gaia.co2` | CO₂ | ppm | sim |
-  | `gaia.sensors` | IMU + último CO₂ | lista `roll pitch yaw accX accY accZ co2`, Euler por `quatToEulerLegacy`, aceleração em g | sim |
+  | `gaia.sensors` | IMU + último CO₂ | lista `roll pitch yaw accX accY accZ co2`, Euler por `quatToEulerLegacy`, aceleração em mg | sim |
   | `gaia.bearing` | Nav | graus (convenção do Mapbox) | novo |
   | `gaia.settled` | Nav bit 1 | 0/1 | novo |
   | `gaia.quat` | IMU | lista `w x y z` | novo |
@@ -576,13 +575,13 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
 ## Documentação a atualizar
 
 - `firmware/docs/protocol.md` e `docs/protocolo-ble.md`: o pacote de movimento versão 2
-  (mapa de bytes, MTU ≥ 40, exemplos em JavaScript, Python e C, a seção de versionamento com
-  este primeiro caso real de versão nova), os dois bits, o novo sentido do
+  (aceleração em mg no mapa de bytes, exemplos em JavaScript, Python e C, a seção de
+  versionamento com este primeiro caso real de versão nova), os dois bits, o novo sentido do
   `audioThreshold`, os TLVs novos e o aposentado, os goldens. A cópia
   `Gaiasenses-web/docs/gaiaball-protocolo-ble.md` continua idêntica (mesmo sha256), no PR do
   site.
-- `firmware/README.md`: a tabela de orçamento do rádio (31 → 37 B), o detector absoluto e a
-  referência rápida de TLVs; o comentário que diz que o ±4 g é "fixado pelo protocolo".
+- `firmware/README.md`: a aceleração em mg, o detector absoluto e a referência rápida de
+  TLVs; o comentário que diz que o ±4 g é "fixado pelo protocolo" (com mg, não é mais).
 - `config-app/README.md`: o envio ao Pd, o modo palco, a URL publicada.
 - `pd-gaiaball/README.md`: reescrito para leigos (instalar pelo Deken, abrir a config-app,
   criar `[gaiaball]`, liberar o Chrome, tabela de canais).
@@ -609,7 +608,8 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
 - Rearme configurável em dB.
 - Eixo Y de todos os gráficos de linha com a faixa certa desde o início, nas unidades
   tratadas; janela de tempo de 5, 8 ou 12 s.
-- A bola emite a aceleração em g; protocolo, site e patches mudam para aceitar.
+- A bola emite a aceleração em mg, inteiros de 16 bits; protocolo, site, patches, gráficos
+  da config-app e documentação usam mg.
 - Rearme em dB inteiros (passo de 1 dB).
 
 ## Decisões minhas (para o usuário conferir)
@@ -642,14 +642,14 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
 21. Faixas do eixo Y da tabela da Parte 1. Valores RMS acima de 0 dBFS (só uma onda quadrada
     de fundo de escala chega a +3 dBFS) ficam cortados no topo.
 22. As minilinhas de Métricas também ganham faixa fixa.
-23. Aceleração em `float32` g, na mesma posição do pacote; versão 2 só no pacote de
-    movimento (regra 8 do guia), os outros continuam na 1.
+23. Aceleração em mg na mesma posição e no mesmo tamanho do pacote; versão 2 só no pacote
+    de movimento (regra 8 do guia), os outros continuam na 1.
 24. Decodificadores aceitam só a versão 2 do pacote de movimento (sem suporte a bolas
     antigas, que já pedem atualização pela falta da `…0006`).
-25. `paraisoGaia43` em g (as constantes em contagens convertidas, os `[/ 8000]` removidos),
-    feito pelo Gabriel na mesma edição; `accEpsilon` de 0.05 para 0.0001.
-26. Os decodificadores em JavaScript arredondam a aceleração a 4 casas depois de ler o
-    `float32`, para o arredondamento do firmware aparecer também no site e nas sketches.
+25. `paraisoGaia43` em mg (`[/ 8000]` → `[/ 1000]` e as outras constantes em contagens
+    convertidas), feito pelo Gabriel na mesma edição; `accEpsilon` continua 0.05.
+26. Zona morta da aceleração: padrão inalterado (0.05 já deixa passar toda mudança de 1 mg);
+    máximo do controle de ajuste do site de 100 para 1000 mg.
 
 ## Deixado ao construtor
 
