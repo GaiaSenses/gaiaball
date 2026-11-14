@@ -1,4 +1,4 @@
-# Gaiaball — ponte para o Pd pela config-app, detector de sopro absoluto e modo palco
+# Gaiaball — ponte para o Pd pela config-app, detector de sopro, gráficos e modo palco
 
 Data: 2026-11-14 · Repo: `gaiaball` · Branch: `feat/pd-via-config-app`, criada a partir de
 `feat/navegacao-globo` (PR #3), porque a ponte repassa o NavPacket que só existe lá. O PR desta
@@ -17,11 +17,15 @@ num terminal). O objetivo é que a pessoa:
 
 Junto vêm duas mudanças que o uso no palco pede:
 
-- **Detector de sopro absoluto.** O detector atual é adaptativo (dispara quando o som sobe
-  acima de uma linha de base do ruído ambiente) e por isso a linha de limiar desenhada nos
-  gráficos engana: numa sala a −30 dBFS o limiar padrão aparece em −35,5 dBFS, mas o
-  disparo só acontece em −26,3 dBFS. O novo detector compara o nível medido com uma linha
-  fixa: o que aparece no gráfico é o que dispara.
+- **Detector de sopro escolhível: absoluto ou adaptativo.** O detector atual é adaptativo
+  (dispara quando o som sobe acima de uma linha de base do ruído ambiente) e por isso a
+  linha de limiar desenhada nos gráficos engana: numa sala a −30 dBFS o limiar padrão
+  aparece em −35,5 dBFS, mas o disparo só acontece em −26,3 dBFS. Entra um detector
+  absoluto, que compara o nível medido com uma linha fixa (o que aparece no gráfico é o que
+  dispara), e o adaptativo continua como opção. Nos dois, a linha do gráfico passa a mostrar
+  o nível real de disparo.
+- **Gráficos honestos e legíveis.** Eixo Y com a faixa certa desde o início, janela de tempo
+  escolhível (5, 8 ou 12 s) e todos os pacotes desenhados, não só um a cada 100 ms.
 - **Modo palco.** A config-app desenha 3D e gráficos na mesma linha de execução do
   JavaScript que recebe o Bluetooth; durante uma apresentação isso só atrasa o repasse ao Pd.
   No modo palco quase tudo é pausado e travado.
@@ -35,9 +39,13 @@ Junto vêm duas mudanças que o uso no palco pede:
 - No Pd, cada canal chega por um nome (`[r gaia.lat]`, `[r gaia.co2]`, …), com o mesmo
   vocabulário e as mesmas unidades que o site GaiaSenses envia aos patches: um patch feito
   no Pd do computador roda sem mudança no site.
-- Sensibilidade do sopro escolhida pelo potenciômetro físico **ou** por um valor em dBFS na
-  UI, medida em **RMS ou pico**, com a linha de limiar honesta nos gráficos e um gráfico
-  novo com o pulso de detecção vindo da própria bola.
+- Detector de sopro **absoluto ou adaptativo**, escolhido na UI com a descrição de cada um;
+  sensibilidade pelo potenciômetro físico **ou** por um valor em dBFS na UI; medida em
+  **RMS ou pico**; rearme configurável em dB; linha de limiar honesta nos gráficos e um
+  gráfico novo com o pulso de detecção vindo da própria bola.
+- Gráficos de linha da config-app com a faixa do eixo Y certa desde o início, janela de 5, 8
+  ou 12 s e todos os pacotes recebidos.
+- `gaia.acc.*` em g, a unidade que o vocabulário do site já declara.
 - Modo palco e modo ajuste, com a diferença explicada na tela.
 
 ## Não objetivos
@@ -79,15 +87,23 @@ Junto vêm duas mudanças que o uso no palco pede:
 - **Firmware:** aceita 2 conexões BLE ao mesmo tempo (site + config-app funcionam juntos).
   Diagnóstico, Sensores e AudioChunk (característica `…0005`) só são enviados se alguém
   assinar essa característica (`App.cpp:307`, `:325`, `:348`).
-- **O site envia `gaia.acc.*` e os três últimos valores de `gaia.sensors` em contagens
-  brutas do acelerômetro (8192 = 1 g)**, embora `lib/gaia-vocabulary.json` diga "g". O
-  `paraisoGaia43` depende disso (divide por 8000). O `[gaiaball]` segue o que o site
-  realmente envia; corrigir o vocabulário é follow-up.
+- **O site envia hoje `gaia.acc.*` e os três valores de aceleração de `gaia.sensors` em
+  contagens brutas do acelerômetro (8192 = 1 g)**, embora `lib/gaia-vocabulary.json` declare
+  "g". O `paraisoGaia43` é o único patch que usa esses canais e divide por 8000 em vários
+  pontos (`patches/paraisoGaia43/main.pd`, linhas 771, 784, 2014, 2111, 2129 e 2135, entre
+  outras). Decisão do usuário: `gaia.acc.*` em g. **Pendente:** `gaia.sensors` e o site (ver
+  "Pendências").
 - **Euler do site:** `quatToEulerLegacy` em `Gaiasenses-web/app/[locale]/map3/ble-decode.ts`
   (troca de eixos legada: `qw=w, qx=y, qy=x, qz=-z`). O `[gaiaball]` usa exatamente a mesma
   conversão para `gaia.sensors`.
 - **Bits livres:** `ImuPacket.flags` usa os bits 0–3; `SensorsPacket.flags` usa 0–3.
-  TLVs livres: `0x2B` e `0x2C` (reservados são só `0x21`, `0x27`, `0x33`, `0x35`).
+  TLVs livres: `0x2B` a `0x2E` (reservados são só `0x21`, `0x27`, `0x33`, `0x35`).
+- **Gráficos hoje** (`config-app/src/panels/sensors-panel.ts`): um relógio de 10 Hz
+  (`TICK_MS = 100`) acrescenta a cada tick só o **último** valor recebido; o histórico é de
+  120 s (`WINDOW_S`) e o eixo X se ajusta a tudo o que chegou. As minilinhas de Métricas
+  (`metrics-panel.ts`) guardam 60 pontos a cada 250 ms (15 s) e se ajustam sozinhas. Nada
+  disso interfere no repasse ao Pd nem no site, a não ser pela ocupação da linha de execução
+  do JavaScript durante o redesenho.
 - **Áudio:** blocos I2S de 80 quadros a 16 kHz (5 ms); janela de 20 ms (4 blocos) com RMS e
   pico por canal (`AudioLevelWindow`); o envelope em dBFS ×100 já viaja no ImuPacket.
   RMS em dBFS segue AES17 (seno de fundo de escala = 0 dBFS); pico em dBFS tem 0 dBFS = uma
@@ -108,7 +124,7 @@ possa ser acrescentado depois sem mudar nenhum patch.
 
 ## Ordem de entrega
 
-1. Parte 1: detector absoluto e UI do sopro (firmware + config-app). Independente das
+1. Parte 1: detector de sopro e gráficos (firmware + config-app). Independente das
    outras; produz o bit de sopro que a Parte 2 publica no Pd.
 2. Parte 2: ponte config-app → `[gaiaball]` (external, CI, Deken, GitHub Pages).
 3. Parte 3: modo palco / modo ajuste (usa o status do Pd da Parte 2).
@@ -118,29 +134,42 @@ atualizada do guia do protocolo.
 
 ---
 
-## Parte 1 — Detector de sopro absoluto
+## Parte 1 — Detector de sopro e gráficos
 
 ### Comportamento (firmware)
 
-- Substitui o `PeakDetector` (adaptativo: envelope rápido − linha de base lenta) por um
-  detector absoluto, numa classe pura nova em `firmware/Gaiaball/src/logic/` com testes
-  nativos. O `PeakDetector` e seus testes saem.
-- Entrada a cada bloco de áudio (5 ms; o `kDetectorBlocks = 3` sai): o nível da janela de
-  20 ms de **cada microfone separadamente**, na medida escolhida (RMS ou pico), e o limiar.
-- **Disparo:** quando o nível de **qualquer um** dos dois microfones passa do limiar (é o
-  mesmo que "o maior dos dois passa do limiar"), o detector está armado e o debounce
-  (`debounceMs`, TLV `0x13`, padrão 300 ms) já passou.
-- **Rearme:** quando os dois microfones caem **3 dB abaixo** do limiar (×0,708 em amplitude;
-  equivale ao 0,7× de hoje). Um sopro longo gera um disparo só.
-- **Estado "sopro reconhecido":** vale 1 do disparo até o rearme.
-- O disparo continua acionando o que já aciona hoje: o pulso de CO₂ virtual e o flash do
-  LED de som.
-- Com `audioEnabled = 0` nada dispara e o estado fica 0.
-- **Por que funciona no gráfico:** a curva por microfone que a config-app desenha (RMS ou
-  pico, do ImuPacket) vem da mesma janela de 20 ms que o detector usa. Para a medida de pico
-  a correspondência é exata (a janela do pacote cobre todas as amostras). Para RMS, o
-  detector avalia a cada 5 ms e o pacote mostra a cada 20 ms; um cruzamento muito curto pode
-  disparar sem aparecer na curva, mas aparece no gráfico de pulso (ver "Bit de sopro").
+- **Dois detectores, escolhidos por configuração** (TLV `0x2D`). Os dois recebem, por
+  microfone, o nível da janela de 20 ms na medida escolhida (RMS ou pico). Os dois acionam o
+  que já é acionado hoje: o pulso de CO₂ virtual e o flash do LED de som. Com
+  `audioEnabled = 0` nenhum dispara e o estado fica 0.
+- **Absoluto (padrão):** classe pura nova em `firmware/Gaiaball/src/logic/`, com testes
+  nativos.
+  - Avaliado a cada bloco de áudio (5 ms).
+  - **Disparo:** o nível de **qualquer um** dos dois microfones passa do limiar (o mesmo que
+    "o maior dos dois passa"), o detector está armado e o debounce (`debounceMs`, TLV
+    `0x13`, padrão 300 ms) já passou.
+  - **Rearme:** os dois microfones caem abaixo do limiar menos o rearme configurado (TLV
+    `0x2E`, padrão 3,0 dB). Um sopro longo gera um disparo só.
+- **Adaptativo:** o `PeakDetector` de hoje, com o mesmo algoritmo (envelope rápido − linha de
+  base lenta, alfas `0x11`/`0x12`, avaliado a cada 3 blocos, sobre o maior dos dois
+  microfones). Muda só:
+  - a entrada pode ser RMS ou pico (hoje é só RMS);
+  - o rearme deixa de ser o 0,7× fixo e passa a ser o mesmo parâmetro em dB (3,0 dB =
+    ×0,708, praticamente o comportamento de hoje);
+  - o limiar vem do mesmo campo em dBFS, convertido para contagens: é o quanto o som precisa
+    subir acima da linha de base.
+- **Estado "sopro reconhecido"** (os dois detectores): vale 1 do disparo até o rearme.
+- **Nível efetivo de disparo**, publicado para o gráfico: no absoluto é o próprio limiar; no
+  adaptativo é a linha de base mais o limiar, que acompanha o ruído da sala.
+- **Por que a linha fica honesta:**
+  - Absoluto: a curva por microfone (RMS ou pico, do ImuPacket) vem da mesma janela de 20 ms
+    que o detector usa. Com pico a correspondência é exata (a janela do pacote cobre todas as
+    amostras). Com RMS, o detector avalia a cada 5 ms e o pacote mostra a cada 20 ms; um
+    cruzamento muito curto pode disparar sem aparecer na curva, mas aparece no gráfico de
+    pulso.
+  - Adaptativo: a linha sobe e desce com o ruído (5 vezes por segundo), e o detector compara o
+    nível suavizado (envelope rápido), que atrasa um pouco em relação à curva. A curva pode
+    cruzar a linha um instante antes do pulso. A descrição do detector na UI diz isso.
 
 ### Protocolo (aditivo, v1, nenhum tamanho muda)
 
@@ -148,11 +177,12 @@ atualizada do guia do protocolo.
   enviado**: se o estado foi 1 em qualquer momento desde o pacote anterior, o próximo
   pacote leva 1. Assim um sopro nunca se perde entre dois pacotes de 20 ms. O bit é escrito
   pela task de áudio e lido/zerado pela task do App; a passagem é atômica.
-- **`SensorsPacket.flags` bit 4 = `metricPeak`** (0 = RMS, 1 = pico).
-- **`SensorsPacket.audioThreshold`** passa a ser o limiar efetivo **em contagens da medida
-  ativa** (RMS em contagens de 24 bits ou pico em contagens de 24 bits). Já é o limiar
-  efetivo hoje (muda com o potenciômetro); só a medida passa a variar. A config-app converte
-  para dBFS com a fórmula da medida indicada pelo bit 4.
+- **`SensorsPacket.flags` bit 4 = `metricPeak`** (0 = RMS, 1 = pico) e **bit 5 =
+  `adaptive`** (0 = absoluto, 1 = adaptativo).
+- **`SensorsPacket.audioThreshold`** passa a ser o **nível efetivo de disparo, em contagens
+  da medida ativa** (RMS ou pico, em contagens de 24 bits): o limiar no absoluto; linha de
+  base + limiar no adaptativo. A config-app converte para dBFS com a fórmula da medida
+  indicada pelo bit 4.
 - `SensorsPacket.potRaw` continua igual (pedido explícito do usuário).
 - Vetores golden novos para os dois bits em `test_protocol.cpp`, copiados à mão para
   `protocol.md`, `protocolo-ble.md`, `packets.test.ts` e o teste do site, como hoje.
@@ -162,15 +192,20 @@ atualizada do guia do protocolo.
 | Id | Nome | Tipo | Faixa | Padrão | Observação |
 |---|---|---|---|---|---|
 | `0x14` | potControlsThreshold | u8 | 0/1 | 1 | Inalterado: 1 = potenciômetro, 0 = valor fixo |
-| `0x2B` | breathThresholdDbX100 | i16 | −9000…0 | −3550 | Limiar fixo em dBFS ×100, na medida ativa |
+| `0x2B` | breathThresholdDbX100 | i16 | −9000…0 | −3550 | Limiar fixo em dBFS ×100, na medida ativa. No adaptativo, é o quanto o som sobe acima da linha de base |
 | `0x2C` | breathMetric | u8 | 0 RMS / 1 pico | 0 | |
-| `0x11`, `0x12`, `0x15` (TLVs, não os comandos de mesmo número) | alfa rápido, alfa lento, limiar fixo em contagens | — | — | — | Aposentados: viram reservados, como `0x21`/`0x27`/`0x33` |
+| `0x2D` | breathDetector | u8 | 0 absoluto / 1 adaptativo | 0 | |
+| `0x2E` | breathRearmDbX10 | u8 | 0…200 (0 a 20 dB) | 30 | Quanto o som precisa cair abaixo do limiar para rearmar |
+| `0x11`, `0x12` | alfa rápido, alfa lento | u16 | inalterados | 250, 995 | Usados só pelo adaptativo |
+| `0x15` (TLV, não o comando de mesmo número) | limiar fixo em contagens | — | — | — | Aposentado: vira reservado, como `0x21`/`0x27`/`0x33` |
 
-- Os padrões (potenciômetro, RMS, −35,5 dBFS) preservam o comportamento de hoje numa sala
-  silenciosa: −35,5 dBFS RMS é o antigo `thresholdFixed = 100000`.
-- **Ids aposentados seguem a regra que já vale para os reservados:** numa escrita, id
+- Os padrões (absoluto, potenciômetro, RMS, −35,5 dBFS, rearme 3,0 dB) preservam o
+  comportamento de hoje numa sala silenciosa: −35,5 dBFS RMS é o antigo
+  `thresholdFixed = 100000`. Numa sala barulhenta o absoluto dispara mais fácil que o
+  adaptativo; a bola pode voltar ao adaptativo pela UI.
+- **O id aposentado segue a regra que já vale para os reservados:** numa escrita, id
   desconhecido rejeita a escrita inteira (tudo ou nada, como hoje); na carga da NVS, a carga
-  leniente pula o id. Só a config-app escreve esses ids, e a versão nova deixa de escrevê-los.
+  leniente pula o id. Só a config-app escreve esse id, e a versão nova deixa de escrevê-lo.
 - **Bolas já gravadas:** um limiar fixo em contagens salvo na NVS **não é convertido**. Ele
   media o excesso sobre a linha de base do detector adaptativo, outra grandeza; converter
   daria um número sem sentido. O `0x2B` começa no padrão (−35,5 dBFS) e a fonte (`0x14`)
@@ -191,38 +226,81 @@ atualizada do guia do protocolo.
   a esquerda ou para a direita, com o nome das duas opções escrito dos dois lados. Acessível:
   `role="switch"` com `aria-checked`, rótulo associado, Espaço e setas alternam, foco
   visível, tokens de tema existentes. Novo `kind` em `Field` do `config-panel.ts`.
-  Usado só onde há **duas opções com nome**: fonte da sensibilidade, medida e o modo
-  palco/ajuste. Os checkboxes liga/desliga que já existem continuam como estão.
+  Usado só onde há **duas opções com nome**: tipo de detector, fonte da sensibilidade, medida
+  e o modo palco/ajuste. Os checkboxes liga/desliga que já existem continuam como estão.
 - Grupo "Detecção de sopro", no Básico:
+  - **Tipo de detector:** `Absoluto ⟷ Adaptativo` (TLV `0x2D`), com a descrição do
+    escolhido logo abaixo da chave:
+    - Absoluto: "Dispara quando o som de qualquer microfone passa da linha. O que você vê no
+      gráfico é o que dispara. Numa sala barulhenta, suba a linha."
+    - Adaptativo: "Aprende o ruído da sala em cerca de 3 segundos e dispara quando o som sobe
+      acima dele pelo valor da sensibilidade. Ajusta-se sozinho ao ambiente; a linha do
+      gráfico sobe e desce com o ruído, e o disparo pode vir um instante depois de a curva
+      cruzá-la."
   - **Fonte da sensibilidade:** `Potenciômetro ⟷ Valor fixo` (TLV `0x14`).
   - **Medida:** `RMS ⟷ Pico` (TLV `0x2C`).
   - **Sensibilidade (dBFS):** número de −90 a 0, passo 0,5 (TLV `0x2B`). Desabilitado, com
-    o valor atual do potenciômetro mostrado ao lado, quando a fonte é o potenciômetro.
+    o valor atual do potenciômetro mostrado ao lado, quando a fonte é o potenciômetro. O
+    `info:` explica o sentido em cada detector (a linha, no absoluto; o quanto acima do
+    ruído, no adaptativo).
+  - **Rearme (dB):** de 0 a 20, passo 0,5 (TLV `0x2E`): "quanto o som precisa cair abaixo
+    da linha para um novo sopro poder disparar".
   - **Debounce (ms):** continua (TLV `0x13`).
-  - Saem "Alfa rápido", "Alfa lento" e "Limiar fixo" (contagens).
+  - **Alfa rápido / Alfa lento** (TLVs `0x11`/`0x12`): no Avançado, visíveis só com o
+    detector adaptativo (o `visible?(cfg)` que já existe).
+  - Sai "Limiar fixo" (contagens).
   - `info:` didático em cada campo, no padrão dos existentes.
 - O teto de campos do Básico em `config-panel.test.ts` é ajustado se a contagem passar dele,
   com o motivo registrado no teste.
 
-### config-app: gráficos (`sensors-panel.ts`)
+### config-app: gráficos (`sensors-panel.ts` e as minilinhas de `metrics-panel.ts`)
 
-- **Linha de limiar:** horizontal, **contínua** (hoje é pontilhada), no valor efetivo em
-  dBFS, atualizada a cada `SensorsPacket` (5 Hz; acompanha o potenciômetro).
+- **Linha de limiar:** **contínua** (hoje é pontilhada), no nível efetivo de disparo em
+  dBFS, atualizada a cada `SensorsPacket` (5 Hz). No absoluto é horizontal (muda só com o
+  potenciômetro ou o campo); no adaptativo acompanha o ruído da sala.
   - Medida RMS → desenhada nos gráficos "Mic esquerdo (dBFS)" e "Mic direito (dBFS)".
   - Medida pico → desenhada no gráfico "Pico por canal (dBFS)".
   - Some do gráfico da medida inativa.
 - **Gráfico novo "Detecção de sopro"**: degrau 0/1 a partir do bit 4 do ImuPacket (50 Hz),
   logo abaixo dos gráficos de microfone, no mesmo eixo de tempo.
+- **Todos os pacotes desenhados.** Hoje o tick de 10 Hz acrescenta só o último valor de cada
+  intervalo, e o que chegou entre dois ticks some (um pulso de 20 ms ou um pico curto podem
+  não aparecer). Passa a guardar todos os pacotes recebidos desde o tick anterior, cada um
+  com o seu horário de chegada, e acrescentá-los de uma vez. O redesenho continua 10 vezes
+  por segundo.
+- **Janela de tempo escolhível:** seletor `5 s · 8 s · 12 s` acima dos gráficos (padrão
+  12 s, lembrado no `localStorage`). O eixo X mostra sempre os últimos N segundos,
+  deslizando. O histórico guardado é o da maior opção (12 s); o histórico de 120 s sai (menos
+  pontos, redesenho mais leve).
+- **Eixo Y com faixa fixa desde o início** (depois de um zoom, o duplo clique volta a ela):
+
+  | Gráfico | Faixa | Motivo |
+  |---|---|---|
+  | Orientação | −180 a 180 ° | faixa dos ângulos de Euler |
+  | Aceleração | −4 a 4 g | fundo de escala do acelerômetro, fixado pelo protocolo |
+  | Mic esquerdo, Mic direito (RMS) | −120 a 0 dBFS | piso do protocolo até o fundo de escala |
+  | Pico por canal | −120 a 0 dBFS | idem |
+  | CO₂ | 0 a 5000 ppm, ou até o pico virtual configurado (TLV `0x23`) se ele for maior | faixa do sensor SC8-CO2-5K; o pulso virtual não pode sair cortado |
+  | Potenciômetro | 0 a 100 % | curso do potenciômetro |
+  | Detecção de sopro | 0 a 1, com uma pequena margem | degrau |
+  | Minilinha "Taxa" (Métricas) | 0 a 1,2 × a taxa configurada | |
+  | Minilinha "Perda" (Métricas) | 0 a 100 % | |
+
+- **Rodapé** troca "Janela de 120 s, amostrada a 10 Hz." por: "Últimos N s, com todos os
+  pacotes recebidos. Os gráficos são redesenhados 10 vezes por segundo; isso não atrasa o
+  envio ao Pd nem o site."
 - O cartão do potenciômetro troca "limiar em contagens RMS" pelo limiar em dBFS e a medida.
 - O modo `?demo=1` gera níveis, limiar e pulsos sintéticos coerentes.
 
 ### Testes da Parte 1
 
-- Firmware (`pio test -e native`): o detector novo (dispara em L, em R, rearme a −3 dB,
-  debounce, um disparo por sopro longo, RMS e pico, áudio desligado); o bit travado até o
-  envio; TLVs novos e aposentados; mapeamento do potenciômetro em dB; goldens.
+- Firmware (`pio test -e native`): o detector absoluto (dispara em L, em R, rearme no valor
+  configurado, debounce, um disparo por sopro longo, RMS e pico, áudio desligado); o
+  adaptativo com o rearme em dB e com pico; o nível efetivo de disparo dos dois; o bit
+  travado até o envio; TLVs novos e o aposentado; mapeamento do potenciômetro em dB; goldens.
 - config-app (`npm test`): decodificação dos bits; o componente de seleção (teclado, ARIA);
-  conversão contagens→dBFS por medida; qual gráfico recebe a linha.
+  conversão contagens→dBFS por medida; qual gráfico recebe a linha; todos os pacotes entre
+  dois ticks entram no gráfico; a janela de 5/8/12 s; as faixas do eixo Y.
 
 ---
 
@@ -281,9 +359,9 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
   |---|---|---|---|
   | `gaia.lat`, `gaia.lon` | Nav (`valid`=1) | graus | sim |
   | `gaia.speed` | Nav | °/s | sim |
-  | `gaia.acc.x`, `.y`, `.z` | IMU | contagens brutas (8192 = 1 g), como o site | sim |
+  | `gaia.acc.x`, `.y`, `.z` | IMU | g (contagens ÷ 8192) | pendente: o site hoje manda contagens |
   | `gaia.co2` | CO₂ | ppm | sim |
-  | `gaia.sensors` | IMU + último CO₂ | lista `roll pitch yaw accX accY accZ co2`, Euler por `quatToEulerLegacy` | sim |
+  | `gaia.sensors` | IMU + último CO₂ | lista `roll pitch yaw accX accY accZ co2`, Euler por `quatToEulerLegacy`; unidade da aceleração pendente | pendente |
   | `gaia.bearing` | Nav | graus (convenção do Mapbox) | novo |
   | `gaia.settled` | Nav bit 1 | 0/1 | novo |
   | `gaia.quat` | IMU | lista `w x y z` | novo |
@@ -371,7 +449,8 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
   - medidor leve do nível dos microfones e o pulso de sopro, a partir do ImuPacket que já
     chega, redesenhado em no máximo 10 Hz;
   - Desconectar e "Sair do modo palco".
-  - O detector de sopro roda na bola, absoluto, em qualquer modo.
+  - O detector de sopro (absoluto ou adaptativo, o que estiver configurado) roda na bola em
+    qualquer modo.
 - **Conexões no modo palco:** só a assinatura de `…0005` é desfeita. A característica de
   configuração continua conectada e gravável (é por ela que a sensibilidade em dBFS é
   escrita); movimento, CO₂ e navegação continuam assinados.
@@ -400,6 +479,8 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
 - `docs/bench-validation.md`: roteiro do sopro (sala silenciosa e barulhenta, RMS e pico,
   potenciômetro e valor fixo) e do Pd (taxa e intervalo nos dois modos).
 - README raiz: link para o `pd-gaiaball` novo.
+- `pd-gaiaball/PUBLICAR-NO-DEKEN.md` (já escrito): conferir os nomes dos arquivos e das
+  arquiteturas contra o primeiro `.dek` real gerado pelo CI.
 
 ## Decisões do usuário
 
@@ -412,35 +493,52 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
 - Linha horizontal contínua no gráfico da medida ativa, mudando dinamicamente; gráfico novo
   com o pulso 0→1→0.
 - Seleções de duas opções como chave deslizante com as duas descrições, não checkbox.
-- Modo palco desliga o máximo possível e mostra a UI como travada; o sopro continua com o
-  detector absoluto.
+- Modo palco desliga o máximo possível e mostra a UI como travada; o sopro continua
+  funcionando no palco.
+- Tipo de detector escolhível na UI (absoluto ou adaptativo), com a descrição de cada um.
+- Rearme configurável em dB.
+- Eixo Y de todos os gráficos de linha com a faixa certa desde o início, nas unidades
+  tratadas; janela de tempo de 5, 8 ou 12 s.
+- `gaia.acc.*` em g.
 
 ## Decisões minhas (para o usuário conferir)
 
 1. O pulso vem da bola (bit 4 do ImuPacket, travado até ser enviado), não de um cálculo no
    navegador.
-2. Rearme a 3 dB abaixo do limiar e debounce mantido; detector avaliado a cada bloco de 5 ms.
+2. Absoluto avaliado a cada bloco de 5 ms; o adaptativo mantém o algoritmo, os alfas e a
+   cadência de hoje (3 blocos) e ganha RMS/pico e o rearme em dB. Rearme padrão 3,0 dB
+   (faixa 0 a 20 dB); debounce mantido.
 3. Potenciômetro linear em dB (−60…0); campo de −90 a 0 dBFS em passos de 0,5.
-4. TLVs `0x2B`/`0x2C` novos; `0x11`, `0x12`, `0x15` aposentados; tamanhos de pacote
-   inalterados.
-5. Padrões que preservam o comportamento de hoje: potenciômetro, RMS, −35,5 dBFS.
+4. TLVs `0x2B` a `0x2E` novos; só o `0x15` aposentado; tamanhos de pacote inalterados.
+5. Padrões: absoluto, potenciômetro, RMS, −35,5 dBFS, rearme 3,0 dB.
 6. Chave deslizante só nas escolhas de duas opções; checkboxes liga/desliga ficam.
 7. "Modo ajuste" no lugar de "modo dev".
 8. No modo palco ficam ativos a sensibilidade, o medidor, o pulso e o status do Pd.
 9. Repassar só movimento, CO₂ e navegação; descartar acima de 4 KB em fila.
 10. "Enviar ao Pd" ligado por padrão, porta 9478, reconexão a cada 2 s.
 11. O objeto aceita só a origem da config-app publicada e `localhost`; um cliente por vez.
-12. Canais com o vocabulário do site (incluindo a aceleração em contagens brutas) + os
-    canais novos da tabela, enviados a cada pacote.
+12. Canais com o vocabulário do site + os canais novos da tabela, enviados a cada pacote.
 13. `gaiaball_bridge.py`, `requirements.txt` e a abstração antiga saem.
 14. Config-app publicada no GitHub Pages do repo `gaiaball`.
-15. Ids aposentados rejeitam a escrita inteira (como os reservados de hoje); limiar fixo
+15. O id aposentado rejeita a escrita inteira (como os reservados de hoje); limiar fixo
     antigo em contagens não é convertido, o `0x2B` começa em −35,5 dBFS.
 16. Canais a cada pacote da origem, sem zona morta (o site amostra no relógio do patch e com
     zonas mortas); CO₂ = 0 em `gaia.sensors` até o primeiro pacote.
 17. Na desconexão, `gaia.breath` e `gaia.co2.trigger` vão a 0; os outros mantêm o último valor.
 18. No palco, com a fonte "Potenciômetro", o limiar ao vivo não aparece.
 19. PR empilhado sobre o #3, redirecionado para `main` depois do merge dele.
+20. Gráficos recebem todos os pacotes entre dois ticks; histórico de 12 s no lugar de 120 s.
+21. Faixas do eixo Y da tabela da Parte 1. Valores RMS acima de 0 dBFS (só uma onda quadrada
+    de fundo de escala chega a +3 dBFS) ficam cortados no topo.
+22. As minilinhas de Métricas também ganham faixa fixa.
+
+## Pendências (decisão do usuário)
+
+- **`gaia.sensors` e o site.** O `[gaiaball]` manda `gaia.acc.*` em g. Para um patch rodar
+  igual no computador e no site, o site também precisa mandar g, e isso muda o
+  `paraisoGaia43` (as divisões por 8000 passam a dar valores ~8000 vezes menores; com g, a
+  divisão sai). Falta decidir: (a) se o site é corrigido junto, no PR do site; (b) se os três
+  valores de aceleração de `gaia.sensors` também passam a g.
 
 ## Deixado ao construtor
 
@@ -475,8 +573,6 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
 
 ## Follow-ups
 
-- Corrigir em `Gaiasenses-web/lib/gaia-vocabulary.json` a unidade de `gaia.acc.*` (o fio
-  leva contagens brutas, não g).
 - O site enviar `gaia.breath` e os outros canais novos aos patches, para que o vocabulário
   seja o mesmo dos dois lados.
 - Bluetooth dentro do `[gaiaball]` (caminho A), quando o Pd do macOS declarar a permissão.
