@@ -218,8 +218,9 @@ bit2 `moving`.
   can sit between the stop and the start threshold while the machine is still settled
   (or still moving), so flags `0x07` (valid + settled + moving) is a legal value. In
   joystick mode the reported speed is 0 while settled, so `moving` is never set then.
-- Reported speed: mirror = the measured angular speed of the globe; joystick = the
-  commanded speed S(θ), and **0 while settled** (the globe is not integrated then).
+- Reported speed: mirror = the measured angular speed of the globe (over the ~100 ms
+  window below); joystick = the commanded speed S(θ), and **0 while settled** (the globe
+  is not integrated then).
   `u16` saturates at 65535 (6553.5 deg/s).
 
 ### Frames and conventions
@@ -249,6 +250,18 @@ bit2 `moving`.
   speed; joystick uses `joyStartDegSX10` / `joyStopDegSX10` (÷10) on the **commanded**
   speed S(θ), not on G's own speed (G is frozen while settled, so its speed could never
   restart it).
+- **Mirror speed window:** the measured speed is the angle between the current G and the
+  newest G at least **100 ms** older, divided by the real time between the two samples
+  (the firmware keeps a ring of past poses sized for 200 Hz; on the first samples after
+  a reset it uses the oldest one it has). Sample to sample, an 8–12 Hz hand tremor reads
+  above the stop threshold; over the window it averages out, so a hand-held ball can
+  settle. The window also means the speed takes up to 100 ms to fall after the ball
+  stops, before the `navStopMs` hold starts.
+- **Mirror drift (settled → moving):** while settled, a drift of **≥ 3°** from the pose
+  captured when the machine settled (or from the first sample after a reset) also leaves
+  settled, whatever the speed, so a slow, deliberate rotation below `navStartDegS` still
+  reaches the clients. The pose is recaptured on every settle. The 3° is a fixed
+  firmware constant, provisional and tuned on the bench. Joystick mode has no drift rule.
 
 ### Rate, keepalive and resets
 
@@ -279,7 +292,8 @@ latE7 −229055560, lonE7 −470608330, bearingX100 4500, speedDegSX10 123
 01 07 02 01 4E 61 BC 00 01 03 B8 E3 58 F2 36 16 F3 E3 94 11 7B 00
 ```
 
-B — seq 65535, timestampUs 4294967295, mode 2, flags 0x06 (settled + moving),
+B — format extremes, not a reachable state (every field at a limit of its type or range):
+seq 65535, timestampUs 4294967295, mode 2, flags 0x06 (settled + moving),
 latE7 900000000, lonE7 −1800000000, bearingX100 −18000, speedDegSX10 65535
 
 ```

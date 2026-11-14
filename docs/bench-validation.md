@@ -248,11 +248,13 @@ bola, zere de novo.
 | Item | Como verificar | Esperado |
 |---|---|---|
 | Identidade | Logo após zerar, bola parada | lat/lon do ponto de referência, rumo ≈ 0°, **parado** |
-| Rumo | Gire a bola devagar 90° em torno do eixo da frente (o nariz do modelo 3D, que aponta para você) e pare | O centro não muda; o rumo muda 90° (sinal conforme a convenção do Mapbox); "parado" ~0,4 s depois de parar |
+| Rumo | Gire a bola devagar 90° em torno do eixo da frente (o nariz do modelo 3D, que aponta para você) e pare | O centro não muda; o rumo muda 90° (sinal conforme a convenção do Mapbox); "parado" ~0,5 s depois de parar |
 | Latitude | Volte ao zero e gire 90° em torno do eixo esquerda-direita (levantar/baixar o nariz) | O centro anda 90° ao longo do meridiano: lat +67,1° e lon −47,1° num sentido, lat −67,1° e lon 132,9° (do outro lado do globo) no outro |
 | Longitude | Volte ao zero e gire 90° em torno do eixo vertical (como um pião) | O centro anda 90° ao longo do grande círculo leste-oeste e cai no equador: lat ≈ 0° e lon −137,1° num sentido, lon 42,9° no outro |
 | Site | Repita um dos gestos com o site conectado | O globo do site mostra o mesmo centro e o mesmo rumo do painel Métricas |
-| Movimento/parada | Gire rápido (acima de ~20 °/s) e depois pare | "em movimento" durante o giro; "parado" só depois de `navStopMs` (420 ms) abaixo de 5 °/s |
+| Movimento/parada | Gire rápido (acima de ~20 °/s) e depois pare | "em movimento" durante o giro; "parado" ~0,5 s depois de parar: a velocidade é medida numa janela de ~100 ms, e depois precisa ficar `navStopMs` (420 ms) abaixo de 5 °/s |
+| Giro lento | Com a bola parada, gire-a bem devagar (bem abaixo de 20 °/s, por exemplo ~5 °/s) em torno do eixo vertical | Continua "parado" até a bola girar ~3° a partir de onde parou; daí passa a "em movimento" e o globo (no painel e no site) acompanha o giro |
+| Na mão | Segure a bola na mão, o mais parada que conseguir | "parado" ~0,5 s depois de parar, apesar do tremor da mão (8–12 Hz), que a janela de ~100 ms cancela |
 | Voltar ao zero | **Zerar orientação** em outra postura | O globo volta ao ponto de referência na hora |
 
 **Joystick** (Modo de navegação = Joystick, **Aplicar**; zere de novo antes):
@@ -281,8 +283,9 @@ nos demais parâmetros de navegação não.
 mostra "sem dados" e continua atualizando uma vez por segundo, sem pose.
 
 **Gatilho de CO₂** (Configuração › CO₂: gatilho 1200 ppm, histerese 50 ppm por padrão):
-o pacote de CO₂ ganhou o bit 3 (`0x08`) das flags. O painel Métricas não o exibe; confira
-no site ou num cliente BLE genérico, lendo a característica `…0003` (byte 10, bit 3). Dê uma
+o pacote de CO₂ ganhou o bit 3 (`0x08`) das flags. O painel Métricas o mostra na linha
+CO₂ ("gatilho: ligado/desligado"); um cliente BLE genérico o lê na característica `…0003`
+(byte 10, bit 3). Dê uma
 palma a ~1 m: o pulso virtual (2100 ppm, ~1 s depois) deve ligar o bit; ele só desliga quando o
 ppm reportado cair a 1150 ppm ou menos (ou o sensor ficar "stale" sem pulso ativo), isto é,
 no fim do pulso de ~17 s. Soprar perto do sensor real (acima de 1200 ppm) liga o bit do mesmo
