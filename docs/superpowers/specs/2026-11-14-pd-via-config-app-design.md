@@ -1,4 +1,4 @@
-# Gaiaball — ponte para o Pd pela config-app, detector de sopro, gráficos e modo palco
+# Gaiaball — aceleração em g, ponte para o Pd pela config-app, detector de sopro, gráficos e modo palco
 
 Data: 2026-11-14 · Repo: `gaiaball` · Branch: `feat/pd-via-config-app`, criada a partir de
 `feat/navegacao-globo` (PR #3), porque a ponte repassa o NavPacket que só existe lá. O PR desta
@@ -15,7 +15,12 @@ num terminal). O objetivo é que a pessoa:
 2. abra o Pd e crie `[gaiaball]` no patch;
 3. receba os dados da bola em tempo real, separados por canal, sem mais nada.
 
-Junto vêm duas mudanças que o uso no palco pede:
+Junto vêm as mudanças que o uso no palco pede:
+
+- **Aceleração em g, pronta para uso.** Hoje a bola manda a aceleração em contagens brutas
+  do sensor (8192 = 1 g) e cada consumidor converte (ou não: o site repassa contagens aos
+  patches, embora o vocabulário diga "g"). A bola passa a mandar g, e todos os consumidores
+  leem o número direto.
 
 - **Detector de sopro escolhível: absoluto ou adaptativo.** O detector atual é adaptativo
   (dispara quando o som sobe acima de uma linha de base do ruído ambiente) e por isso a
@@ -45,7 +50,9 @@ Junto vêm duas mudanças que o uso no palco pede:
   gráfico novo com o pulso de detecção vindo da própria bola.
 - Gráficos de linha da config-app com a faixa do eixo Y certa desde o início, janela de 5, 8
   ou 12 s e todos os pacotes recebidos.
-- `gaia.acc.*` em g, a unidade que o vocabulário do site já declara.
+- A bola emite a aceleração em g pelo BLE; protocolo, config-app, site, `[gaiaball]` e
+  patches aceitam esse formato. `gaia.acc.*` e `gaia.sensors` chegam aos patches em g, a
+  unidade que o vocabulário do site já declara.
 - Modo palco e modo ajuste, com a diferença explicada na tela.
 
 ## Não objetivos
@@ -58,8 +65,10 @@ Junto vêm duas mudanças que o uso no palco pede:
   GitHub Pages.
 - Enviar `gaia.breath` e os outros canais novos a partir do site GaiaSenses (fica como
   follow-up, ver "Follow-ups").
-- Trocar o formato de qualquer pacote BLE ou subir a versão do protocolo. Tudo aqui é
-  aditivo dentro do protocolo v1.
+- Mudanças incompatíveis no protocolo além da aceleração: só o pacote de movimento muda de
+  formato (versão 2); todo o resto é aditivo dentro da versão 1.
+- Aproveitar a aceleração em float para mudar o fundo de escala do acelerômetro (±4 g). Isso
+  passa a ser possível sem mexer no protocolo, mas não entra agora.
 
 ## Anti-objetivos
 
@@ -67,8 +76,10 @@ Junto vêm duas mudanças que o uso no palco pede:
 - O Pd receber dados atrasados por causa da tela: a página repassa primeiro e desenha
   depois, e descarta pacotes velhos em vez de acumular.
 - Uma linha de limiar que não corresponda ao disparo real.
-- Quebrar o site GaiaSenses: ele não assina a característica de diagnóstico e não lê os
-  bits novos; nada do que ele lê muda de lugar ou de significado.
+- Quebrar o site GaiaSenses sem atualizá-lo junto. O pacote de movimento muda de formato, e
+  o site novo precisa ser publicado na mesma ocasião em que as bolas são gravadas (ver
+  "Riscos"). Fora isso, o site não assina a característica de diagnóstico e ignora os bits
+  novos.
 
 ## Restrições (fatos verificados)
 
@@ -90,9 +101,9 @@ Junto vêm duas mudanças que o uso no palco pede:
 - **O site envia hoje `gaia.acc.*` e os três valores de aceleração de `gaia.sensors` em
   contagens brutas do acelerômetro (8192 = 1 g)**, embora `lib/gaia-vocabulary.json` declare
   "g". O `paraisoGaia43` é o único patch que usa esses canais e divide por 8000 em vários
-  pontos (`patches/paraisoGaia43/main.pd`, linhas 771, 784, 2014, 2111, 2129 e 2135, entre
-  outras). Decisão do usuário: `gaia.acc.*` em g. **Pendente:** `gaia.sensors` e o site (ver
-  "Pendências").
+  pontos (11 objetos `[/ 8000]` em `patches/paraisoGaia43/main.pd`) e usa o `gaia.acc.z` em
+  contagens como "gravidade" (`[s gravidade_$0]`). Decisão do usuário: a bola emite g, e
+  protocolo, site e patches mudam para aceitar.
 - **Euler do site:** `quatToEulerLegacy` em `Gaiasenses-web/app/[locale]/map3/ble-decode.ts`
   (troca de eixos legada: `qw=w, qx=y, qy=x, qz=-z`). O `[gaiaball]` usa exatamente a mesma
   conversão para `gaia.sensors`.
@@ -124,13 +135,89 @@ possa ser acrescentado depois sem mudar nenhum patch.
 
 ## Ordem de entrega
 
-1. Parte 1: detector de sopro e gráficos (firmware + config-app). Independente das
-   outras; produz o bit de sopro que a Parte 2 publica no Pd.
+0. Parte 0: aceleração em g (ImuPacket versão 2) no firmware, na config-app e no site.
+   Vem primeiro porque todo o resto decodifica esse pacote.
+1. Parte 1: detector de sopro e gráficos (firmware + config-app). Produz o bit de sopro que
+   a Parte 2 publica no Pd.
 2. Parte 2: ponte config-app → `[gaiaball]` (external, CI, Deken, GitHub Pages).
 3. Parte 3: modo palco / modo ajuste (usa o status do Pd da Parte 2).
 
-Um PR no `gaiaball` com as três partes e um PR pequeno no `Gaiasenses-web` só com a cópia
-atualizada do guia do protocolo.
+Um PR no `gaiaball` com as quatro partes e um PR no `Gaiasenses-web` com o decodificador do
+pacote de movimento versão 2, o vocabulário, a documentação e a cópia atualizada do guia do
+protocolo.
+
+---
+
+## Parte 0 — Aceleração em g (ImuPacket versão 2)
+
+### Formato
+
+O pacote de movimento troca as três acelerações `int16` em contagens por três `float32`
+(IEEE 754, little-endian) em g. A ordem dos campos se mantém; o pacote passa de 31 para
+**37 bytes**.
+
+| Offset | Bytes | Tipo | Campo |
+|---|---|---|---|
+| 0 | 1 | u8 | `version` = **2** |
+| 1 | 1 | u8 | `type` = `0x01` |
+| 2 | 2 | u16 | `seq` |
+| 4 | 4 | u32 | `timestampUs` |
+| 8 | 8 | 4 × i16 | quaternion Q14 (`w x y z`) |
+| 16 | 12 | 3 × f32 | **aceleração X, Y, Z em g** |
+| 28 | 1 | u8 | `flags` (bit 4 = sopro, da Parte 1) |
+| 29 | 4 | 2 × i16 | RMS dos microfones (E, D), dBFS ×100 |
+| 33 | 4 | 2 × i16 | pico dos microfones (E, D), dBFS ×100 |
+
+- **Versão por pacote, como manda a regra 8 do guia** ("mudança incompatível = versão nova;
+  os decodificadores v1 descartam esses pacotes"): só o pacote de movimento passa a levar
+  `version = 2`. CO₂, navegação, diagnóstico e os demais continuam na versão 1.
+- **Conversão no firmware:** contagens ÷ 8192, no momento de montar o pacote, depois dos
+  filtros que já existem (pico e EMA). A divisão por uma potência de 2 é exata em `float32`:
+  o número em g carrega exatamente a informação das contagens.
+- **MTU:** o pacote de movimento passa a exigir MTU ≥ 40 (era 34).
+- **Custo no rádio** (modelo do README do firmware): `(37 + 17) × 8 + 380` = 812 µs por
+  pacote, +48 µs; a 50 Hz, +2,4 ms de ar por segundo (o total padrão vai de 77,7 para
+  80,1 ms/s, 8,0 % do tempo).
+- **Golden novo** do pacote de movimento em `test_protocol.cpp`, copiado à mão para
+  `protocol.md`, `protocolo-ble.md`, `packets.test.ts` e o teste do site, como hoje.
+
+### Consumidores
+
+- **Decodificadores aceitam só a versão 2 para o pacote de movimento** (config-app, site,
+  `[gaiaball]` e os três exemplos do guia: JavaScript, Python e C). Um pacote de movimento
+  versão 1 é descartado. Uma bola com firmware antigo já é reconhecida pela falta da
+  característica `…0006`, e a mensagem "atualize o firmware da bola" passa a cobrir também
+  este caso.
+- **config-app:** `IMU_PACKET_SIZE` 37 e versão 2; a aceleração é lida em g direto (sai o
+  `ACCEL_LSB_PER_G` dos gráficos); o gerador do `?demo=1` passa a emitir a versão 2.
+- **Site (`Gaiasenses-web`):**
+  - `app/[locale]/map3/ble-decode.ts`: pacote de movimento versão 2, tamanho mínimo 37,
+    aceleração `float32`, envelope dos microfones nos offsets 29–36; testes com o golden novo.
+  - `gaia.acc.*` e os três valores de aceleração de `gaia.sensors` passam a chegar aos patches
+    em g, sem conversão adicional. `lib/gaiaball-live.ts` (sketches p5) também expõe g.
+  - `lib/gaia-vocabulary.json`: `gaia.acc.*` com faixa `[-4, 4]` g (era `[-16, 16]`);
+    `gaia.sensors` com "aceX aceY aceZ em g" na ajuda.
+  - `patches/paraisoGaia43/patch.json`: `tuning.accEpsilon` de `0.05` para `0.0001`. Em
+    contagens, 0,05 não filtrava nada (a menor mudança é 1 contagem); 0,0001 g é menor que
+    1 contagem (0,000122 g) e preserva esse comportamento. Se o site tiver um padrão próprio
+    para `accEpsilon`, ele recebe a mesma conversão.
+  - README, `docs/musico/README.md` e `vocabulario.md`: unidade g.
+- **`paraisoGaia43`:** um adaptador na entrada, para o som continuar idêntico. Logo depois de
+  cada `[r gaia.acc.x]`, `[r gaia.acc.y]` e `[r gaia.acc.z]`, e depois de cada um dos três
+  valores de aceleração tirados de `[r gaia.sensors]`, entra um `[* 8192]`. O resto do patch
+  (as onze divisões por 8000 e a "gravidade" em contagens) continua recebendo os mesmos
+  números de antes. Quem faz é o Gabriel, na mesma edição em que já está adaptando o patch
+  (um único editor no arquivo, sem conflito); o PR do site não é publicado antes disso.
+- **`[gaiaball]`** (Parte 2): lê os `float32` direto.
+
+### Testes da Parte 0
+
+- Firmware: o golden novo; `sizeof(ImuPacket) == 37`; a conversão (contagens conhecidas →
+  g exatos, incluindo ±4 g e 0).
+- config-app e site: decodificação do golden; recusa do pacote de movimento versão 1 e de
+  pacotes curtos; envelope dos microfones nos offsets novos.
+- Guia: os exemplos em JavaScript, Python e C rodam contra o golden novo, como na primeira
+  versão do guia.
 
 ---
 
@@ -149,13 +236,13 @@ atualizada do guia do protocolo.
     "o maior dos dois passa"), o detector está armado e o debounce (`debounceMs`, TLV
     `0x13`, padrão 300 ms) já passou.
   - **Rearme:** os dois microfones caem abaixo do limiar menos o rearme configurado (TLV
-    `0x2E`, padrão 3,0 dB). Um sopro longo gera um disparo só.
+    `0x2E`, em dB inteiros, padrão 3 dB). Um sopro longo gera um disparo só.
 - **Adaptativo:** o `PeakDetector` de hoje, com o mesmo algoritmo (envelope rápido − linha de
   base lenta, alfas `0x11`/`0x12`, avaliado a cada 3 blocos, sobre o maior dos dois
   microfones). Muda só:
   - a entrada pode ser RMS ou pico (hoje é só RMS);
-  - o rearme deixa de ser o 0,7× fixo e passa a ser o mesmo parâmetro em dB (3,0 dB =
-    ×0,708, praticamente o comportamento de hoje);
+  - o rearme deixa de ser o 0,7× fixo e passa a ser o mesmo parâmetro em dB (3 dB = ×0,708,
+    praticamente o comportamento de hoje);
   - o limiar vem do mesmo campo em dBFS, convertido para contagens: é o quanto o som precisa
     subir acima da linha de base.
 - **Estado "sopro reconhecido"** (os dois detectores): vale 1 do disparo até o rearme.
@@ -195,11 +282,11 @@ atualizada do guia do protocolo.
 | `0x2B` | breathThresholdDbX100 | i16 | −9000…0 | −3550 | Limiar fixo em dBFS ×100, na medida ativa. No adaptativo, é o quanto o som sobe acima da linha de base |
 | `0x2C` | breathMetric | u8 | 0 RMS / 1 pico | 0 | |
 | `0x2D` | breathDetector | u8 | 0 absoluto / 1 adaptativo | 0 | |
-| `0x2E` | breathRearmDbX10 | u8 | 0…200 (0 a 20 dB) | 30 | Quanto o som precisa cair abaixo do limiar para rearmar |
+| `0x2E` | breathRearmDb | u8 | 0…20 dB, inteiro | 3 | Quanto o som precisa cair abaixo do limiar para rearmar |
 | `0x11`, `0x12` | alfa rápido, alfa lento | u16 | inalterados | 250, 995 | Usados só pelo adaptativo |
 | `0x15` (TLV, não o comando de mesmo número) | limiar fixo em contagens | — | — | — | Aposentado: vira reservado, como `0x21`/`0x27`/`0x33` |
 
-- Os padrões (absoluto, potenciômetro, RMS, −35,5 dBFS, rearme 3,0 dB) preservam o
+- Os padrões (absoluto, potenciômetro, RMS, −35,5 dBFS, rearme 3 dB) preservam o
   comportamento de hoje numa sala silenciosa: −35,5 dBFS RMS é o antigo
   `thresholdFixed = 100000`. Numa sala barulhenta o absoluto dispara mais fácil que o
   adaptativo; a bola pode voltar ao adaptativo pela UI.
@@ -243,8 +330,8 @@ atualizada do guia do protocolo.
     o valor atual do potenciômetro mostrado ao lado, quando a fonte é o potenciômetro. O
     `info:` explica o sentido em cada detector (a linha, no absoluto; o quanto acima do
     ruído, no adaptativo).
-  - **Rearme (dB):** de 0 a 20, passo 0,5 (TLV `0x2E`): "quanto o som precisa cair abaixo
-    da linha para um novo sopro poder disparar".
+  - **Rearme (dB):** de 0 a 20, de 1 em 1 dB (número inteiro; TLV `0x2E`): "quanto o som
+    precisa cair abaixo da linha para um novo sopro poder disparar".
   - **Debounce (ms):** continua (TLV `0x13`).
   - **Alfa rápido / Alfa lento** (TLVs `0x11`/`0x12`): no Avançado, visíveis só com o
     detector adaptativo (o `visible?(cfg)` que já existe).
@@ -359,9 +446,9 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
   |---|---|---|---|
   | `gaia.lat`, `gaia.lon` | Nav (`valid`=1) | graus | sim |
   | `gaia.speed` | Nav | °/s | sim |
-  | `gaia.acc.x`, `.y`, `.z` | IMU | g (contagens ÷ 8192) | pendente: o site hoje manda contagens |
+  | `gaia.acc.x`, `.y`, `.z` | IMU | g | sim (o site passa a mandar g, Parte 0) |
   | `gaia.co2` | CO₂ | ppm | sim |
-  | `gaia.sensors` | IMU + último CO₂ | lista `roll pitch yaw accX accY accZ co2`, Euler por `quatToEulerLegacy`; unidade da aceleração pendente | pendente |
+  | `gaia.sensors` | IMU + último CO₂ | lista `roll pitch yaw accX accY accZ co2`, Euler por `quatToEulerLegacy`, aceleração em g | sim |
   | `gaia.bearing` | Nav | graus (convenção do Mapbox) | novo |
   | `gaia.settled` | Nav bit 1 | 0/1 | novo |
   | `gaia.quat` | IMU | lista `w x y z` | novo |
@@ -468,11 +555,14 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
 
 ## Documentação a atualizar
 
-- `firmware/docs/protocol.md` e `docs/protocolo-ble.md`: os dois bits, o novo sentido do
-  `audioThreshold`, os TLVs novos e aposentados, os goldens. A cópia
+- `firmware/docs/protocol.md` e `docs/protocolo-ble.md`: o pacote de movimento versão 2
+  (mapa de bytes, MTU ≥ 40, exemplos em JavaScript, Python e C, a seção de versionamento com
+  este primeiro caso real de versão nova), os dois bits, o novo sentido do
+  `audioThreshold`, os TLVs novos e o aposentado, os goldens. A cópia
   `Gaiasenses-web/docs/gaiaball-protocolo-ble.md` continua idêntica (mesmo sha256), no PR do
   site.
-- `firmware/README.md`: o detector absoluto e a referência rápida de TLVs.
+- `firmware/README.md`: a tabela de orçamento do rádio (31 → 37 B), o detector absoluto e a
+  referência rápida de TLVs; o comentário que diz que o ±4 g é "fixado pelo protocolo".
 - `config-app/README.md`: o envio ao Pd, o modo palco, a URL publicada.
 - `pd-gaiaball/README.md`: reescrito para leigos (instalar pelo Deken, abrir a config-app,
   criar `[gaiaball]`, liberar o Chrome, tabela de canais).
@@ -499,7 +589,8 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
 - Rearme configurável em dB.
 - Eixo Y de todos os gráficos de linha com a faixa certa desde o início, nas unidades
   tratadas; janela de tempo de 5, 8 ou 12 s.
-- `gaia.acc.*` em g.
+- A bola emite a aceleração em g; protocolo, site e patches mudam para aceitar.
+- Rearme em dB inteiros (passo de 1 dB).
 
 ## Decisões minhas (para o usuário conferir)
 
@@ -510,7 +601,7 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
    (faixa 0 a 20 dB); debounce mantido.
 3. Potenciômetro linear em dB (−60…0); campo de −90 a 0 dBFS em passos de 0,5.
 4. TLVs `0x2B` a `0x2E` novos; só o `0x15` aposentado; tamanhos de pacote inalterados.
-5. Padrões: absoluto, potenciômetro, RMS, −35,5 dBFS, rearme 3,0 dB.
+5. Padrões: absoluto, potenciômetro, RMS, −35,5 dBFS, rearme 3 dB (0 a 20 dB).
 6. Chave deslizante só nas escolhas de duas opções; checkboxes liga/desliga ficam.
 7. "Modo ajuste" no lugar de "modo dev".
 8. No modo palco ficam ativos a sensibilidade, o medidor, o pulso e o status do Pd.
@@ -531,14 +622,12 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
 21. Faixas do eixo Y da tabela da Parte 1. Valores RMS acima de 0 dBFS (só uma onda quadrada
     de fundo de escala chega a +3 dBFS) ficam cortados no topo.
 22. As minilinhas de Métricas também ganham faixa fixa.
-
-## Pendências (decisão do usuário)
-
-- **`gaia.sensors` e o site.** O `[gaiaball]` manda `gaia.acc.*` em g. Para um patch rodar
-  igual no computador e no site, o site também precisa mandar g, e isso muda o
-  `paraisoGaia43` (as divisões por 8000 passam a dar valores ~8000 vezes menores; com g, a
-  divisão sai). Falta decidir: (a) se o site é corrigido junto, no PR do site; (b) se os três
-  valores de aceleração de `gaia.sensors` também passam a g.
+23. Aceleração em `float32` g, na mesma posição do pacote; versão 2 só no pacote de
+    movimento (regra 8 do guia), os outros continuam na 1.
+24. Decodificadores aceitam só a versão 2 do pacote de movimento (sem suporte a bolas
+    antigas, que já pedem atualização pela falta da `…0006`).
+25. `paraisoGaia43`: adaptador `[* 8192]` na entrada da aceleração, feito pelo Gabriel na
+    mesma edição; `accEpsilon` de 0.05 para 0.0001.
 
 ## Deixado ao construtor
 
@@ -557,6 +646,10 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
 
 ## Riscos
 
+- **Janela de publicação.** O site que está no ar não lê o pacote de movimento versão 2, e o
+  site novo exige o firmware novo (característica `…0006`). Entre gravar a primeira bola e
+  publicar o site novo, a bola não funciona no site do ar. Gravar todas as bolas e publicar o
+  site na mesma ocasião, depois do patch do Gabriel.
 - **Muda quando as composições abrem no site.** O sopro aciona o CO₂ virtual, que aciona a
   composição. Sem a linha de base adaptativa, numa sala barulhenta o limiar precisa ser
   subido à mão (é para isso que existem o potenciômetro, o valor fixo e o gráfico). Testar
