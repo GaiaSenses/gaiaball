@@ -101,7 +101,7 @@ Este plano transforma o spec em tarefas sequenciais. Cada tarefa traz as evidên
 
 ---
 
-## Tarefa 0: Copiar este plano para o repositório
+### Task 0: Copiar este plano para o repositório
 
 - [ ] Copiar este arquivo para `gaiaball/docs/superpowers/plans/2026-11-14-pd-via-config-app.md`, na branch `feat/pd-via-config-app`.
 - [ ] Atualizar o spec (`docs/superpowers/specs/2026-11-14-pd-via-config-app-design.md`, Parte 0) com a decisão do áudio em u8 meio-dB:
@@ -116,7 +116,7 @@ Este plano transforma o spec em tarefas sequenciais. Cada tarefa traz as evidên
 
 ## Parte 0 — Aceleração em mg (pacote de movimento v2)
 
-### Tarefa 1: Firmware — pacote de movimento v2 (aceleração em mg, áudio em meio-dB, 27 B)
+### Task 1: Firmware — pacote de movimento v2 (aceleração em mg, áudio em meio-dB, 27 B)
 
 **Arquivos:**
 - Modificar `firmware/Gaiaball/src/logic/Packets.h`:
@@ -159,7 +159,7 @@ Este plano transforma o spec em tarefas sequenciais. Cada tarefa traz as evidên
 - [ ] **Passo 5:** atualizar os comentários e a documentação listados acima.
 - [ ] **Passo 6:** commit `feat(fw): IMU packet v2 carries acceleration in milli-g and half-dB audio levels`.
 
-### Tarefa 2: Config-app — ler o pacote de movimento v2 em mg
+### Task 2: Config-app — ler o pacote de movimento v2 em mg
 
 **Arquivos:**
 - Modificar `config-app/src/protocol/packets.ts`:
@@ -194,7 +194,7 @@ Este plano transforma o spec em tarefas sequenciais. Cada tarefa traz as evidên
 - [ ] **Passo 4:** `npm test && npm run build`. Esperado: PASS e build ok.
 - [ ] **Passo 5:** commit `feat(app): decode IMU packet v2 (mg, half-dB audio) and flag outdated firmware`.
 
-### Tarefa 3: Site — ler o v2, vocabulário e documentação em mg
+### Task 3: Site — ler o v2, vocabulário e documentação em mg
 
 **Repo:** `Gaiasenses-web`, branch nova `feat/gaiaball-mg` a partir de `feat/gaiaball-navegacao`. Rodar `graphify query` antes de ler.
 
@@ -235,7 +235,7 @@ Este plano transforma o spec em tarefas sequenciais. Cada tarefa traz as evidên
 
 ## Parte 1 — Detector de sopro e gráficos
 
-### Tarefa 4: Firmware — `BreathDetector` (lógica pura) e conversões dB→contagens
+### Task 4: Firmware — `BreathDetector` (lógica pura) e conversões dB→contagens
 
 **Arquivos:**
 - Criar `firmware/Gaiaball/src/logic/BreathDetector.{h,cpp}`.
@@ -284,7 +284,7 @@ float dbToAmplitudeRatio(float db);  // 10^(−db/20); 3 dB → 0,7079
 - [ ] **Passo 4:** `pio test -d firmware -e native -f test_audio`. Esperado: PASS.
 - [ ] **Passo 5:** commit `feat(fw): breath detector with absolute and adaptive modes and dB rearm`.
 
-### Tarefa 5: Firmware — TLVs novos, aposentar `0x15` e potenciômetro em dB
+### Task 5: Firmware — TLVs novos, aposentar `0x15` e potenciômetro em dB
 
 **Arquivos:**
 - Modificar `firmware/Gaiaball/src/logic/GaiaConfig.h`:
@@ -319,7 +319,7 @@ bool potDbChanged(float newDb, float currentDb); // |Δ| ≥ 0,5
 - [ ] **Passo 4:** `pio test -d firmware -e native`. Esperado: PASS. (O `test_config` pode referenciar `thresholdFixed`: trocar.)
 - [ ] **Passo 5:** commit `feat(fw): breath TLVs 0x2B-0x2E, retire 0x15, potentiometer in dB`.
 
-### Tarefa 6: Firmware — ligar detector, bits e potenciômetro no app
+### Task 6: Firmware — ligar detector, bits e potenciômetro no app
 
 **Arquivos:**
 - Modificar `services/AudioService.{h,cpp}`:
@@ -360,7 +360,7 @@ bool potDbChanged(float newDb, float currentDb); // |Δ| ≥ 0,5
 - [ ] **Passo 4:** `pio test -d firmware -e native` → PASS; depois `pio run -d firmware -e esp32dev` → SUCCESS. Anotar Flash e RAM no README.
 - [ ] **Passo 5:** commit `feat(fw): wire the breath detector, breath bit and dB threshold into the app`.
 
-### Tarefa 7: Config-app — registradores, decodificação dos bits, chave deslizante e campos do sopro
+### Task 7: Config-app — registradores, decodificação dos bits, chave deslizante e campos do sopro
 
 **Arquivos:**
 - Modificar `config-app/src/protocol/tlv.ts`:
@@ -417,7 +417,7 @@ bool potDbChanged(float newDb, float currentDb); // |Δ| ≥ 0,5
 - [ ] **Passo 4:** `npm test && npm run build`. Esperado: PASS.
 - [ ] **Passo 5:** commit `feat(app): breath detector controls, slide switch and dB sensitivity`.
 
-### Tarefa 8: Config-app — gráficos com todos os pacotes, janela, faixas fixas e pulso de sopro
+### Task 8: Config-app — gráficos com todos os pacotes, janela, faixas fixas e pulso de sopro
 
 **Arquivos:**
 - Criar `config-app/src/panels/chart-model.ts`: lógica pura, sem importar `theme.ts` (ele toca `window` ao carregar, `theme.ts:7`).
@@ -478,7 +478,7 @@ export function thresholdRows(metricPeak: boolean): { rms: boolean; peak: boolea
 
 ## Parte 2 — Ponte config-app → `[gaiaball]`
 
-### Tarefa 9: Config-app — ingestão única, codificador binário e `PdBridge`
+### Task 9: Config-app — ingestão única, codificador binário e `PdBridge`
 
 **Arquivos:**
 - Criar `config-app/src/protocol/encode.ts`: `encodeImuPacket` (v2), `encodeCo2Packet`, `encodeNavPacket` e `encodeSensorsPacket`, com os mesmos layouts do decodificador.
@@ -542,7 +542,7 @@ export class PdBridge extends EventTarget {   // despacha 'status' na mudança e
 - [ ] **Passo 4:** `npm test && npm run build`. Esperado: PASS.
 - [ ] **Passo 5:** commit `feat(app): forward raw packets to Pd over a local WebSocket`.
 
-### Tarefa 10: `[gaiaball]` — decodificador em C
+### Task 10: `[gaiaball]` — decodificador em C
 
 **Arquivos:**
 - Criar `pd-gaiaball/src/gb_decode.{h,c}`.
@@ -576,7 +576,7 @@ void gb_euler_legacy(const float q[4], float *roll, float *pitch, float *yaw); /
 - [ ] **Passo 4:** `make -C pd-gaiaball test`. Esperado: PASS.
 - [ ] **Passo 5:** commit `feat(pd): C decoder for the Gaiaball packets`.
 
-### Tarefa 11: `[gaiaball]` — protocolo WebSocket, puro e testado
+### Task 11: `[gaiaball]` — protocolo WebSocket, puro e testado
 
 **Arquivos:**
 - Criar `pd-gaiaball/src/gb_ws.{h,c}` (aperto de mão e quadros; sem checagem de origem).
@@ -622,7 +622,7 @@ size_t gb_ws_frame(uint8_t opcode, const uint8_t *payload, size_t n, uint8_t *ou
 - [ ] **Passo 4:** `make -C pd-gaiaball test`. Esperado: PASS (os dois testes).
 - [ ] **Passo 5:** commit `feat(pd): minimal RFC 6455 server core`.
 
-### Tarefa 12: `[gaiaball]` — objeto do Pd, patch de ajuda e substituição da ponte Python
+### Task 12: `[gaiaball]` — objeto do Pd, patch de ajuda e substituição da ponte Python
 
 **Arquivos:**
 - Criar `pd-gaiaball/gaiaball.c`: a classe do Pd. Junta `gb_ws` e `gb_decode`.
@@ -685,7 +685,7 @@ size_t gb_ws_frame(uint8_t opcode, const uint8_t *payload, size_t n, uint8_t *ou
 - [ ] **Passo 3: ponta a ponta com a config-app:** `npm run dev` + Playwright em `http://localhost:5173/?demo=1`. O Pd do Passo 2 recebe `gaia.*` e o chip mostra "Pd: conectado".
 - [ ] **Passo 4:** commit `feat(pd): [gaiaball] external replaces the Python bridge`.
 
-### Tarefa 13: CI do external, pacote Deken e publicação da config-app
+### Task 13: CI do external, pacote Deken e publicação da config-app
 
 **Arquivos:**
 - Criar `.github/workflows/pd-gaiaball.yml`:
@@ -710,7 +710,7 @@ size_t gb_ws_frame(uint8_t opcode, const uint8_t *payload, size_t n, uint8_t *ou
 
 ## Parte 3 — Modo palco / modo ajuste
 
-### Tarefa 14: Modo palco
+### Task 14: Modo palco
 
 **Arquivos:**
 - Modificar `config-app/src/viz/orientation-scene.ts`: `pause()` e `resume()` públicos, que envolvem o `stop()` e o `start()` privados (`:169-182`). `resume` respeita o `document.hidden`.
@@ -772,7 +772,7 @@ export class StageController {
 
 ## Documentação final e cópia para o site
 
-### Tarefa 15: Guia do protocolo, READMEs e cópia idêntica no site
+### Task 15: Guia do protocolo, READMEs e cópia idêntica no site
 
 **Arquivos (`gaiaball`):**
 - `docs/protocolo-ble.md`:
