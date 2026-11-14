@@ -55,10 +55,11 @@ A bola calcula sozinha para onde o globo virtual aponta e envia o resultado num 
   - **Modo de navegação:** Desligado, **Espelho** (o globo é exatamente a orientação da bola) ou **Joystick** (a inclinação da bola, a partir do zero, faz o globo girar com velocidade crescente com o desvio; devolvida ao zero, ele para).
   - Joystick: velocidade máxima (1–720 °/s), ângulo da velocidade máxima (5–90°) e curva de resposta p (1,0–4,0; 3,0 = cúbica).
   - Taxa de envio (10–200 Hz) e ponto de referência (lat, lon; padrão Campinas/SP). O ponto de referência não entra nos presets.
-  - Limiares de partida/parada do Espelho (°/s) e do Joystick (°/s, uma casa decimal) e o tempo para considerar parado (ms). A parada precisa ser menor que a partida, nos dois pares; senão o firmware rejeita a escrita inteira.
+  - Limiares de partida/parada do Espelho (°/s) e do Joystick (°/s, uma casa decimal) e o tempo para considerar parado (ms). A parada precisa ser menor que a partida, nos dois pares; senão o firmware rejeita a escrita inteira. No Espelho, a velocidade é medida numa janela de ~100 ms (o tremor da mão não conta como movimento) e, parado, o globo volta a "em movimento" depois de um giro de 3°, mesmo lento.
   - Os parâmetros do joystick e os limiares valem na hora e não movem o globo. Só trocar o modo, trocar o ponto de referência ou mudar a referência do IMU (**Zerar orientação**, **Calibrar montagem**, Quat6 ↔ Quat9) leva o globo de volta ao ponto de referência.
 - **Zerar orientação** (painel Conexão): com a bola parada numa superfície plana e a frente dela (o nariz do modelo 3D) voltada para você. O zero **não é gravado**: depois de religar a bola, zere de novo.
-- **Gatilho de CO₂** (Configuração › CO₂): nível e histerese do bit de gatilho do pacote de CO₂.
+- **Gatilho de CO₂** (Configuração › CO₂): nível e histerese do bit de gatilho do pacote de CO₂; o painel Métricas mostra o bit na linha CO₂ ("gatilho: ligado/desligado"). O sopro só liga o gatilho se o pico virtual (`0x23`, padrão 2100 ppm) ficar acima do nível.
+- **Firmware antigo:** **Aplicar** só envia os registradores que a bola informou na leitura (o PIN sempre vai). Um firmware sem navegação recusaria a escrita inteira por causa de um registrador desconhecido; os que ficaram de fora são listados na mensagem.
 
 ### Persistência
 
