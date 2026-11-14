@@ -15,6 +15,9 @@ import { decorateInfo } from './panels/info.ts';
 import { initTheme, onThemeChange, resolvedTheme, toggleTheme } from './theme.ts';
 import { OrientationScene } from './viz/orientation-scene.ts';
 import { VIEW_PRESETS, type ViewId } from './viz/view-presets.ts';
+import { PdBridge, browserPdDeps } from './pd/pd-bridge.ts';
+import { loadPdPrefs, mountPdBlock, mountPdChip } from './pd/pd-panel.ts';
+import { encodeCo2Packet, encodeImuPacket, encodeNavPacket, encodeSensorsPacket } from './protocol/encode.ts';
 import { AUDIO_FULL_SCALE, type AudioChunkSample, type Co2Sample, type ImuSample, type NavSample, type SensorsSample } from './protocol/packets.ts';
 
 initTheme();
@@ -28,6 +31,7 @@ app.innerHTML = `
       <div class="brand-text"><h1>Gaiaball</h1><p>painel de controle</p></div>
     </div>
     <div class="top-actions">
+      <span class="chip" id="pd-chip" data-state="off">Pd: desligado</span>
       <span class="chip" id="conn-chip" data-state="off">Desconectado</span>
       <button id="btn-theme" type="button"></button>
     </div>
@@ -105,7 +109,21 @@ themeBtn.addEventListener('click', toggleTheme);
 onThemeChange(renderThemeBtn);
 renderThemeBtn();
 
+const isDemo = Boolean(new URLSearchParams(location.search).get('demo'));
+const bridge = new PdBridge(browserPdDeps());
+client.setRawSink((b) => bridge.forward(b));
+const pdPrefs = loadPdPrefs();
+// The bridge only runs while the ball is connected (or in demo) and the user left it on.
+const syncPd = (): void => {
+  bridge.setPort(pdPrefs.port);
+  bridge.setEnabled(pdPrefs.enabled && (client.connected || isDemo));
+};
+client.addEventListener('status', syncPd);
+mountPdChip(app.querySelector<HTMLElement>('#pd-chip')!, bridge);
+
 mountConnectionPanel(app.querySelector<HTMLElement>('#panel-conexao')!, client);
+mountPdBlock(app.querySelector<HTMLElement>('#panel-conexao')!, bridge, pdPrefs, syncPd);
+syncPd();
 mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client);
 mountMagCalPanel(app.querySelector<HTMLElement>('#panel-magcal')!, client);
 mountMetricsPanel(app.querySelector<HTMLElement>('#panel-metricas')!, client, stats);
@@ -164,7 +182,7 @@ client.addEventListener('imu', (ev) => {
   scene.setQuaternion(s.quat);
 });
 
-if (new URLSearchParams(location.search).get('demo')) {
+if (isDemo) {
   chip.dataset.state = 'demo';
   chip.textContent = 'modo demo';
   // Synthetic slow compound rotation (quaternion products only), no BLE needed.
@@ -181,6 +199,10 @@ if (new URLSearchParams(location.search).get('demo')) {
   };
   // Synthetic packets are dispatched as client events, so every panel (3D, métricas,
   // sensores) exercises the same code path as a real device.
+  // Packets with a wire format are encoded to bytes and go through client.ingest, so the screen
+  // and the Pd bridge get exactly what a real ball would send. Only the raw 2 kHz audio chunk
+  // stays a decoded object (no encoder for it: it is diagnostics, never forwarded to Pd).
+  const asView = (b: Uint8Array): DataView => new DataView(b.buffer, b.byteOffset, b.byteLength);
   const emit = <T>(event: string, detail: T): void => {
     client.dispatchEvent(new CustomEvent(event, { detail }));
   };
@@ -211,7 +233,7 @@ if (new URLSearchParams(location.search).get('demo')) {
         -52 + (Math.sin(t * 1.05) > 0.85 ? 28 : 0) + 2 * Math.sin(t * 8.1),
       ],
     };
-    emit('imu', s); // the 'imu' listener above drives the scene and the stats
+    client.ingest('imu', asView(encodeImuPacket(s))); // the 'imu' listener above drives the scene and the stats
   }, 20);
   let sensSeq = 0;
   setInterval(() => {
@@ -236,7 +258,7 @@ if (new URLSearchParams(location.search).get('demo')) {
       metricPeak: demoPeak,
       adaptive: false,
     };
-    emit('sensors', detail);
+    client.ingest('diag', asView(encodeSensorsPacket(detail)));
   }, 200);
   // Raw 2 kHz audio chunks: low hum + breath-band noise bursts every ~6 s.
   let audioSeq = 0;
@@ -283,7 +305,7 @@ if (new URLSearchParams(location.search).get('demo')) {
       bearingDeg: ((t * 9 + 180) % 360) - 180,
       speedDegS: moving ? 30 + 20 * Math.sin(t * 0.8) : 0,
     };
-    emit('nav', detail);
+    client.ingest('nav', asView(encodeNavPacket(detail)));
   }, 50);
   let co2Seq = 0;
   setInterval(() => {
@@ -299,6 +321,6 @@ if (new URLSearchParams(location.search).get('demo')) {
       virtualActive: false,
       trigger: false,
     };
-    emit('co2', detail);
+    client.ingest('co2', asView(encodeCo2Packet(detail)));
   }, 1000);
 }
