@@ -33,6 +33,17 @@ export function rmsToDbfs(rms: number): number {
   return Math.max(-120, 20 * Math.log10((rms * Math.SQRT2) / AUDIO_FULL_SCALE));
 }
 
+/** Amplitude dBFS: 0 dBFS = full-scale sample (so a full-scale sine reads 3.01 dB lower than on the RMS scale). Floor at -120 dBFS. */
+export function peakToDbfs(peak: number): number {
+  if (!(peak > 0)) return -120;
+  return Math.max(-120, 20 * Math.log10(peak / AUDIO_FULL_SCALE));
+}
+
+/** Effective trigger level of a Sensors packet in dBFS, by the metric the detector is using. */
+export function thresholdToDbfs(s: Pick<SensorsSample, 'threshold' | 'metricPeak'>): number {
+  return s.metricPeak ? peakToDbfs(s.threshold) : rmsToDbfs(s.threshold);
+}
+
 /** Floor of the firmware's dBFS audio fields (-120 dBFS; half-dB u8 value 0 on the wire; firmware logic/AudioFeatures.h). */
 export const AUDIO_DB_FLOOR = -120;
 
@@ -40,6 +51,7 @@ export const IMU_FLAG_QUAT_VALID = 1 << 0;
 export const IMU_FLAG_NINE_AXIS = 1 << 1;
 export const IMU_FLAG_MOVING = 1 << 2;
 export const IMU_FLAG_AUDIO_VALID = 1 << 3;
+export const IMU_FLAG_BREATH = 1 << 4;
 export const CO2_FLAG_VALID = 1 << 0;
 export const CO2_FLAG_STALE = 1 << 1;
 export const CO2_FLAG_VIRTUAL_ACTIVE = 1 << 2;
@@ -63,6 +75,8 @@ export const SENS_FLAG_AUDIO_OK = 1 << 0;
 export const SENS_FLAG_AUDIO_ENABLED = 1 << 1;
 export const SENS_FLAG_POT_CONTROLS = 1 << 2;
 export const SENS_FLAG_AUDIO_FILTERED = 1 << 3;
+export const SENS_FLAG_METRIC_PEAK = 1 << 4;
+export const SENS_FLAG_ADAPTIVE = 1 << 5;
 export const AUDIO_FLAG_BPF_ENABLED = 1 << 0;
 
 export interface ImuSample {
@@ -83,6 +97,8 @@ export interface ImuSample {
    * Both read AUDIO_DB_FLOOR while audioValid is false.
    */
   audioValid: boolean;
+  /** Breath recognized by the firmware detector (latched until sent). */
+  breath: boolean;
   audioRmsDbfs: [number, number];
   audioPeakDbfs: [number, number];
 }
@@ -172,7 +188,7 @@ export interface SensorsSample {
   /** Audio RMS in 24-bit counts (left / right); see rmsToDbfs for the dBFS value. */
   rmsL: number;
   rmsR: number;
-  /** Peak-detector threshold, same RMS counts. */
+  /** Effective trigger level, in counts of the active metric (RMS or peak; see metricPeak, thresholdToDbfs). */
   threshold: number;
   /** EMA-filtered potentiometer ADC reading, 0..4095. */
   potRaw: number;
@@ -182,6 +198,10 @@ export interface SensorsSample {
   potControls: boolean;
   /** RMS computed after the firmware HP/LP band-pass. */
   audioFiltered: boolean;
+  /** Detector metric: true = peak, false = RMS. */
+  metricPeak: boolean;
+  /** Detector type: true = adaptive, false = absolute. */
+  adaptive: boolean;
 }
 
 export interface AudioChunkSample {
@@ -222,6 +242,7 @@ export function decodeImuPacket(dv: DataView): ImuSample | null {
     nineAxis: (flags & IMU_FLAG_NINE_AXIS) !== 0,
     moving: (flags & IMU_FLAG_MOVING) !== 0,
     audioValid: (flags & IMU_FLAG_AUDIO_VALID) !== 0,
+    breath: (flags & IMU_FLAG_BREATH) !== 0,
     audioRmsDbfs: [db(23), db(24)],
     audioPeakDbfs: [db(25), db(26)],
   };
@@ -258,6 +279,8 @@ export function decodeSensorsPacket(dv: DataView): SensorsSample | null {
     audioEnabled: (flags & SENS_FLAG_AUDIO_ENABLED) !== 0,
     potControls: (flags & SENS_FLAG_POT_CONTROLS) !== 0,
     audioFiltered: (flags & SENS_FLAG_AUDIO_FILTERED) !== 0,
+    metricPeak: (flags & SENS_FLAG_METRIC_PEAK) !== 0,
+    adaptive: (flags & SENS_FLAG_ADAPTIVE) !== 0,
   };
 }
 

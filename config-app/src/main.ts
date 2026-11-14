@@ -201,6 +201,7 @@ if (new URLSearchParams(location.search).get('demo')) {
       // Microphone envelope, as the firmware publishes it on every orientation packet:
       // a breath every ~6 s on top of a -58 dBFS room floor, peak ~8 dB above the RMS.
       audioValid: true,
+      breath: false,
       audioRmsDbfs: [
         -58 + (Math.sin(t * 1.05) > 0.85 ? 30 : 0) + 2 * Math.sin(t * 7),
         -60 + (Math.sin(t * 1.05) > 0.85 ? 28 : 0) + 2 * Math.sin(t * 6.3),
@@ -228,6 +229,8 @@ if (new URLSearchParams(location.search).get('demo')) {
       audioEnabled: true,
       potControls: true,
       audioFiltered: true,
+      metricPeak: false,
+      adaptive: false,
     };
     emit('sensors', detail);
   }, 200);

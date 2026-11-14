@@ -25,7 +25,7 @@ export const TLV = {
   audioSlowAlphaX1000: 0x12,
   debounceMs: 0x13,
   potControlsThreshold: 0x14,
-  thresholdFixed: 0x15,
+  // 0x15 (the old fixed threshold, in counts) is RETIRED and reserved: the firmware rejects any write containing it.
   audioBpfEnabled: 0x16,
   audioRawStream: 0x1f,
   audioHpHz: 0x17,
@@ -65,6 +65,10 @@ export const TLV = {
   navStopMs: 0x68, // 50..5000
   joyStartDegSX10: 0x69, // 1..2000; must stay above joyStopDegSX10
   joyStopDegSX10: 0x6a, // 1..2000
+  breathThresholdNegDbX100: 0x2b, // u16 0..9000; threshold = -value/100 dBFS (3550 = -35.5)
+  breathMetric: 0x2c, // 0 RMS / 1 peak
+  breathDetector: 0x2d, // 0 absolute / 1 adaptive
+  breathRearmDb: 0x2e, // 0..20 dB
 } as const;
 
 /** Output-capable ESP32 GPIOs (excludes SPI-flash 6–11 and nonexistent pins). Mirrors firmware isValidOutputGpio. */
@@ -84,7 +88,6 @@ type Spec =
 
 const U8: Spec = { kind: 'u8' };
 const U16: Spec = { kind: 'u16' };
-const U32: Spec = { kind: 'u32' };
 
 const SPECS: Record<number, Spec> = {
   [TLV.orientationMode]: U8,
@@ -132,7 +135,10 @@ const SPECS: Record<number, Spec> = {
   [TLV.audioSlowAlphaX1000]: U16,
   [TLV.debounceMs]: U16,
   [TLV.potControlsThreshold]: U8,
-  [TLV.thresholdFixed]: U32,
+  [TLV.breathThresholdNegDbX100]: U16,
+  [TLV.breathMetric]: U8,
+  [TLV.breathDetector]: U8,
+  [TLV.breathRearmDb]: U8,
   [TLV.co2Enabled]: U8,
   [TLV.co2StaleTimeoutMs]: U16,
   [TLV.virtualPeakPpm]: U16,

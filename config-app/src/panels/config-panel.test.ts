@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BASIC_FIELD_IDS, CONFIG_FIELDS, FIELD_DEFAULTS, dlpfOptions, imuRebootPending, imuStatusText, isPerBall, navRefError, resolveOptions,
-  splitUnknownIds, stopRuleError, toWireRegs,
+  splitUnknownIds, stopRuleError, toWireRegs, fromDisplay, toDisplay,
 } from './config-panel';
 import { decodeNavRef, decodeTlv, encodeTlv, navRefToString, parseNavRefString, TLV } from '../protocol/tlv';
 
@@ -45,9 +45,11 @@ describe('config fields', () => {
     // The point of the split: the first screen stays readable.
     expect(basic.length).toBeLessThan(advanced.length);
     // 20, not 16: three joystick fields (max speed, full-scale angle, curve) are only visible in joystick mode.
-    expect(basic.length).toBeLessThanOrEqual(20);
+    // 23: +4 campos do detector de sopro, −1 limiar fixo em contagens.
+    expect(basic.length).toBeLessThanOrEqual(23);
+    expect(BASIC_FIELD_IDS.size).toBe(23);
     // Operating the globe must not require the advanced tab.
-    for (const id of [TLV.orientationMode, TLV.imuNotifyHz, TLV.thresholdFixed, TLV.bleName, TLV.pin]) {
+    for (const id of [TLV.orientationMode, TLV.imuNotifyHz, TLV.breathThresholdNegDbX100, TLV.bleName, TLV.pin]) {
       expect(BASIC_FIELD_IDS.has(id)).toBe(true);
     }
     // Signal-chain tuning must not clutter the first screen.
@@ -285,5 +287,51 @@ describe('splitUnknownIds (a firmware older than some registers)', () => {
     const all = new Set(CONFIG_FIELDS.map((f) => f.id).filter((id) => id !== TLV.pin));
     const regs = CONFIG_FIELDS.map((f) => ({ id: f.id, value: FIELD_DEFAULTS.get(f.id) ?? '0000' }));
     expect(splitUnknownIds(regs, all).skipped).toEqual([]);
+  });
+});
+
+describe('breath detector fields', () => {
+  const f = (id: number) => CONFIG_FIELDS.find((x) => x.id === id)!;
+
+  it('new defaults match the firmware and encode', () => {
+    expect(FIELD_DEFAULTS.get(TLV.breathThresholdNegDbX100)).toBe(3550);
+    expect(FIELD_DEFAULTS.get(TLV.breathMetric)).toBe(0);
+    expect(FIELD_DEFAULTS.get(TLV.breathDetector)).toBe(0);
+    expect(FIELD_DEFAULTS.get(TLV.breathRearmDb)).toBe(3);
+    for (const id of [TLV.breathThresholdNegDbX100, TLV.breathMetric, TLV.breathDetector, TLV.breathRearmDb]) {
+      expect(() => encodeTlv(toWireRegs([{ id, value: FIELD_DEFAULTS.get(id)! }]))).not.toThrow();
+    }
+  });
+
+  it('negate: 3550 <-> -35.5 and back', () => {
+    const s = f(TLV.breathThresholdNegDbX100);
+    expect(toDisplay(s, 3550)).toBeCloseTo(-35.5, 6);
+    expect(fromDisplay(s, -35.5)).toBe(3550);
+    expect(fromDisplay(s, 0)).toBe(0);
+    expect(Object.is(fromDisplay(s, 0), 0)).toBe(true);
+    expect(fromDisplay(s, -90)).toBe(9000);
+  });
+
+  it('alpha fields show only with the adaptive detector', () => {
+    for (const id of [TLV.audioFastAlphaX1000, TLV.audioSlowAlphaX1000]) {
+      const vis = f(id).visible!;
+      expect(vis(new Map([[TLV.breathDetector, 0]]))).toBe(false);
+      expect(vis(new Map([[TLV.breathDetector, 1]]))).toBe(true);
+    }
+  });
+
+  it('sensitivity is enabled only with a fixed value', () => {
+    const en = f(TLV.breathThresholdNegDbX100).enabled!;
+    expect(en(new Map([[TLV.potControlsThreshold, 1]]))).toBe(false);
+    expect(en(new Map([[TLV.potControlsThreshold, 0]]))).toBe(true);
+  });
+
+  it('switch fields have two options; detector describes both verbatim', () => {
+    for (const id of [TLV.breathDetector, TLV.potControlsThreshold, TLV.breathMetric]) {
+      expect(f(id).kind).toBe('switch');
+      expect(f(id).switchOptions).toHaveLength(2);
+    }
+    expect(f(TLV.breathDetector).describe!(0)).toMatch(/^Dispara quando o som de qualquer microfone passa da linha\./);
+    expect(f(TLV.breathDetector).describe!(1)).toMatch(/^Aprende o ruído da sala em cerca de 3 segundos/);
   });
 });
