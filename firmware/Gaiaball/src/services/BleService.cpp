@@ -20,6 +20,7 @@ constexpr const char *kCommandUuid = "19b10002-e8f2-537e-4f6c-d104768a1214";
 constexpr const char *kCo2Uuid = "19b10003-e8f2-537e-4f6c-d104768a1214";
 constexpr const char *kConfigUuid = "19b10004-e8f2-537e-4f6c-d104768a1214";
 constexpr const char *kDiagUuid = "19b10005-e8f2-537e-4f6c-d104768a1214";
+constexpr const char *kNavUuid = "19b10006-e8f2-537e-4f6c-d104768a1214";
 
 constexpr uint16_t kPreferredMtu = 247;
 // Connection parameters requested from the central as soon as it connects.
@@ -164,14 +165,18 @@ bool BleService::begin(ConfigStore &store, CommandGate &gate) {
       svc->createCharacteristic(kConfigUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
   NimBLECharacteristic *diag =
       svc->createCharacteristic(kDiagUuid, NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ);
-  if (!imu || !cmd || !co2 || !config || !diag) return false;
+  NimBLECharacteristic *nav =
+      svc->createCharacteristic(kNavUuid, NIMBLE_PROPERTY::NOTIFY | NIMBLE_PROPERTY::READ);
+  if (!imu || !cmd || !co2 || !config || !diag || !nav) return false;
 
   notifyChars_[kIdxImu] = imu;
   notifyChars_[kIdxCo2] = co2;
   notifyChars_[kIdxDiag] = diag;
+  notifyChars_[kIdxNav] = nav;
   imu->setCallbacks(new NotifyCb(*this, kIdxImu));
   co2->setCallbacks(new NotifyCb(*this, kIdxCo2));
   diag->setCallbacks(new NotifyCb(*this, kIdxDiag));
+  nav->setCallbacks(new NotifyCb(*this, kIdxNav));
   cmd->setCallbacks(new CommandCb(*this));
   config->setCallbacks(new ConfigCb(*this));
 
@@ -179,9 +184,11 @@ bool BleService::begin(ConfigStore &store, CommandGate &gate) {
   ImuPacket ip{};
   Co2Packet cp{};
   DiagPacket dp{};
+  NavPacket np{};
   imu->setValue(reinterpret_cast<const uint8_t *>(&ip), sizeof(ip));
   co2->setValue(reinterpret_cast<const uint8_t *>(&cp), sizeof(cp));
   diag->setValue(reinterpret_cast<const uint8_t *>(&dp), sizeof(dp));
+  nav->setValue(reinterpret_cast<const uint8_t *>(&np), sizeof(np));
 
   if (!svc->start()) {
     GB_LOGE(kTag, "service start failed");
@@ -205,6 +212,7 @@ void BleService::notifyDiag(const DiagPacket &p) { notify(kIdxDiag, &p, sizeof(p
 void BleService::notifySensors(const SensorsPacket &p) { notify(kIdxDiag, &p, sizeof(p)); }
 void BleService::notifyAudioChunk(const AudioChunkPacket &p) { notify(kIdxDiag, &p, sizeof(p)); }
 void BleService::notifyMagChunk(const MagChunkPacket &p) { notify(kIdxDiag, &p, sizeof(p)); }
+void BleService::notifyNav(const NavPacket &p) { notify(kIdxNav, &p, sizeof(p)); }
 
 uint16_t BleService::connIntervalMsX10() const {
   const uint16_t handle = liveHandle_.load();
@@ -227,6 +235,7 @@ bool BleService::anySubscriber(uint16_t charSel) const {
     case 1: return subMask_[kIdxImu].load() != 0;
     case 3: return subMask_[kIdxCo2].load() != 0;
     case 5: return subMask_[kIdxDiag].load() != 0;
+    case 6: return subMask_[kIdxNav].load() != 0;
     default: return false;
   }
 }

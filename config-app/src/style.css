@@ -272,6 +272,46 @@ input[type='range'] { min-height: 0; padding: 0; accent-color: var(--accent); ba
 .viz-controls select { padding: 4px 8px; min-height: 30px; }
 #viz-stage { position: relative; flex: 1; min-height: 0; }
 #viz canvas { display: block; width: 100%; height: 100%; }
+.view-picker { position: absolute; top: 10px; right: 10px; }
+.view-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.view-btn:hover, .view-btn[aria-expanded='true'] { color: var(--accent); background: var(--raised); }
+.view-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 9em;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+}
+.view-menu[hidden] { display: none; }
+.view-menu button {
+  padding: 6px 10px;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.view-menu button:hover { background: var(--raised); }
+.view-menu button[aria-checked='true'] { color: var(--accent); font-weight: 600; background: var(--raised); }
 
 /* ---- config form ------------------------------------------------------------- */
 fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 14px; padding: 8px 12px 10px; min-width: 0; }
@@ -289,6 +329,9 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
 .cfg-field input[type='number'], .cfg-field input[type='text'], .cfg-field input[type='password'], .cfg-field select {
   width: 10.5em;
 }
+.cfg-field[hidden] { display: none; }
+.cfg-navref { display: inline-flex; gap: 6px; }
+.cfg-navref input[type='number'] { width: 7.6em; }
 .filter-toggle { margin-right: 2px; }
 .cfg-field.filter-off input:not(.filter-toggle), .cfg-field.filter-off select { opacity: 0.4; }
 #panel-config .row input[type='text'] { flex: 1 1 10em; }
@@ -329,6 +372,8 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
   #viz-stage { height: 300px; }
   .cfg-field input[type='number'], .cfg-field input[type='text'], .cfg-field select { width: 100%; }
   .cfg-name { flex-basis: 100%; }
+  .cfg-navref { flex-basis: 100%; }
+  .cfg-navref input[type='number'] { width: 50%; flex: 1 1 0; }
   .metrics { grid-template-columns: auto 1fr; }
   .metrics canvas, .metrics dd + span { display: none; }
 }

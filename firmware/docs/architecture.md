@@ -49,10 +49,12 @@ silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen b
  ┌──────────┐ ImuSample queue (depth 8,  ┌───────────────────────┐   ┌─────────────┐
  │ imu task │──drop-oldest)─────────────>│       app task        │──>│ BLE notify  │ IMU  (char 1)
  │ prio 3   │<─requestZero/Mounting──────│ prio 2                │──>│             │ CO2  (char 3)
- │          │──takeCapturedMounting─────>│  throttle → ImuPacket │──>│             │ Diag (char 5)
- │          │──MagRawSample queue───────>│  CO2 on change / 1 Hz │   └─────────────┘
- │          │  (depth 32, drop-oldest,   │  mag chunk (16/pkt)   │
-                                         │  diag 1 Hz            │          │
+ │          │──takeCapturedMounting─────>│  NavEngine → NavPacket│──>│             │ Diag (char 5)
+ │          │──MagRawSample queue───────>│  throttle → ImuPacket │──>│             │ Nav  (char 6)
+ │          │  (depth 32, drop-oldest,   │  CO2 on change / 1 Hz │   └─────────────┘
+                                         │  mag chunk (16/pkt)   │
+                                         │  diag + nav keepalive │          │
+                                         │  1 Hz                 │          │
  ┌──────────┐ onPeak + levels(): atomics │  LED update 20 Hz     │  BleCommand queue
  │audio task│──lastPeakMs_, peakPending_>│  pot poll 10 Hz       │<─(depth 8)──┤
  │ prio 2   │──rms/peak of the 20 ms win>│  → threshold_ atomic  │             │
@@ -104,6 +106,11 @@ silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen b
   (gyro range, rate and DLPF are register writes; the rest is filter state). A dozen
   independent atomics would let a config write leave the task running half of the old
   setup and half of the new one.
+- **IMU → App (navigation)**: the IMU task stamps every queued `ImuSample` with
+  `zeroEpoch`, bumped on every reference change (zero, mounting, orientation mode). The
+  App task's `NavEngine` (App-task-only, fed on every sample before the IMU notify
+  throttle) resets the globe when the epoch changes, so a new reference never reads as a
+  sudden swing; no extra lock or flag crosses the tasks.
 - **IMU → App (magnetometer capture)**: `0x15` starts the capture; the IMU task pushes
   each RAW magnetometer triplet into a depth-32 queue (drop-oldest, so a stalled reader
   cannot stall the capture) and the App task batches 16 per `MagChunkPacket`. The
@@ -114,7 +121,10 @@ silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen b
 
 ```
 for (;;) {
-  xQueueReceive(imuQueue, 20 ms)  → throttle(imuNotifyHz) → makeImuPacket → notifyImu
+  xQueueReceive(imuQueue, 20 ms)  → updateNav on EVERY sample, before the throttle:
+                                    NavEngine.update → NavPacket every N samples
+                                    (N = max(1, round(imuNotifyHz / navNotifyHz)))
+                                  → throttle(imuNotifyHz) → makeImuPacket → notifyImu
   config dirty?                   → re-apply (see above)
   peak pending?                   → triggerVirtualPulse
   every 100 ms                    → pot.poll, publish threshold atomic
@@ -123,7 +133,8 @@ for (;;) {
                                     led.update (CO2 LED from the real, non-stale ppm)
   every  200 ms                   → sensors packet (audio RMS, threshold, pot) on diag char
   every loop (chunk every 48 ms)  → raw-audio chunk (2 kHz int16) on diag char, if subscribed
-  every 1000 ms                   → diag collect + notifyDiag
+  every 1000 ms                   → diag collect + notifyDiag; nav keepalive (valid = 0)
+                                    if navigation is off or no IMU sample for 500 ms
 
 ## Per-core execution detail (zoom into the firmware)
 
@@ -131,9 +142,10 @@ for (;;) {
 CORE 0 (PRO_CPU) - radio only              CORE 1 (APP_CPU) - acquisition + app logic
 ┌───────────────────────────────┐          ┌─────────────────────────────────────────────┐
 │ NimBLE host task              │          │ imu task · prio 3 · adaptive 2-5 ms tick    │
-│  GATT server, 5 chars         │          │  INT_STATUS ready? → read accel/gyro(+mag)  │
+│  GATT server, 6 chars (6: Nav)│          │  INT_STATUS ready? → read accel/gyro(+mag)  │
 │  notify → up to 2 centrals    │          │  → gyro-bias tracker → Madgwick (6/9 axis)  │
 │  RX cmd write ────────────────┼─queue──▶ │  → mount⁻¹·q → zero⁻¹ → slerp → queue(8)    │
+│                               │          │    (each sample stamped with zeroEpoch)     │
 │  RX config TLV → ConfigStore  │          ├─────────────────────────────────────────────┤
 │   (mutex) → dirty flag        │          │ audio task · prio 2 · blocks on i2s_read    │
 ├───────────────────────────────┤          │  block DC-removal → mono → decimator 2 kHz  │
@@ -144,14 +156,15 @@ CORE 0 (PRO_CPU) - radio only              CORE 1 (APP_CPU) - acquisition + app 
         │        ▼                         │  drain RX → SC8 frame parse → EMA → ppm    │
 ┌───────┴───────────────┐                  ├─────────────────────────────────────────────┤
 │ Site GaiaSenses       │                  │ app task · prio 2 · paced by IMU queue      │
-│ config-app (bancada)  │                  │  1 queue → ImuPacket → notify (throttle)    │
+│ config-app (bancada)  │                  │  1 queue → updateNav (every sample; Nav     │
+│                       │                  │    every N) → ImuPacket → notify (throttle) │
 └───────────────────────┘                  │  2 config dirty? re-apply to services       │
                                            │  3 pending peak? trigger virtual CO2        │
                                            │  4 100 ms: pot poll → threshold atomic      │
                                            │  5  50 ms: LEDs + CO2 notify (change/1 Hz)  │
                                            │  6 200 ms: SensorsPacket                    │
                                            │  7 chunk ready? AudioChunkPacket (~21 Hz)   │
-                                           │  8   1 s: DiagPacket                        │
+                                           │  8   1 s: DiagPacket + nav keepalive        │
                                            │  9 drain cmd queue · persist mount · WDT    │
                                            └─────────────────────────────────────────────┘
 ```

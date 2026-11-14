@@ -229,6 +229,68 @@ Tudo aqui se observa em Métricas › Firmware, que agora publica o estado inter
 6. **Remover calibração** volta ao magnetômetro cru, para comparar.
 5. Para persistir ajustes, **Salvar no dispositivo** (`0x11`). "Aplicar" vale só até reiniciar.
 
+## 4.3 Navegação do globo e gatilho de CO₂ (firmware v9)
+
+O firmware calcula a posição do globo (modo Espelho ou Joystick) e a envia no `NavPacket`
+(característica `…0006`); o painel Métricas › **Navegação** mostra o que chega. Como tudo
+o que está neste roteiro, é **meta de projeto, ainda não medida em hardware**. Pré-requisito:
+IMU funcionando (seção 3.0), config-app conectado e desbloqueado, e o estado de navegação
+diferente de "sem característica de navegação (firmware antigo)".
+
+**Zerar.** Ponha a bola numa superfície plana, parada, com a frente dela (o nariz do
+modelo 3D) voltada para você, e use **Zerar orientação** (painel Conexão). O globo vai ao
+ponto de referência (padrão Campinas/SP: lat −22,9056°, lon −47,0608°) com o norte para
+cima, rumo 0°, e a linha mostra "parado". O zero **não** é gravado: depois de religar a
+bola, zere de novo.
+
+**Espelho** (Configuração › Navegação do globo › Modo de navegação = Espelho, **Aplicar**):
+
+| Item | Como verificar | Esperado |
+|---|---|---|
+| Identidade | Logo após zerar, bola parada | lat/lon do ponto de referência, rumo ≈ 0°, **parado** |
+| Rumo | Gire a bola devagar 90° em torno do eixo da frente (o nariz do modelo 3D, que aponta para você) e pare | O centro não muda; o rumo muda 90° (sinal conforme a convenção do Mapbox); "parado" ~0,5 s depois de parar |
+| Latitude | Volte ao zero e gire 90° em torno do eixo esquerda-direita (levantar/baixar o nariz) | O centro anda 90° ao longo do meridiano: lat +67,1° e lon −47,1° num sentido, lat −67,1° e lon 132,9° (do outro lado do globo) no outro |
+| Longitude | Volte ao zero e gire 90° em torno do eixo vertical (como um pião) | O centro anda 90° ao longo do grande círculo leste-oeste e cai no equador: lat ≈ 0° e lon −137,1° num sentido, lon 42,9° no outro |
+| Site | Repita um dos gestos com o site conectado | O globo do site mostra o mesmo centro e o mesmo rumo do painel Métricas |
+| Movimento/parada | Gire rápido (acima de ~20 °/s) e depois pare | "em movimento" durante o giro; "parado" ~0,5 s depois de parar: a velocidade é medida numa janela de ~100 ms, e depois precisa ficar `navStopMs` (420 ms) abaixo de 5 °/s |
+| Giro lento | Com a bola parada, gire-a bem devagar (bem abaixo de 20 °/s, por exemplo ~5 °/s) em torno do eixo vertical | Continua "parado" até a bola girar ~3° a partir de onde parou; daí passa a "em movimento" e o globo (no painel e no site) acompanha o giro |
+| Na mão | Segure a bola na mão, o mais parada que conseguir | "parado" ~0,5 s depois de parar, apesar do tremor da mão (8–12 Hz), que a janela de ~100 ms cancela |
+| Voltar ao zero | **Zerar orientação** em outra postura | O globo volta ao ponto de referência na hora |
+
+**Joystick** (Modo de navegação = Joystick, **Aplicar**; zere de novo antes):
+
+| Item | Como verificar | Esperado |
+|---|---|---|
+| Parado no zero | Bola no zero | Velocidade 0,0 °/s e "parado"; o globo não anda |
+| Inclinar | Incline a bola ~30° e segure | O globo gira continuamente; a velocidade fica constante (≈ 90 × (30/60)³ ≈ 11 °/s com os padrões) e "em movimento" |
+| Mais inclinação | Aumente para ~60° ou mais | Velocidade vai até o máximo (90 °/s por padrão) |
+| Devolver ao zero | Volte a bola à posição zero | Velocidade cai a 0,0 °/s, "parado" depois de 420 ms, o globo fica onde parou |
+| Ao vivo | Mude **Velocidade máxima** ou **Curva de resposta** com a bola inclinada e **Aplicar** | Vale na hora e o globo **não** salta de volta ao ponto de referência |
+
+Observações para quem for conferir os números: em Espelho, "em movimento" (bit 2 do
+pacote) é instantâneo, e "parado" (bit 1) tem histerese e tempo de espera, então os dois
+podem coexistir por um instante (flags `0x07`) quando a velocidade está entre os limiares
+de parada e de partida. Em Joystick a velocidade informada é 0 enquanto "parado". A taxa de
+pacotes de navegação é 50 Hz com os padrões (um a cada N amostras do IMU,
+N = máx(1, arred(taxa do IMU ÷ taxa de navegação))); o painel Métricas e o site recebem a
+mesma sequência.
+
+**Reset do globo:** trocar o modo, trocar o ponto de referência, **Zerar orientação**,
+**Calibrar montagem** ou alternar Quat6 ↔ Quat9 levam o globo ao ponto de referência. Mexer
+nos demais parâmetros de navegação não.
+
+**Keepalive:** com Modo de navegação = Desligado (ou com o IMU parado/desconfigurado), a linha Navegação
+mostra "sem dados" e continua atualizando uma vez por segundo, sem pose.
+
+**Gatilho de CO₂** (Configuração › CO₂: gatilho 1200 ppm, histerese 50 ppm por padrão):
+o pacote de CO₂ ganhou o bit 3 (`0x08`) das flags. O painel Métricas o mostra na linha
+CO₂ ("gatilho: ligado/desligado"); um cliente BLE genérico o lê na característica `…0003`
+(byte 10, bit 3). Dê uma
+palma a ~1 m: o pulso virtual (2100 ppm, ~1 s depois) deve ligar o bit; ele só desliga quando o
+ppm reportado cair a 1150 ppm ou menos (ou o sensor ficar "stale" sem pulso ativo), isto é,
+no fim do pulso de ~17 s. Soprar perto do sensor real (acima de 1200 ppm) liga o bit do mesmo
+modo.
+
 ## 5. CO₂: validar o SC8-CO2-5K
 
 O sensor da placa é um **SC8-CO2-5K** (Shenzhen Shenchen Technology, vendido como

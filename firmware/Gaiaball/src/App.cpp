@@ -150,6 +150,7 @@ void App::taskLoop() {
     if (elapsed(nowMs, lastDiagMs_, kDiagPeriodMs)) {
       lastDiagMs_ = nowMs;
       sendDiag(nowMs);
+      maybeSendNavKeepalive(nowMs);
     }
 
     if (elapsed(nowMs, lastSensorsMs_, kSensorsPeriodMs)) {
@@ -167,6 +168,9 @@ void App::taskLoop() {
 }
 
 void App::handleImuSample(const ImuSample &s) {
+  // First, and unthrottled: the globe integrates at the IMU rate, whatever the IMU
+  // notify rate is.
+  updateNav(s);
   if (!imuThrottle_.shouldSend(s.tUs)) return;
   if (!ble_.anySubscriber(1)) return;
   const float q[4] = {s.q.w, s.q.x, s.q.y, s.q.z};
@@ -184,6 +188,21 @@ void App::handleImuSample(const ImuSample &s) {
   imuNotifiesInWindow_++;
 }
 
+void App::updateNav(const ImuSample &s) {
+  const bool quatValid = (s.flags & kImuQuatValid) != 0;
+  if (!nav_.update(s.tUs, s.q, quatValid, s.zeroEpoch, millis())) return;
+  if (!ble_.anySubscriber(6)) return;  // nav characteristic (…0006)
+  ble_.notifyNav(nav_.packet(navSeq_++));
+}
+
+// Keeps a nav subscriber informed while there is no pose to send: navigation off, no
+// IMU at all, or no sample for more than NavEngine::kKeepaliveSilenceMs.
+void App::maybeSendNavKeepalive(uint32_t nowMs) {
+  if (!nav_.keepaliveDue(nowMs)) return;
+  if (!ble_.anySubscriber(6)) return;
+  ble_.notifyNav(nav_.keepalivePacket(navSeq_++, micros()));
+}
+
 void App::applySnapshot(const GaiaConfig &cfg) {
   gate_.setPin(cfg.pin);
   co2AlertPpm_ = cfg.co2AlertPpm;
@@ -194,6 +213,11 @@ void App::applySnapshot(const GaiaConfig &cfg) {
   audioHpHz_ = cfg.audioHpHz;
   audioLpHz_ = cfg.audioLpHz;
   virtualPulse_.configure(cfg.virtualPeakPpm, cfg.virtualDelayMs, cfg.virtualHoldMs);
+  co2Trigger_.configure(cfg.co2TriggerPpm, cfg.co2TriggerHystPpm);
+  // Acts only on real changes: a new navMode or reference point resets the globe;
+  // joystick and settle parameters apply live; imuNotifyHz / navNotifyHz re-time the
+  // packets.
+  nav_.configure(cfg);
   // setRateHz() restarts the schedule: only call it on an actual change.
   if (cfg.imuNotifyHz != imuNotifyHz_) {
     imuNotifyHz_ = cfg.imuNotifyHz;
@@ -231,11 +255,15 @@ uint16_t App::reportedCo2Ppm(uint32_t nowMs) {
 void App::maybeNotifyCo2(uint32_t nowMs) {
   const uint16_t ppm = reportedCo2Ppm(nowMs);
   const bool stale = co2_.stale(nowMs);
+  const bool pulse = virtualPulse_.active(nowMs);
   uint8_t flags = 0;
   // valid = ppm is backed by a fresh real reading (co2Enabled and not stale).
   if (co2Enabled_ && !stale) flags |= kCo2Valid;
   if (stale) flags |= kCo2Stale;
-  if (virtualPulse_.active(nowMs)) flags |= kCo2VirtualActive;
+  if (pulse) flags |= kCo2VirtualActive;
+  // On the REPORTED ppm (the virtual pulse counts); a stale sensor forces it off unless
+  // the pulse is what supplies the ppm. A flip is a flags change: sent right away.
+  if (co2Trigger_.update(ppm, stale, pulse)) flags |= kCo2Trigger;
 
   const bool changed = !co2Sent_ || ppm != lastCo2Ppm_ || flags != lastCo2Flags_;
   if (!changed && !elapsed(nowMs, lastCo2NotifyMs_, kCo2KeepaliveMs)) return;

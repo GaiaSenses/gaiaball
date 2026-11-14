@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { decodeAudioChunkPacket, decodeCo2Packet, decodeDiagPacket, decodeImuPacket, decodeMagChunkPacket, decodeSensorsPacket, rmsToDbfs } from './packets';
-import { TLV, VALID_OUTPUT_GPIOS, buildCommand, decodeTlv, encodeTlv } from './tlv';
+import { decodeAudioChunkPacket, decodeCo2Packet, decodeDiagPacket, decodeImuPacket, decodeMagChunkPacket, decodeNav, decodeSensorsPacket, rmsToDbfs } from './packets';
+import { TLV, VALID_OUTPUT_GPIOS, buildCommand, decodeNavRef, decodeTlv, encodeNavRef, encodeTlv, navRefToString, parseNavRefString } from './tlv';
 
 const hex = (s: string) => new DataView(new Uint8Array(s.trim().split(/\s+/).map((b) => parseInt(b, 16))).buffer);
 
@@ -151,7 +151,7 @@ describe('invalid input returns null', () => {
 
 describe('TLV', () => {
   it('registry ids', () => {
-    expect(Object.keys(TLV)).toHaveLength(47);
+    expect(Object.keys(TLV)).toHaveLength(60);
     expect(TLV.orientationMode).toBe(0x01);
     expect(TLV.imuNotifyHz).toBe(0x02);
     expect(TLV.slerpAmount).toBe(0x03);
@@ -203,5 +203,112 @@ describe('VALID_OUTPUT_GPIOS', () => {
     expect(VALID_OUTPUT_GPIOS).toContain(13);
     expect(VALID_OUTPUT_GPIOS).toContain(33);
     expect(VALID_OUTPUT_GPIOS).toHaveLength(22);
+  });
+});
+
+// Golden vectors A and B copied verbatim from the navigation protocol spec.
+const NAV_A = '01 07 02 01 4E 61 BC 00 01 03 B8 E3 58 F2 36 16 F3 E3 94 11 7B 00';
+const NAV_B = '01 07 FF FF FF FF FF FF 02 06 00 E9 A4 35 00 2E B6 94 B0 B9 FF FF';
+
+describe('NavPacket', () => {
+  it('golden A', () => {
+    const s = decodeNav(hex(NAV_A))!;
+    expect(s.seq).toBe(258);
+    expect(s.tUs).toBe(12345678);
+    expect(s.mode).toBe(1);
+    expect(s.flags).toBe(0x03);
+    expect([s.valid, s.settled, s.moving]).toEqual([true, true, false]);
+    expect(s.lat).toBeCloseTo(-22.905556, 7);
+    expect(s.lon).toBeCloseTo(-47.060833, 7);
+    expect(s.bearingDeg).toBe(45);
+    expect(s.speedDegS).toBeCloseTo(12.3, 6);
+  });
+  it('golden B (extremes)', () => {
+    const s = decodeNav(hex(NAV_B))!;
+    expect(s.seq).toBe(65535);
+    expect(s.tUs).toBe(4294967295);
+    expect(s.mode).toBe(2);
+    expect([s.valid, s.settled, s.moving]).toEqual([false, true, true]);
+    expect(s.lat).toBe(90);
+    expect(s.lon).toBe(-180);
+    expect(s.bearingDeg).toBe(-180);
+    expect(s.speedDegS).toBeCloseTo(6553.5, 6);
+  });
+  it('rejects wrong length, version and type', () => {
+    const b = new Uint8Array(hex(NAV_A).buffer);
+    expect(decodeNav(new DataView(b.buffer, 0, 21))).toBeNull();
+    expect(decodeNav(new DataView(new Uint8Array(23).buffer))).toBeNull();
+    expect(decodeNav(new DataView(new ArrayBuffer(0)))).toBeNull();
+    const v = new Uint8Array(b); v[0] = 2;
+    expect(decodeNav(new DataView(v.buffer))).toBeNull();
+    const t = new Uint8Array(b); t[1] = 0x06;
+    expect(decodeNav(new DataView(t.buffer))).toBeNull();
+    expect(decodeNav(hex(CO2))).toBeNull();
+    expect(decodeCo2Packet(hex(NAV_A))).toBeNull();
+  });
+});
+
+describe('Co2Packet trigger flag', () => {
+  it('exposes bit3', () => {
+    const b = new Uint8Array(hex(CO2).buffer);
+    expect(decodeCo2Packet(new DataView(b.buffer))!.trigger).toBe(false); // flags 0x05
+    b[10] = 0x0d;
+    const s = decodeCo2Packet(new DataView(b.buffer))!;
+    expect(s.trigger).toBe(true);
+    expect([s.valid, s.stale, s.virtualActive]).toEqual([true, false, true]);
+  });
+});
+
+describe('navigation TLV registers', () => {
+  const cases: [string, number, number, number, number][] = [
+    // name, id, wire bytes, valid value, ...
+    ['co2TriggerPpm', 0x29, 2, 1200, 400],
+    ['co2TriggerHystPpm', 0x2a, 2, 50, 2000],
+    ['navMode', 0x60, 1, 1, 2],
+    ['navNotifyHz', 0x61, 1, 50, 200],
+    ['joyMaxSpeedDegS', 0x63, 2, 90, 720],
+    ['joyFullAngleDeg', 0x64, 1, 60, 90],
+    ['joyCurveX10', 0x65, 1, 30, 40],
+    ['navStartDegS', 0x66, 1, 20, 200],
+    ['navStopDegS', 0x67, 1, 5, 100],
+    ['navStopMs', 0x68, 2, 420, 5000],
+    ['joyStartDegSX10', 0x69, 2, 10, 2000],
+    ['joyStopDegSX10', 0x6a, 2, 5, 2000],
+  ];
+  it.each(cases)('%s round-trips', (name, id, bytes, v1, v2) => {
+    expect((TLV as Record<string, number>)[name]).toBe(id);
+    for (const v of [v1, v2]) {
+      const enc = encodeTlv([{ id, value: v }]);
+      expect(enc.length).toBe(2 + bytes);
+      expect(enc[0]).toBe(id);
+      expect(enc[1]).toBe(bytes);
+      const dv = decodeTlv(new DataView(enc.buffer)).get(id)!;
+      expect(bytes === 1 ? dv.getUint8(0) : dv.getUint16(0, true)).toBe(v);
+    }
+  });
+  it('navRef is 8 bytes: i32 latE6 + i32 lonE6, little-endian', () => {
+    expect(TLV.navRef).toBe(0x62);
+    const rec = encodeNavRef({ lat: -22.905556, lon: -47.060833 });
+    const dv = new DataView(rec.buffer);
+    expect(dv.getInt32(0, true)).toBe(-22905556);
+    expect(dv.getInt32(4, true)).toBe(-47060833);
+    const enc = encodeTlv([{ id: TLV.navRef, value: rec }]);
+    expect(enc.length).toBe(10);
+    expect(enc[1]).toBe(8);
+    const back = decodeNavRef(decodeTlv(new DataView(enc.buffer)).get(TLV.navRef)!)!;
+    expect(back).toEqual({ lat: -22.905556, lon: -47.060833 });
+    expect(() => encodeTlv([{ id: TLV.navRef, value: new Uint8Array(7) }])).toThrow(RangeError);
+    expect(decodeNavRef(new DataView(new ArrayBuffer(7)))).toBeNull();
+    expect(() => encodeNavRef({ lat: 90.000001, lon: 0 })).toThrow(RangeError);
+    expect(() => encodeNavRef({ lat: 0, lon: -180.000001 })).toThrow(RangeError);
+    expect(decodeNavRef(new DataView(encodeNavRef({ lat: 90, lon: -180 }).buffer))).toEqual({ lat: 90, lon: -180 });
+  });
+  it('navRef canonical string round-trips', () => {
+    const s = navRefToString({ lat: -22.905556, lon: -47.060833 });
+    expect(s).toBe('-22.905556,-47.060833');
+    expect(parseNavRefString(s)).toEqual({ lat: -22.905556, lon: -47.060833 });
+    expect(navRefToString({ lat: -0.0000001, lon: 0 })).toBe('0.000000,0.000000');
+    expect(parseNavRefString('abc')).toBeNull();
+    expect(parseNavRefString('1,')).toBeNull();
   });
 });

@@ -10,7 +10,7 @@ compositions (Pure Data).
 ```
  ┌─────────────────────────── Gaiaball (this repo) ───────────────────────────┐
  │                                                                            │
- │  GY-91 IMU ──┐                                                             │
+ │  IMU ────────┐                                                             │
  │  2× INMP441 ─┤   ESP32 firmware          BLE (binary protocol v1)          │
  │  SC8 CO2 ────┼─▶ FreeRTOS + NimBLE  ───────────────┬──────────────▶ GaiaSenses site
  │  Pot + LEDs ─┘   (firmware/)                       └──────────────▶ config-app
@@ -41,15 +41,24 @@ The full netlist cross-check against the KiCAD board design lives in
 - **Blow detection.** The mics are band-passed (configurable HP/LP biquads, default
   10–200 Hz) before an RMS peak detector; a detected blow triggers a "virtual CO₂"
   pulse that the site turns into a composition. The raw (unfiltered) audio is also
-  streamed, decimated to 2 kHz, so the config-app can show a live spectrum for
-  tuning the band.
+  available as an **opt-in** stream (TLV `0x1F`, off by default), decimated to 2 kHz,
+  so the config-app can show a live spectrum for tuning the band. What the application
+  uses arrives on every orientation packet instead: the measured RMS and peak per
+  channel.
+- **Globe navigation.** The ball itself computes where the virtual globe points: in
+  **mirror** mode the globe is the ball's orientation, in **joystick** mode the tilt of
+  the ball steers the globe at a speed set by the tilt angle, and a moving/settled state
+  machine with hysteresis tells the site when it has stopped. The result (centre
+  latitude/longitude, Mapbox bearing, speed, flags) leaves the ball as a 22-byte
+  NavPacket on its own BLE characteristic, so the site only has to draw it. Frames,
+  laws and parameters are in [`firmware/docs/protocol.md`](firmware/docs/protocol.md).
 - **CO₂.** The SC8-CO2-5K streams one checksummed 16-byte frame per second on its
   own. The firmware is strictly listen-only — per the SC8 datasheet, any query
   halts the active stream until the next power cycle — and resynchronizes on the
   frame header after any byte loss.
 - **Transport.** Everything leaves the ball as small, versioned, little-endian
-  binary packets with sequence numbers and timestamps (23 B orientation packets at
-  up to 200 Hz), over a NimBLE GATT server that accepts **two centrals at once** —
+  binary packets with sequence numbers and timestamps (31 B orientation packets, microphone
+  envelope included, at up to 200 Hz), over a NimBLE GATT server that accepts **two centrals at once** —
   the site and the config-app side by side. Sensitive commands and configuration
   writes require a 4-digit PIN unlock per connection.
 - **Configuration.** Every parameter (rates, filters, thresholds, pins, names) is a
@@ -57,8 +66,12 @@ The full netlist cross-check against the KiCAD board design lives in
   settings survive power cycles.
 
 The wire format — packets, TLV registry, commands — is specified in
-[`firmware/docs/protocol.md`](firmware/docs/protocol.md). The task/queue
-architecture, including a per-core execution diagram, is in
+[`firmware/docs/protocol.md`](firmware/docs/protocol.md). For readers new to BLE (artists,
+students, makers) and for engineers integrating another device, the same protocol is
+explained step by step in Portuguese in [`docs/protocolo-ble.md`](docs/protocolo-ble.md):
+BLE basics, why binary instead of JSON, every packet byte by byte, globe navigation, the
+PIN and the TLV configuration, runnable JavaScript, Python and C clients, and the golden
+vectors. The task/queue architecture, including a per-core execution diagram, is in
 [`firmware/docs/architecture.md`](firmware/docs/architecture.md).
 
 ## Repository map
@@ -68,6 +81,7 @@ architecture, including a per-core execution diagram, is in
 | `firmware/` | **The v2 firmware** (ESP32, FreeRTOS, NimBLE, binary protocol). Dual toolchain: PlatformIO and Arduino IDE/CLI. See [`firmware/README.md`](firmware/README.md). |
 | `config-app/` | **Bench & configuration web app** (Vite + TypeScript, Web Bluetooth): 3D orientation view, per-sensor real-time charts with a shared time axis, audio spectrum analyzer, stream metrics, full parameter editor with presets. See [`config-app/README.md`](config-app/README.md). |
 | `pd-gaiaball/` | **Pure Data object `[gaiaball]`** (vanilla abstraction + cross-platform BLE→UDP bridge in Python/bleak): read-only access to every Gaiaball reading from inside Pd on Windows, Linux and macOS. Audio arrives as the treated envelope (per-channel RMS and peak, at the orientation rate), never as samples — the spectrum stays in the browser. See [`pd-gaiaball/README.md`](pd-gaiaball/README.md). |
+| `docs/protocolo-ble.md` | **Didactic BLE protocol guide** (pt-BR): BLE basics, every packet and TLV register, navigation, runnable JavaScript/Python/C clients and golden vectors. An identical copy lives in `Gaiasenses-web` as `docs/gaiaball-protocolo-ble.md`; this one is the reference. See [`docs/protocolo-ble.md`](docs/protocolo-ble.md). |
 | `docs/bench-validation.md` | Step-by-step hardware validation script (flash, rates, loss, filters, CO₂, 24 h soak). |
 | `relatorio/index.html` | Interactive report (pt-BR): every defect found in the legacy firmware, the fix, the expected impact, and the bench checklist. Open it in a browser. |
 | `firmware-original.ino` | The legacy (v1) firmware, **preserved untouched as a historical reference**; no longer built. |
@@ -111,17 +125,21 @@ read the configuration, and follow the bench script in
 
 ## Deploying with GaiaSenses (order matters)
 
-The site needs the `feature/gaiaball-binary-protocol` branch of `Gaiasenses-web`,
-which adds the binary-protocol decoder (with a JSON fallback for the legacy
-firmware).
+The current GaiaSenses site reads **only** the binary protocol (there is no JSON
+fallback any more) and takes the globe pose and the CO₂ trigger from the ball: it needs
+characteristic `…0006` (NavPacket) to move the globe and the Co2Packet `trigger` bit to
+open compositions.
 
 | Combination | Works? |
 |---|---|
-| New site + old firmware | ✅ yes — the decoder falls back to legacy JSON |
-| New site + new firmware | ✅ yes |
-| Old site + new firmware | ❌ **no** — the old site only parses JSON |
+| Current site + navigation firmware | ✅ yes |
+| Current site + v2 firmware older than the navigation build | ⚠️ partly — orientation and CO₂ ppm arrive, but there is no characteristic `…0006` (the globe does not move; the site shows a warning) and the CO₂ `trigger` bit is never set, so CO₂-triggered compositions silently stop opening |
+| Current site + legacy firmware (`firmware-original.ino`, JSON) | ❌ **no** — the site drops the JSON notifications |
+| A site that still parses only JSON + any v2 firmware | ❌ **no** — that site cannot read the binary packets |
 
-**Deploy the site first (or simultaneously), then flash the v2 firmware.**
+**Flash every ball with the navigation firmware first, then publish the site.** Keep the
+gap between the two short: a site that still parses only JSON cannot read a reflashed
+ball.
 
 ## Testing
 

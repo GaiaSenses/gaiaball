@@ -14,7 +14,8 @@ import { mountSensorsPanel } from './panels/sensors-panel.ts';
 import { decorateInfo } from './panels/info.ts';
 import { initTheme, onThemeChange, resolvedTheme, toggleTheme } from './theme.ts';
 import { OrientationScene } from './viz/orientation-scene.ts';
-import type { AudioChunkSample, Co2Sample, ImuSample, SensorsSample } from './protocol/packets.ts';
+import { VIEW_PRESETS, type ViewId } from './viz/view-presets.ts';
+import type { AudioChunkSample, Co2Sample, ImuSample, NavSample, SensorsSample } from './protocol/packets.ts';
 
 initTheme();
 
@@ -41,6 +42,12 @@ app.innerHTML = `
       </div>
       <div id="viz-stage">
         <canvas id="viz-canvas"></canvas>
+        <div class="view-picker">
+          <button id="btn-view" type="button" class="view-btn" aria-label="Vistas da câmera" title="Vistas da câmera" aria-haspopup="menu" aria-expanded="false">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/></svg>
+          </button>
+          <div id="view-menu" class="view-menu" role="menu" aria-label="Vistas da câmera" hidden></div>
+        </div>
       </div>
     </div></div>
     <aside id="panels">
@@ -106,6 +113,44 @@ const scene = new OrientationScene(app.querySelector<HTMLCanvasElement>('#viz-ca
 scene.setDark(resolvedTheme() === 'dark');
 onThemeChange((t) => scene.setDark(t === 'dark'));
 window.addEventListener('pagehide', () => scene.dispose());
+
+// CAD-style view menu (top-right corner of the 3D stage).
+{
+  const btn = app.querySelector<HTMLButtonElement>('#btn-view')!;
+  const menu = app.querySelector<HTMLElement>('#view-menu')!;
+  menu.innerHTML = VIEW_PRESETS.map((p) =>
+    `<button type="button" role="menuitemradio" aria-checked="false" data-view="${p.id}" tabindex="-1">${p.label}</button>`).join('');
+  const items = [...menu.querySelectorAll<HTMLButtonElement>('button')];
+  const setOpen = (open: boolean) => {
+    menu.hidden = !open;
+    btn.setAttribute('aria-expanded', String(open));
+    if (open) {
+      const cur = scene.currentView();
+      items.forEach((b) => b.setAttribute('aria-checked', String(b.dataset.view === cur)));
+      (items.find((b) => b.dataset.view === cur) ?? items[0]).focus();
+    }
+  };
+  btn.addEventListener('click', () => setOpen(btn.getAttribute('aria-expanded') !== 'true'));
+  menu.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-view]');
+    if (!b) return;
+    scene.setView(b.dataset.view as ViewId);
+    setOpen(false);
+    btn.focus();
+  });
+  menu.addEventListener('keydown', (e) => {
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    e.preventDefault();
+    const i = items.indexOf(document.activeElement as HTMLButtonElement);
+    items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !menu.hidden) { setOpen(false); btn.focus(); }
+  });
+  document.addEventListener('click', (e) => {
+    if (!menu.hidden && !(e.target as HTMLElement).closest('.view-picker')) setOpen(false);
+  });
+}
 app.querySelector<HTMLSelectElement>('#sel-model')!.addEventListener('change', (e) =>
   scene.setModel((e.target as HTMLSelectElement).value as 'plane' | 'box'));
 
@@ -207,6 +252,28 @@ if (new URLSearchParams(location.search).get('demo')) {
     };
     emit('audio', detail);
   }, 48);
+  // Navigation: lat/lon/bearing drift slowly around the default reference; the globe alternates
+  // between moving (~6 s) and settled (~4 s). Cadence 20 Hz, enough for the demo (the real
+  // default navNotifyHz is 50 Hz).
+  let navSeq = 0;
+  setInterval(() => {
+    const t = performance.now() / 1000;
+    const moving = (t % 10) < 6;
+    const detail: NavSample = {
+      seq: navSeq++ & 0xffff,
+      tUs: Math.round(t * 1e6) >>> 0,
+      mode: 1,
+      flags: moving ? 0b101 : 0b011,
+      valid: true,
+      settled: !moving,
+      moving,
+      lat: -22.905556 + 8 * Math.sin(t * 0.07),
+      lon: -47.060833 + 12 * Math.sin(t * 0.05),
+      bearingDeg: ((t * 9 + 180) % 360) - 180,
+      speedDegS: moving ? 30 + 20 * Math.sin(t * 0.8) : 0,
+    };
+    emit('nav', detail);
+  }, 50);
   let co2Seq = 0;
   setInterval(() => {
     const t = performance.now() / 1000;
@@ -219,6 +286,7 @@ if (new URLSearchParams(location.search).get('demo')) {
       valid: true,
       stale: false,
       virtualActive: false,
+      trigger: false,
     };
     emit('co2', detail);
   }, 1000);
