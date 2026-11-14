@@ -154,8 +154,10 @@ protocolo.
 ### Formato
 
 O pacote de movimento troca o **significado** dos três `int16` de aceleração: de contagens do
-sensor (8192 = 1 g) para **mg** (1 g = 1000 mg). Tamanho, ordem e posição dos campos ficam
-iguais: o pacote continua com **31 bytes**.
+sensor (8192 = 1 g) para **mg** (1 g = 1000 mg), na mesma posição. O envelope dos microfones
+passa de `int16` dBFS×100 para **`u8` em meio-dB** (decisão do usuário, depois de comparar o
+tamanho): `valor = round((dBFS + 120) × 2)`, `dBFS = valor / 2 − 120`, faixa −120 a +7,5 dBFS,
+passo de 0,5 dB (o mesmo passo da sensibilidade do sopro). O pacote cai de 31 para **27 bytes**.
 
 | Offset | Bytes | Tipo | Campo |
 |---|---|---|---|
@@ -166,8 +168,8 @@ iguais: o pacote continua com **31 bytes**.
 | 8 | 8 | 4 × i16 | quaternion Q14 (`w x y z`) |
 | 16 | 6 | 3 × i16 | **aceleração X, Y, Z em mg** |
 | 22 | 1 | u8 | `flags` (bit 4 = sopro, da Parte 1) |
-| 23 | 4 | 2 × i16 | RMS dos microfones (E, D), dBFS ×100 |
-| 27 | 4 | 2 × i16 | pico dos microfones (E, D), dBFS ×100 |
+| 23 | 2 | 2 × u8 | RMS dos microfones (E, D), meio-dB (`dBFS = v/2 − 120`) |
+| 25 | 2 | 2 × u8 | pico dos microfones (E, D), meio-dB (`dBFS = v/2 − 120`) |
 
 - **Versão por pacote, como manda a regra 8 do guia** ("mudança incompatível = versão nova;
   os decodificadores v1 descartam esses pacotes"): mesmo sem mudar de tamanho, os bytes 16–21
@@ -183,8 +185,9 @@ iguais: o pacote continua com **31 bytes**.
   - **Faixa:** ±4 g viram ±4000 mg; o `int16` comporta até ±32 767 mg.
   - Números inteiros saem limpos em qualquer linguagem (sem o problema de mostrar
     `0.12340000271…` de um `float32`).
-- **Sem custo no rádio:** o tamanho não muda; MTU continua ≥ 34 e o orçamento do README do
-  firmware continua valendo.
+- **Rádio:** o pacote passa a pedir MTU ≥ 30 e custa `(27 + 17) × 8 + 380` = 732 µs, 32 µs a
+  menos que hoje (1,6 ms de ar por segundo a 50 Hz). O orçamento do README do firmware é
+  recalculado.
 - **Golden novo** do pacote de movimento em `test_protocol.cpp`, copiado à mão para
   `protocol.md`, `protocolo-ble.md`, `packets.test.ts` e o teste do site, como hoje.
 
@@ -231,10 +234,10 @@ iguais: o pacote continua com **31 bytes**.
 
 ### Testes da Parte 0
 
-- Firmware: o golden novo; `sizeof(ImuPacket) == 31`; a conversão (contagens conhecidas → mg,
+- Firmware: o golden novo; `sizeof(ImuPacket) == 27`; a conversão (contagens conhecidas → mg,
   incluindo ±32768 contagens → ±4000 mg, 0, e valores que arredondam para cima e para baixo).
 - config-app e site: decodificação do golden; recusa do pacote de movimento versão 1 e de
-  pacotes curtos; o envelope dos microfones continua nos offsets 23–30.
+  pacotes curtos; o envelope dos microfones em meio-dB nos offsets 23–26.
 - Guia: os exemplos em JavaScript, Python e C rodam contra o golden novo, como na primeira
   versão do guia.
 
@@ -298,7 +301,7 @@ iguais: o pacote continua com **31 bytes**.
 | Id | Nome | Tipo | Faixa | Padrão | Observação |
 |---|---|---|---|---|---|
 | `0x14` | potControlsThreshold | u8 | 0/1 | 1 | Inalterado: 1 = potenciômetro, 0 = valor fixo |
-| `0x2B` | breathThresholdDbX100 | i16 | −9000…0 | −3550 | Limiar fixo em dBFS ×100, na medida ativa. No adaptativo, é o quanto o som sobe acima da linha de base |
+| `0x2B` | breathThresholdNegDbX100 | u16 | 0…9000 | 3550 | Limiar fixo em −dBFS ×100, na medida ativa (3550 = −35,5 dBFS; sem sinal porque nem o firmware nem a config-app têm tipo TLV com sinal). No adaptativo, é o quanto o som sobe acima da linha de base |
 | `0x2C` | breathMetric | u8 | 0 RMS / 1 pico | 0 | |
 | `0x2D` | breathDetector | u8 | 0 absoluto / 1 adaptativo | 0 | |
 | `0x2E` | breathRearmDb | u8 | 0…20 dB, inteiro | 3 | Quanto o som precisa cair abaixo do limiar para rearmar |
@@ -451,9 +454,9 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
   - Aperto de mão com SHA-1 + base64 embutidos (implementações pequenas de domínio
     público); quadros com máscara, `ping`/`pong`, `close`; mensagens fragmentadas e de texto
     são recusadas.
-  - Aceita só conexões cujo cabeçalho `Origin` seja o da config-app publicada
-    (`https://gaiasenses.github.io`) ou `http://localhost`/`http://127.0.0.1` em qualquer
-    porta (desenvolvimento). Outros sites são recusados.
+  - **Aceita conexão de qualquer origem** (decisão do usuário: o domínio final do projeto
+    ainda não existe, e nenhum domínio fica gravado no objeto nem no firmware). A proteção é
+    escutar só em `127.0.0.1` e o pedido "Apps neste dispositivo" do Chrome.
   - Um cliente por vez: uma conexão nova substitui a anterior.
   - Mais de um `[gaiaball]` na mesma porta: o segundo avisa no console do Pd e fica inerte.
 - **Decodificador separado do transporte** (arquivo próprio), em C, espelhando o
@@ -611,6 +614,8 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
 - A bola emite a aceleração em mg, inteiros de 16 bits; protocolo, site, patches, gráficos
   da config-app e documentação usam mg.
 - Rearme em dB inteiros (passo de 1 dB).
+- Envelope dos microfones em `u8` meio-dB (pacote de movimento com 27 B).
+- `[gaiaball]` sem lista de origens: o domínio final ainda não foi definido.
 
 ## Decisões minhas (para o usuário conferir)
 
@@ -620,14 +625,14 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
    cadência de hoje (3 blocos) e ganha RMS/pico e o rearme em dB. Rearme padrão 3,0 dB
    (faixa 0 a 20 dB); debounce mantido.
 3. Potenciômetro linear em dB (−60…0); campo de −90 a 0 dBFS em passos de 0,5.
-4. TLVs `0x2B` a `0x2E` novos; só o `0x15` aposentado; tamanhos de pacote inalterados.
+4. TLVs `0x2B` a `0x2E` novos (`0x2B` sem sinal); só o `0x15` aposentado.
 5. Padrões: absoluto, potenciômetro, RMS, −35,5 dBFS, rearme 3 dB (0 a 20 dB).
 6. Chave deslizante só nas escolhas de duas opções; checkboxes liga/desliga ficam.
 7. "Modo ajuste" no lugar de "modo dev".
 8. No modo palco ficam ativos a sensibilidade, o medidor, o pulso e o status do Pd.
 9. Repassar só movimento, CO₂ e navegação; descartar acima de 4 KB em fila.
 10. "Enviar ao Pd" ligado por padrão, porta 9478, reconexão a cada 2 s.
-11. O objeto aceita só a origem da config-app publicada e `localhost`; um cliente por vez.
+11. O objeto aceita qualquer origem (decisão do usuário); um cliente por vez.
 12. Canais com o vocabulário do site + os canais novos da tabela, enviados a cada pacote.
 13. `gaiaball_bridge.py`, `requirements.txt` e a abstração antiga saem.
 14. Config-app publicada no GitHub Pages do repo `gaiaball`.
