@@ -199,8 +199,11 @@ O pacote de movimento troca as três acelerações `int16` em contagens por trê
     `gaia.sensors` com "aceX aceY aceZ em g" na ajuda.
   - `patches/paraisoGaia43/patch.json`: `tuning.accEpsilon` de `0.05` para `0.0001`. Em
     contagens, 0,05 não filtrava nada (a menor mudança é 1 contagem); 0,0001 g é menor que
-    1 contagem (0,000122 g) e preserva esse comportamento. Se o site tiver um padrão próprio
-    para `accEpsilon`, ele recebe a mesma conversão.
+    1 contagem (0,000122 g) e preserva esse comportamento. O padrão do site recebe a mesma
+    conversão (`DEFAULT_TUNING.accEpsilon` em `scripts/gen-patch-registry.mjs`, 0.05 →
+    0.0001, regenerando `pd4web-patches.generated.ts`), e o máximo do controle de ajuste no
+    registro de patches (`ACC_EPSILON_MAX = 100`, em contagens, em
+    `app/[locale]/map3/pd4web-patch-log.tsx`) passa a 1 g.
   - README, `docs/musico/README.md` e `vocabulario.md`: unidade g.
 - **`paraisoGaia43`:** um adaptador na entrada, para o som continuar idêntico. Logo depois de
   cada `[r gaia.acc.x]`, `[r gaia.acc.y]` e `[r gaia.acc.z]`, e depois de cada um dos três
