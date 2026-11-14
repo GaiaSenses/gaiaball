@@ -171,9 +171,19 @@ O pacote de movimento troca as três acelerações `int16` em contagens por trê
 - **Versão por pacote, como manda a regra 8 do guia** ("mudança incompatível = versão nova;
   os decodificadores v1 descartam esses pacotes"): só o pacote de movimento passa a levar
   `version = 2`. CO₂, navegação, diagnóstico e os demais continuam na versão 1.
-- **Conversão no firmware:** contagens ÷ 8192, no momento de montar o pacote, depois dos
-  filtros que já existem (pico e EMA). A divisão por uma potência de 2 é exata em `float32`:
-  o número em g carrega exatamente a informação das contagens.
+- **Conversão no firmware:** contagens ÷ 8192, **arredondado a 4 casas decimais**
+  (0,0001 g), só no momento de montar o pacote, depois dos filtros que já existem (pico e
+  EMA); os filtros continuam trabalhando com o valor sem arredondar.
+  - Por que 4 casas não perde nada: o menor passo do sensor é 1/8192 = 0,000122 g, maior que
+    0,0001 g, então duas leituras diferentes nunca viram o mesmo número.
+  - O arredondamento é só para leitura (pedido do usuário). Um `float32` não guarda 0,1234
+    exatamente; guarda o vizinho mais próximo, que o Pd e o `printf("%g")` mostram como
+    `0.1234`.
+  - **Os decodificadores em JavaScript arredondam de novo a 4 casas depois do
+    `getFloat32`** (config-app, site e o exemplo do guia). Sem isso, o JavaScript converte o
+    `float32` para `double` e mostra `0.12340000271797180`, e o arredondamento do firmware não
+    apareceria para quem lê no site ou numa sketch p5. O exemplo em Python faz o mesmo com
+    `round(x, 4)`; o de C imprime com `%.4f`.
 - **MTU:** o pacote de movimento passa a exigir MTU ≥ 40 (era 34).
 - **Custo no rádio** (modelo do README do firmware): `(37 + 17) × 8 + 380` = 812 µs por
   pacote, +48 µs; a 50 Hz, +2,4 ms de ar por segundo (o total padrão vai de 77,7 para
@@ -221,8 +231,9 @@ O pacote de movimento troca as três acelerações `int16` em contagens por trê
 
 ### Testes da Parte 0
 
-- Firmware: o golden novo; `sizeof(ImuPacket) == 37`; a conversão (contagens conhecidas →
-  g exatos, incluindo ±4 g e 0).
+- Firmware: o golden novo; `sizeof(ImuPacket) == 37`; a conversão com arredondamento
+  (contagens conhecidas → g em 4 casas, incluindo ±4 g, 0 e valores que arredondam para cima
+  e para baixo); contagens vizinhas continuam dando números diferentes.
 - config-app e site: decodificação do golden; recusa do pacote de movimento versão 1 e de
   pacotes curtos; envelope dos microfones nos offsets novos.
 - Guia: os exemplos em JavaScript, Python e C rodam contra o golden novo, como na primeira
@@ -637,6 +648,8 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
     antigas, que já pedem atualização pela falta da `…0006`).
 25. `paraisoGaia43` em g (as constantes em contagens convertidas, os `[/ 8000]` removidos),
     feito pelo Gabriel na mesma edição; `accEpsilon` de 0.05 para 0.0001.
+26. Os decodificadores em JavaScript arredondam a aceleração a 4 casas depois de ler o
+    `float32`, para o arredondamento do firmware aparecer também no site e nas sketches.
 
 ## Deixado ao construtor
 
