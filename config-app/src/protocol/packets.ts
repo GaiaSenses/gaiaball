@@ -33,7 +33,7 @@ export function rmsToDbfs(rms: number): number {
   return Math.max(-120, 20 * Math.log10((rms * Math.SQRT2) / AUDIO_FULL_SCALE));
 }
 
-/** Floor of the firmware's dBFS x100 wire fields (firmware logic/AudioFeatures.h). */
+/** Floor of the firmware's dBFS audio fields (-120 dBFS; half-dB u8 value 0 on the wire; firmware logic/AudioFeatures.h). */
 export const AUDIO_DB_FLOOR = -120;
 
 export const IMU_FLAG_QUAT_VALID = 1 << 0;

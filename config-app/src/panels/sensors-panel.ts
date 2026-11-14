@@ -3,7 +3,7 @@
 //
 // Units (sources documented in firmware/docs/protocol.md and hardware-pinout.md):
 //  - Orientation: degrees, legacy Euler convention (same output the site feeds to Pd).
-//  - Acceleration: g — MPU-9250 full scale is ±4 g, 8192 LSB/g.
+//  - Acceleration: mg (converted by the firmware) — MPU-9250 full scale is ±4 g = ±4000 mg.
 //  - Microphones (INMP441): dBFS per AES17 (0 dBFS = full-scale sine, FS = 2^23 for
 //    the 32-bit I2S config with >>8). Estimated dB SPL = dBFS + 120, from the
 //    INMP441 sensitivity spec (-26 dBFS @ 94 dB SPL, 1 kHz).
@@ -84,7 +84,7 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
     <h2>Sensores em tempo real</h2>
     <div class="sensor-cards">
       <div class="sensor-card" data-el="card-ori"><h3>Orientação (IMU)</h3><p data-el="v-euler">—</p><small>graus (°) · convenção legada roll/pitch/yaw</small></div>
-      <div class="sensor-card" data-el="card-acc"><h3>Aceleração (IMU)</h3><p data-el="v-acc">—</p><small>g · fundo de escala ±4 g (8192 LSB/g)</small></div>
+      <div class="sensor-card" data-el="card-acc"><h3>Aceleração (IMU)</h3><p data-el="v-acc">—</p><small>mg · fundo de escala ±4000 mg</small></div>
       <div class="sensor-card" data-el="card-micl"><h3>Microfone esquerdo</h3><p data-el="v-micl">—</p><small>dBFS (AES17) · dB SPL estimado (INMP441: −26 dBFS @ 94 dB SPL)</small></div>
       <div class="sensor-card" data-el="card-micr"><h3>Microfone direito</h3><p data-el="v-micr">—</p><small>dBFS (AES17) · dB SPL estimado</small></div>
       <div class="sensor-card" data-el="card-co2"><h3>CO₂ (SC8)</h3><p data-el="v-co2">—</p><small>ppm · partes por milhão</small></div>
