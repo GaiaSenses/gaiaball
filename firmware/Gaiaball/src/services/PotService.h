@@ -12,7 +12,7 @@ namespace gaia {
 // default 0.3) and mapped linearly to
 // [kThresholdMin, kThresholdMax]; the output only moves when the new mapped value
 // differs from the current output by >= 2 %.
-// With potControlsThreshold == 0, threshold() returns config.thresholdFixed.
+// With potControlsThreshold == 0, threshold() returns the fixed breath threshold.
 class PotService {
  public:
   static constexpr float kThresholdMin = 10000.0f;

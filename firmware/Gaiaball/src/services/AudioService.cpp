@@ -35,7 +35,7 @@ constexpr TickType_t kReadTimeout = pdMS_TO_TICKS(100);
 
 bool AudioService::begin(const GaiaConfig &cfg) {
   applyConfig(cfg);
-  fixedThreshold_ = (float)cfg.thresholdFixed;
+  fixedThreshold_ = dbfsToRmsCounts(-cfg.breathThresholdNegDbX100 / 100.0f);
 
   i2s_config_t c = {};
   c.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX);

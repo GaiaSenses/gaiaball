@@ -1,4 +1,5 @@
 #include "PotService.h"
+#include "../logic/AudioFeatures.h"
 
 #include <Arduino.h>
 #include <driver/adc.h>
@@ -15,7 +16,7 @@ void PotService::begin(const GaiaConfig &cfg) {
 
 void PotService::applyConfig(const GaiaConfig &cfg) {
   potControls_ = cfg.potControlsThreshold != 0;
-  fixed_ = (float)cfg.thresholdFixed;
+  fixed_ = dbfsToRmsCounts(-cfg.breathThresholdNegDbX100 / 100.0f);
   const uint16_t a = cfg.potEmaAlphaX1000 == 0 ? 1 : cfg.potEmaAlphaX1000;
   ema_.setAlpha((a > 1000 ? 1000 : a) / 1000.0f);
 }
