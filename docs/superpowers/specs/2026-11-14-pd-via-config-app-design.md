@@ -1,7 +1,9 @@
 # Gaiaball — ponte para o Pd pela config-app, detector de sopro absoluto e modo palco
 
 Data: 2026-11-14 · Repo: `gaiaball` · Branch: `feat/pd-via-config-app`, criada a partir de
-`feat/navegacao-globo` (PR #3), porque a ponte repassa o NavPacket que só existe lá.
+`feat/navegacao-globo` (PR #3), porque a ponte repassa o NavPacket que só existe lá. O PR desta
+branch é empilhado sobre o #3 (base `feat/navegacao-globo`) e é redirecionado para `main`
+quando o #3 for mergeado.
 
 ## Intenção
 
@@ -70,8 +72,10 @@ Junto vêm duas mudanças que o uso no palco pede:
 - **Local Network Access (Chrome 147+):** um site público que abre WebSocket para
   `127.0.0.1` dispara um pedido de permissão ("Apps neste dispositivo"). Um clique, lembrado
   por site. Recusado, o envio fica bloqueado até a pessoa mudar nas configurações do site.
-- **A config-app não está publicada.** Hoje só roda com `npm run dev`. O repo é público e o
-  GitHub Pages não está ligado. Não há `vite.config` (base `/`).
+- **A config-app não está publicada.** Hoje só roda com `npm run dev`. O repo é público
+  (`origin` = `github.com/GaiaSenses/gaiaball`) e o GitHub Pages não está ligado. Não há
+  `vite.config` (base `/`). Publicada, a URL é `https://gaiasenses.github.io/gaiaball/` e a
+  origem que o navegador declara é `https://gaiasenses.github.io`.
 - **Firmware:** aceita 2 conexões BLE ao mesmo tempo (site + config-app funcionam juntos).
   Diagnóstico, Sensores e AudioChunk (característica `…0005`) só são enviados se alguém
   assinar essa característica (`App.cpp:307`, `:325`, `:348`).
@@ -160,10 +164,17 @@ atualizada do guia do protocolo.
 | `0x14` | potControlsThreshold | u8 | 0/1 | 1 | Inalterado: 1 = potenciômetro, 0 = valor fixo |
 | `0x2B` | breathThresholdDbX100 | i16 | −9000…0 | −3550 | Limiar fixo em dBFS ×100, na medida ativa |
 | `0x2C` | breathMetric | u8 | 0 RMS / 1 pico | 0 | |
-| `0x11`, `0x12`, `0x15` (TLVs, não os comandos de mesmo número) | alfa rápido, alfa lento, limiar fixo em contagens | — | — | — | Aposentados: viram reservados, ignorados na carga leniente da NVS, rejeitados na escrita |
+| `0x11`, `0x12`, `0x15` (TLVs, não os comandos de mesmo número) | alfa rápido, alfa lento, limiar fixo em contagens | — | — | — | Aposentados: viram reservados, como `0x21`/`0x27`/`0x33` |
 
 - Os padrões (potenciômetro, RMS, −35,5 dBFS) preservam o comportamento de hoje numa sala
   silenciosa: −35,5 dBFS RMS é o antigo `thresholdFixed = 100000`.
+- **Ids aposentados seguem a regra que já vale para os reservados:** numa escrita, id
+  desconhecido rejeita a escrita inteira (tudo ou nada, como hoje); na carga da NVS, a carga
+  leniente pula o id. Só a config-app escreve esses ids, e a versão nova deixa de escrevê-los.
+- **Bolas já gravadas:** um limiar fixo em contagens salvo na NVS **não é convertido**. Ele
+  media o excesso sobre a linha de base do detector adaptativo, outra grandeza; converter
+  daria um número sem sentido. O `0x2B` começa no padrão (−35,5 dBFS) e a fonte (`0x14`)
+  salva é preservada.
 - `GaiaConfig`, `TlvCodec` (serializar, validar, aplicar, carga leniente),
   `applySnapshot` e `FIELD_DEFAULTS` da config-app com paridade.
 
@@ -280,8 +291,21 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
   | `gaia.breath` | IMU bit 4 | 0/1 | novo |
   | `gaia.co2.trigger` | CO₂ bit 3 | 0/1 | novo |
 
-  Com Nav `valid`=0 (modo de navegação desligado), lat/lon/speed/bearing não são enviados.
   Os nomes novos seguem a convenção do vocabulário do site (ids em inglês).
+- **Ritmo:** cada canal sai a cada pacote da sua origem: os do IMU a 50 Hz (incluindo
+  `gaia.sensors`, que leva o último CO₂ recebido), os de navegação a 50 Hz, os de CO₂ a cada
+  pacote de CO₂. O site, por sua vez, amostra no próprio relógio do patch (`pollMs`) e aplica
+  zonas mortas (`epsilon`, `accEpsilon`). Um patch que só lê os valores roda igual nos dois;
+  um patch que dispara um evento por mensagem recebe mais mensagens no computador.
+- **Antes dos dados e com dados inválidos:**
+  - `gaia.sensors` usa CO₂ = 0 até chegar o primeiro pacote de CO₂ (igual ao site).
+  - Com Nav `valid`=0 (navegação desligada), lat/lon/speed/bearing/settled não são enviados.
+  - `gaia.mic.*` só sai com o bit 3 do IMU (áudio válido) ligado; o valor vai como chega
+    (o piso do protocolo é −120 dBFS).
+- **Desconexão** (WebSocket fechado ou 2 s sem pacotes; o IMU manda 50 por segundo, então 2 s
+  de silêncio é desconexão): o status manda `connected 0` e os canais 0/1 `gaia.breath` e
+  `gaia.co2.trigger` recebem 0 uma vez, para nenhum 1 ficar preso no patch. Os demais
+  canais mantêm o último valor.
 - **Um outlet de status**: `connected 0|1` na mudança, e uma vez por segundo
   `rate <pacotes/s>` e `gap <maior intervalo entre pacotes, ms>`. É o que permite medir a
   diferença entre o modo palco e o modo ajuste.
@@ -294,7 +318,9 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
 
 - **CI no GitHub Actions** compila o external para Windows (amd64), Linux (amd64 e arm64)
   e macOS (binário único Intel + Apple Silicon), nas duas precisões do Pd, roda os testes e
-  gera o pacote `.dek` como artefato.
+  gera o pacote `.dek` como artefato. `pd-lib-builder` entra como submódulo; os cabeçalhos
+  do Pd vêm do código-fonte do Pd baixado no CI; o nome das arquiteturas no `.dek` é o que o
+  `deken package` gera a partir dos binários. A organização dos jobs fica com o construtor.
 - **Publicar no Deken** (`deken upload`) é passo manual do Nycholas: exige conta no
   puredata.info.
 
@@ -346,6 +372,12 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
     chega, redesenhado em no máximo 10 Hz;
   - Desconectar e "Sair do modo palco".
   - O detector de sopro roda na bola, absoluto, em qualquer modo.
+- **Conexões no modo palco:** só a assinatura de `…0005` é desfeita. A característica de
+  configuração continua conectada e gravável (é por ela que a sensibilidade em dBFS é
+  escrita); movimento, CO₂ e navegação continuam assinados.
+- **Com a fonte "Potenciômetro" o limiar ao vivo não aparece no palco**, de propósito: ele só
+  chega no `SensorsPacket` (5 Hz, em `…0005`). O medidor e o pulso continuam mostrando se o
+  sopro está disparando.
 - **Ao sair** do modo palco: reassina `…0005` e retoma tudo como estava.
 - **Padrão:** modo ajuste. A escolha é lembrada no `localStorage`.
 - `?demo=1` também entra e sai do modo palco.
@@ -402,6 +434,13 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
     canais novos da tabela, enviados a cada pacote.
 13. `gaiaball_bridge.py`, `requirements.txt` e a abstração antiga saem.
 14. Config-app publicada no GitHub Pages do repo `gaiaball`.
+15. Ids aposentados rejeitam a escrita inteira (como os reservados de hoje); limiar fixo
+    antigo em contagens não é convertido, o `0x2B` começa em −35,5 dBFS.
+16. Canais a cada pacote da origem, sem zona morta (o site amostra no relógio do patch e com
+    zonas mortas); CO₂ = 0 em `gaia.sensors` até o primeiro pacote.
+17. Na desconexão, `gaia.breath` e `gaia.co2.trigger` vão a 0; os outros mantêm o último valor.
+18. No palco, com a fonte "Potenciômetro", o limiar ao vivo não aparece.
+19. PR empilhado sobre o #3, redirecionado para `main` depois do merge dele.
 
 ## Deixado ao construtor
 
