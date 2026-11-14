@@ -24,9 +24,10 @@ namespace gaia {
 // implementations keep that counter atomic.
 class ImuDriver {
  public:
-  // FIXED by the wire protocol: ImuPacket carries accelerometer counts and the site
-  // and the Pure Data object divide by this number. ±4 g exists on both chips with the
-  // same selector code, so both drivers program ±4 g and neither one rescales.
+  // ImuPacket carries acceleration in mg: makeImuPacket converts these counts with
+  // this scale (1000 / 8192). The ±4 g range is no longer fixed by the protocol; it
+  // exists on both chips with the same selector code, so both drivers program ±4 g
+  // and neither one rescales.
   static constexpr float kAccelLsbPerG = 8192.0f;
   // Gyroscope full-scale selector count: ±250/500/1000/2000 dps, in that order and
   // with the same FS_SEL codes on both chips, so the stored gyroFsSel is chip-agnostic.

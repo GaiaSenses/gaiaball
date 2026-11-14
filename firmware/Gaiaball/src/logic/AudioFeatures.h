@@ -37,6 +37,10 @@ int16_t rmsToDbfsX100(float rms);
 // RMS one for the same sine. Same saturation rules.
 int16_t peakToDbfsX100(float peak);
 
+// Half-dB wire encoding of the movement packet: clamp(lround((dbX100 + 12000) / 50), 0, 255).
+// The floor (-120 dBFS) is 0; dBFS = value / 2 - 120, so 255 is +7.5 dBFS.
+uint8_t dbX100ToHalfDb(int16_t dbX100);
+
 // Sliding energy window over the last kBlocks I2S blocks.
 //
 // WHY pool blocks instead of reporting the bare block: at 200 Hz the I2S block is 5 ms,

@@ -12,7 +12,8 @@ namespace gaia {
 // AK09916 magnetometer, read directly at 0x0C with the chip's auxiliary bus in
 // pass-through). No DMP, no FIFO: the data registers are polled and fusion runs on the
 // ESP32 (logic/Ahrs.h), exactly as for the MPU-9250. Scales:
-//   accel ±4 g  -> 8192 LSB/g (ImuDriver::kAccelLsbPerG), FIXED by the wire protocol
+//   accel ±4 g  -> 8192 LSB/g (ImuDriver::kAccelLsbPerG); the wire carries mg, so the range
+//         is no longer fixed by the protocol
 //   gyro  selectable ±250/500/1000/2000 dps -> 131/65.5/32.8/16.4 LSB/dps, the same
 //         codes and sensitivities as the MPU-9250, so the stored gyroFsSel carries over
 //   mag   16-bit, FIXED 0.15 µT/LSB: the AK09916 has no fuse-ROM ASA registers, so

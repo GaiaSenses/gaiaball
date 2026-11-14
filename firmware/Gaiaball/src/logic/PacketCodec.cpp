@@ -10,10 +10,14 @@ static int16_t encodeQ14(float v) {
   return static_cast<int16_t>(lroundf(s));
 }
 
+int16_t accelCountsToMg(int16_t counts) {
+  return static_cast<int16_t>(lroundf(counts * 1000.0f / 8192.0f));
+}
+
 ImuPacket makeImuPacket(uint16_t seq, uint32_t tUs, const float q[4], const int16_t acc[3],
                         uint8_t flags, const AudioLevels &audio) {
   ImuPacket p{};
-  p.version = kProtocolVersion;
+  p.version = kImuPacketVersion;
   p.type = static_cast<uint8_t>(PacketType::ImuSample);
   p.seq = seq;
   p.timestampUs = tUs;
@@ -28,13 +32,13 @@ ImuPacket makeImuPacket(uint16_t seq, uint32_t tUs, const float q[4], const int1
     p.quatW = encodeQ14(1.0f);
     flags = static_cast<uint8_t>(flags & ~kImuQuatValid);
   }
-  p.accX = acc[0];
-  p.accY = acc[1];
-  p.accZ = acc[2];
+  p.accX = accelCountsToMg(acc[0]);
+  p.accY = accelCountsToMg(acc[1]);
+  p.accZ = accelCountsToMg(acc[2]);
   p.flags = flags;
   for (int c = 0; c < 2; ++c) {
-    p.audioRmsDbX100[c] = rmsToDbfsX100(audio.rms[c]);
-    p.audioPeakDbX100[c] = peakToDbfsX100(audio.peak[c]);
+    p.audioRmsHalfDb[c] = dbX100ToHalfDb(rmsToDbfsX100(audio.rms[c]));
+    p.audioPeakHalfDb[c] = dbX100ToHalfDb(peakToDbfsX100(audio.peak[c]));
   }
   return p;
 }

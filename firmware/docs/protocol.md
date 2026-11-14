@@ -1,7 +1,7 @@
-# Gaiaball BLE wire protocol v1
+# Gaiaball BLE wire protocol v1 (ImuPacket v2)
 
 All multi-byte integers are **little-endian**; structs are `__attribute__((packed))`.
-Protocol version: `1` (first byte of every packet). Source of truth:
+Protocol version: `1` (first byte of every packet), except the ImuPacket, which is `2`. Source of truth:
 `Gaiaball/src/logic/Packets.h`; golden vectors are fixed by `test/test_protocol`.
 
 ## BLE UUIDs
@@ -45,13 +45,14 @@ produces data.
 ## Scales
 
 - Quaternion: `int16 = round(float * 16384)` (Q14), saturating; `value / 16384` on decode.
-- Accel: raw counts of the selected IMU (MPU-9250 or ICM-20948; ±4 g, 8192 LSB/g on both), `int16` passthrough (no scaling).
+- Accel (ImuPacket, v2): `int16` in milli-g (1 g = 1000 mg), `lroundf(counts * 1000 / 8192)` from the raw counts of the selected IMU (MPU-9250 or ICM-20948, ±4 g, 8192 LSB/g on both). The sensor range is no longer fixed by the protocol: ±4 g reads ±4000.
 - Gyro: never on the wire. Its full scale is configurable (TLV 0x06) precisely because
   no decoder depends on it.
 - Magnetometer (MagChunk only): `int16` in 0.1 µT, saturating.
 - Gyro bias (DiagPacket): `int16` in 0.01 °/s.
-- Microphone levels (ImuPacket): `int16` in 0.01 dBFS, floor `-12000` (−120.00 dBFS),
-  ceiling `6000`. RMS uses the AES17 reference (0 dBFS = RMS of a full-scale sine, i.e.
+- Microphone levels (ImuPacket, v2): `u8` in half-dB steps,
+  `value = clamp(lround((dbX100 + 12000) / 50), 0, 255)` and `dBFS = value / 2 − 120`;
+  0 is the floor (−120 dBFS) and 255 is +7.5 dBFS. RMS uses the AES17 reference (0 dBFS = RMS of a full-scale sine, i.e.
   `2^23 / sqrt(2)` counts); peak uses the amplitude reference (0 dBFS = a full-scale
   sample, `2^23` counts). The same sine therefore reads 3.01 dB lower on the peak scale.
 - Connection interval (DiagPacket): `u16` in 0.1 ms, 0 = unknown.
@@ -64,11 +65,11 @@ AudioChunk, `0x06` MagChunk, `0x07` Nav. The diag characteristic carries 0x03, 0
 0x05 and 0x06; receivers must dispatch on the type byte. The nav packet (0x07) has a
 characteristic of its own.
 
-## ImuPacket (31 bytes)
+## ImuPacket (27 bytes, version 2)
 
 | Offset | Size | Type | Field |
 |---|---|---|---|
-| 0 | 1 | u8 | version (1) |
+| 0 | 1 | u8 | version (2) |
 | 1 | 1 | u8 | type (0x01) |
 | 2 | 2 | u16 | seq |
 | 4 | 4 | u32 | timestampUs |
@@ -76,26 +77,27 @@ characteristic of its own.
 | 10 | 2 | i16 | quatX |
 | 12 | 2 | i16 | quatY |
 | 14 | 2 | i16 | quatZ |
-| 16 | 2 | i16 | accX |
-| 18 | 2 | i16 | accY |
-| 20 | 2 | i16 | accZ |
+| 16 | 2 | i16 | accX (mg) |
+| 18 | 2 | i16 | accY (mg) |
+| 20 | 2 | i16 | accZ (mg) |
 | 22 | 1 | u8 | flags |
-| 23 | 2 | i16 | audioRmsDbX100[0] (left) |
-| 25 | 2 | i16 | audioRmsDbX100[1] (right) |
-| 27 | 2 | i16 | audioPeakDbX100[0] (left) |
-| 29 | 2 | i16 | audioPeakDbX100[1] (right) |
+| 23 | 1 | u8 | audioRmsHalfDb[0] (left) |
+| 24 | 1 | u8 | audioRmsHalfDb[1] (right) |
+| 25 | 1 | u8 | audioPeakHalfDb[0] (left) |
+| 26 | 1 | u8 | audioPeakHalfDb[1] (right) |
 
 Flags: bit0 `quatValid`, bit1 `nineAxis`, bit2 `moving`, bit3 `audioValid`.
 
 The microphone envelope is measured in the firmware over the 20 ms window that ended
 with this orientation sample, with the peak tracked at the full 16 kHz. While
-`audioValid` is clear (no microphone / I²S failure) all four fields read the floor,
-−120.00 dBFS. The packet grew from 23 to 31 bytes in firmware v8; see the note under
-DiagPacket about append-only growth.
+`audioValid` is clear (no microphone / I²S failure) all four fields read 0, the
+−120 dBFS floor. The packet grew from 23 to 31 bytes in firmware v8 and became version 2
+(27 bytes) when the acceleration moved to mg and the levels to half-dB; see the
+versioning note under DiagPacket. Needs MTU >= 30.
 
 Why here and not in a packet of its own: above ~60 Hz the scarce resource on a BLE link
-is the connection-event budget, not bytes. A 31-byte notification costs ~764 µs of air
-time against ~700 µs for a 23-byte one, so carrying the envelope along is 9 % more air
+is the connection-event budget, not bytes. A 27-byte notification costs ~732 µs of air
+time against ~700 µs for a 23-byte one, so carrying the envelope along is 5 % more air
 time, while a separate notification at the same rate would be 100 % more. One packet per
 tick also guarantees that the envelope and the orientation share a timestamp.
 
@@ -160,7 +162,10 @@ bit4 `biasAtRest`, bit5 `biasAdapting`, bit6 `magCalibrated` (a hard/soft-iron r
 loaded), bit7 `magCapture` (raw magnetometer streaming).
 
 The packet grew from 23 to 32 bytes in firmware v7 and to 34 in v8; the protocol version
-byte stays `1` because the earlier bytes are unchanged and every field is append-only. A
+byte stays `1` because the earlier bytes are unchanged and every field is append-only.
+A change that alters the meaning or size of an existing field is not append-only and
+bumps the version of that packet type: the ImuPacket is the first case (version `2`,
+acceleration in mg and half-dB audio); every other packet is still version `1`. A
 decoder that checks an exact length must be updated (the config-app and the Pd bridge
 were). `connItvlMsX10` closes the loop on the connection-parameter request: without it
 there is no way to tell a granted 7.5 ms interval from a refused one, and that single
@@ -332,9 +337,9 @@ Units:
   32-bit I2S configuration with `>>8`; a 16-bit I2S configuration would change it.**
 - `potRaw` is the EMA-filtered 12-bit ADC reading (0..4095) of the threshold
   potentiometer; percent of travel = potRaw / 4095 × 100.
-- IMU acceleration (ImuPacket) is in raw counts (MPU-9250 or ICM-20948, per TLV 0x34) at ±4 g full scale:
-  g = counts / 8192. With `accelLpAlphaX1000` > 0 the published counts are
-  EMA-filtered on-device (same scale).
+- IMU acceleration (ImuPacket) is in mg (MPU-9250 or ICM-20948, per TLV 0x34; the device
+  runs at ±4 g, 8192 LSB/g, and converts): g = mg / 1000. With `accelLpAlphaX1000` > 0 the
+  published values are EMA-filtered on-device (same scale).
 - The IMU stream carries TREATED data only (mounting + zero + configured filters
   applied); raw-and-treated side by side is intentionally NOT exported, to keep the
   high-rate flow simple. Filters can be toggled live from the config-app.
@@ -532,11 +537,12 @@ standard aerospace roll/pitch/yaw formulas on (qw, qx, qy, qz).
 
 The two NavPacket vectors are listed in the [NavPacket](#navpacket-22-bytes-type-0x07-own-characteristic) section.
 
-ImuPacket: seq=258, timestampUs=0x0A0B0C0D, q=(1,0,0,0), acc=(1,-2,3), flags=0b1011
-(quatValid+nineAxis+audioValid), rms=(0.00, −20.00) dBFS, peak=(0.00, −6.02) dBFS
+ImuPacket (version 2): seq=258, timestampUs=0x0A0B0C0D, q=(1,0,0,0), acc=(1000,-500,151) mg
+(from counts 8192, -4096, 1234), flags=0b1011 (quatValid+nineAxis+audioValid),
+rms=(0.00, −20.00) dBFS, peak=(0.00, −6.02) dBFS (half-dB bytes 240, 200, 240, 228)
 
 ```
-01 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 01 00 FE FF 03 00 0B 00 00 30 F8 00 00 A6 FD
+02 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 E8 03 0C FE 97 00 0B F0 C8 F0 E4
 ```
 
 Co2Packet: seq=258, timestampMs=0x0A0B0C0D, ppm=1000, flags=0b101 (valid+virtualActive), ageS=7
