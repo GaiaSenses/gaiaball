@@ -237,18 +237,20 @@ o que está neste roteiro, é **meta de projeto, ainda não medida em hardware**
 IMU funcionando (seção 3.0), config-app conectado e desbloqueado, e o estado de navegação
 diferente de "sem característica de navegação (firmware antigo)".
 
-**Zerar.** Ponha a bola numa superfície plana, parada, com a frente dela (o nariz do
-modelo 3D) voltada para você, e use **Zerar orientação** (painel Conexão). O globo vai ao
-ponto de referência (padrão Campinas/SP: lat −22,9056°, lon −47,0608°) com o norte para
-cima, rumo 0°, e a linha mostra "parado". O zero **não** é gravado: depois de religar a
-bola, zere de novo.
+**Referência.** Ligue a bola apoiada numa superfície plana e parada: essa postura de boot
+é a referência (não há "frente" marcada; o movimento é relativo a ela). Para trocar a
+referência sem religar, use **Zerar orientação** (painel Conexão) com a bola parada na
+superfície. Na referência o globo fica no ponto de referência (padrão Campinas/SP:
+lat −22,9056°, lon −47,0608°) com o norte para cima, rumo 0°, e a linha mostra "parado".
+O zero **não** é gravado, de propósito: ao religar, a referência volta a ser a postura do
+boot. Os gestos abaixo usam os eixos do modelo 3D da config-app só como guia.
 
 **Espelho** (Configuração › Navegação do globo › Modo de navegação = Espelho, **Aplicar**):
 
 | Item | Como verificar | Esperado |
 |---|---|---|
 | Identidade | Logo após zerar, bola parada | lat/lon do ponto de referência, rumo ≈ 0°, **parado** |
-| Rumo | Gire a bola devagar 90° em torno do eixo da frente (o nariz do modelo 3D, que aponta para você) e pare | O centro não muda; o rumo muda 90° (sinal conforme a convenção do Mapbox); "parado" ~0,5 s depois de parar |
+| Rumo | Gire a bola devagar 90° em torno do eixo do nariz do modelo 3D e pare | O centro não muda; o rumo muda 90° (sinal conforme a convenção do Mapbox); "parado" ~0,5 s depois de parar |
 | Latitude | Volte ao zero e gire 90° em torno do eixo esquerda-direita (levantar/baixar o nariz) | O centro anda 90° ao longo do meridiano: lat +67,1° e lon −47,1° num sentido, lat −67,1° e lon 132,9° (do outro lado do globo) no outro |
 | Longitude | Volte ao zero e gire 90° em torno do eixo vertical (como um pião) | O centro anda 90° ao longo do grande círculo leste-oeste e cai no equador: lat ≈ 0° e lon −137,1° num sentido, lon 42,9° no outro |
 | Site | Repita um dos gestos com o site conectado | O globo do site mostra o mesmo centro e o mesmo rumo do painel Métricas |

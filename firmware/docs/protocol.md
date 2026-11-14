@@ -225,9 +225,12 @@ bit2 `moving`.
 
 ### Frames and conventions
 
-- Reference frame, after the ball is zeroed (command `0x10`): **X = the ball's "front"**
-  (the nose of the plane in the config-app 3D view), pointing **toward the person using
-  it**; Z = up; **Y = the ball's left = the user's right** (right-handed).
+- Reference frame = the pose at power-on (or at the last zero, command `0x10`): **X = the
+  horizontal direction the board's X axis (the nose of the plane in the config-app 3D
+  view) pointed to at that moment**; Z = up; **Y = X rotated 90° to the left**
+  (right-handed). The ball has no marked "front": the motion is relative to that pose, and
+  the side that faced the audience at that moment decides how gestures look on screen
+  (the globe is drawn as seen from +X).
 - Globe frame E (unit sphere): x → (lat 0, lon 0), y → (lat 0, lon 90° E), z → north pole.
 - **Identity orientation shows the reference point** (TLV 0x62, default Campinas/SP,
   lat −22.905556, lon −47.060833) **at the screen centre with north up** (bearing 0).
@@ -280,8 +283,9 @@ bit2 `moving`.
 - **Reset to the reference point** (G = identity, state settled, first sample after it
   has dt = 0): only on a `navMode` change, a `navRef` change, or a change of the IMU's
   reference — zero (`0x10`), mounting calibration (`0x14`), or switching Quat6 ↔ Quat9
-  (`orientationMode`). **The zero is not persisted** across power cycles: after a reboot
-  the user zeroes again.
+  (`orientationMode`). **The zero is not persisted, by design**: the ball is powered on
+  resting on a flat surface and that boot pose is the reference (in Quat6 the heading is
+  the heading at boot). Zeroing only re-references without a reboot.
 
 Golden vectors (hex, byte order as transmitted):
 

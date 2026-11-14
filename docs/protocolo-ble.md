@@ -612,10 +612,12 @@ inclinar 60° ou mais dá 90 °/s. A curva cúbica deixa os movimentos pequenos 
 
 ### Referenciais e convenções
 
-- **Referencial da bola** (depois de zerar com o comando `0x10`): **X é a "frente" da bola**
-  (o nariz do aviãozinho na vista 3D da config-app) e aponta **para a pessoa que a usa**;
-  **Z é para cima**; **Y é a esquerda da bola, que é a direita de quem usa** (sistema
-  destro).
+- **Referencial da bola** = a postura em que ela foi ligada (ou a do último zero, comando
+  `0x10`): **X é a direção horizontal para onde apontava o eixo X da placa** (o nariz do
+  aviãozinho na vista 3D da config-app) naquele instante; **Z é para cima**; **Y é o X
+  girado 90° para a esquerda** (sistema destro). A bola não tem uma "frente" marcada: o
+  movimento é relativo a essa postura, e o lado voltado para o público naquele instante
+  decide como os gestos aparecem na tela (o globo é desenhado como visto de +X).
 - **Referencial do globo** (esfera de raio 1): x aponta para (lat 0, lon 0), y para
   (lat 0, lon 90° leste) e z para o polo norte.
 - **Orientação identidade = ponto de referência no centro, com o norte para cima.** O ponto
@@ -711,8 +713,9 @@ velocidade dele mesmo nunca conseguiria fazê-lo partir de novo.
   velocidade) acontece **só** quando muda o `navMode`, muda o `navRef`, ou muda a
   referência do IMU: **zerar** (`0x10`), **calibrar a montagem** (`0x14`) ou trocar entre
   **Quat6 e Quat9** (`orientationMode`).
-- **O zero não é salvo.** Depois de desligar e ligar, zere de novo (comando `0x10` com a
-  bola na posição "frente para a pessoa").
+- **O zero não é salvo, de propósito.** A bola é ligada apoiada numa superfície plana e
+  essa postura de boot já é a referência. O comando `0x10` só troca a referência sem
+  religar (bola parada na superfície).
 
 ---
 
@@ -1777,7 +1780,8 @@ Houve uma volta ao ponto de referência: mudou o `navMode` ou o `navRef`, algué
 (`0x10`), calibrou a montagem (`0x14`) ou trocou entre Quat6 e Quat9.
 
 **Depois de religar a bola, o globo aponta torto.**
-O zero não é salvo. Coloque a bola com a frente para a pessoa e mande `0x10`.
+A referência é a postura em que a bola liga. Ligue-a apoiada numa superfície plana e
+parada; para corrigir sem religar, deixe-a parada na superfície e mande `0x10`.
 
 **A navegação chega mais devagar que o `navNotifyHz` configurado.**
 A bola manda um pacote a cada N amostras do IMU, com N inteiro: com `imuNotifyHz` 50 e
