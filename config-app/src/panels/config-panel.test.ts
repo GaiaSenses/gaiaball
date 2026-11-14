@@ -312,6 +312,18 @@ describe('breath detector fields', () => {
     expect(fromDisplay(s, -90)).toBe(9000);
   });
 
+  it('integer-step fields never put a fraction on the wire', () => {
+    const r = f(TLV.breathRearmDb);
+    expect(fromDisplay(r, 2.5)).toBe(3);
+    expect(fromDisplay(r, 2.4)).toBe(2);
+    expect(fromDisplay({}, 2.5)).toBe(2.5);
+  });
+
+  it('negate without scale still flips the sign', () => {
+    expect(toDisplay({ negate: true }, 5)).toBe(-5);
+    expect(fromDisplay({ negate: true }, -5)).toBe(5);
+  });
+
   it('alpha fields show only with the adaptive detector', () => {
     for (const id of [TLV.audioFastAlphaX1000, TLV.audioSlowAlphaX1000]) {
       const vis = f(id).visible!;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nextSwitchValue } from './switch';
+import { nextSwitchValue, switchAriaLabel } from './switch';
 
 const opts = [{ value: 0, label: 'A' }, { value: 1, label: 'B' }] as const;
 const rev = [{ value: 1, label: 'Pot' }, { value: 0, label: 'Fixo' }] as const;
@@ -16,5 +16,13 @@ describe('nextSwitchValue', () => {
     expect(nextSwitchValue(opts, 1, 'right')).toBe(1);
     expect(nextSwitchValue(opts, 1, 'left')).toBe(0);
     expect(nextSwitchValue(opts, 9)).toBe(0);
+  });
+});
+
+describe('switchAriaLabel', () => {
+  it('names the current option, not just "on/off"', () => {
+    expect(switchAriaLabel('Medida', opts, 0)).toBe('Medida: A');
+    expect(switchAriaLabel('Medida', opts, 1)).toBe('Medida: B');
+    expect(switchAriaLabel('Fonte', rev, 1)).toBe('Fonte: Pot');
   });
 });

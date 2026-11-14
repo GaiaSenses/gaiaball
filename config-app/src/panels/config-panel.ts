@@ -46,7 +46,9 @@ export function toDisplay(f: Pick<Field, 'scale' | 'negate'>, wire: number): num
   return f.negate ? -v : v;
 }
 /** Number typed in the form -> wire value. Never returns -0. */
-export function fromDisplay(f: Pick<Field, 'scale' | 'negate'>, shown: number): number {
+export function fromDisplay(f: Pick<Field, 'scale' | 'negate' | 'step'>, shown: number): number {
+  // An integer step (rearm, in whole dB) must never put a fraction on the wire.
+  if (!f.scale && !f.negate) return f.step !== undefined && Number.isInteger(f.step) ? Math.round(shown) : shown;
   const w = Math.round((f.negate ? -shown : shown) * (f.scale ?? 1));
   return w === 0 ? 0 : w;
 }
@@ -512,6 +514,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       rows.set(f.id, label);
       const name = document.createElement('span');
       name.className = 'cfg-name';
+      if (f.kind === 'switch') { name.id = `cfg-name-${f.id}`; label.setAttribute('role', 'group'); label.setAttribute('aria-labelledby', name.id); }
       name.append(f.label, infoDot(f.info));
       let el: HTMLInputElement | HTMLSelectElement;
       let extra: HTMLElement | null = null;
@@ -554,6 +557,8 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
           const d = document.createElement('p');
           d.className = 'cfg-desc';
           d.dataset.desc = String(f.id);
+          d.id = `cfg-desc-${f.id}`;
+          sw.setAttribute('aria-describedby', d.id);
           descs.set(f.id, d);
         }
       } else if (f.kind === 'select') {
@@ -649,8 +654,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       return Number.isFinite(lat) && Number.isFinite(lon) ? navRefToString({ lat, lon }) : null;
     }
     if (el.value.trim() === '') return null;
-    if (f.scale || f.negate) return fromDisplay(f, Number(el.value));
-    return Number(el.value);
+    return fromDisplay(f, Number(el.value));
   };
   const setValue = (f: Field, v: number | string): void => {
     const el = inputs.get(f.id)!;
@@ -669,7 +673,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       el.value = ref ? ref.lat.toFixed(6) : '';
       navLon.value = ref ? ref.lon.toFixed(6) : '';
     }
-    else if (f.scale) el.value = toDisplay(f, Number(v)).toFixed(Math.round(Math.log10(f.scale)));
+    else if (f.scale || f.negate) el.value = toDisplay(f, Number(v)).toFixed(f.scale ? Math.round(Math.log10(f.scale)) : 0);
     else el.value = String(v);
   };
   /** Shows or hides rows whose `visible` depends on the form (joystick sensitivity follows navMode). */
@@ -991,4 +995,6 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   client.addEventListener('status', (ev) => render((ev as CustomEvent<StatusDetail>).detail));
   client.addEventListener('config', (ev) => populate((ev as CustomEvent<Map<number, DataView>>).detail));
   render({ connected: client.connected, name: null });
+  // Descriptions under the switches must read right from the first paint, connected or not (also in demo mode).
+  refreshDescribe();
 }

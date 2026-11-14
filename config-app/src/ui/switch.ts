@@ -21,6 +21,13 @@ export function nextSwitchValue(options: SwitchOptions, value: number, side?: 'l
   return value === options[0].value ? options[1].value : options[0].value;
 }
 
+/** Accessible name that carries the state: aria-checked only says "second option", which means nothing alone. */
+export function switchAriaLabel(label: string, options: SwitchOptions, value: number): string {
+  const cur = value === options[1].value ? options[1] : options[0];
+  return `${label}: ${cur.label}`;
+}
+
+const NAMES = new WeakMap<HTMLElement, string>();
 const OPTIONS = new WeakMap<HTMLElement, SwitchOptions>();
 
 /** Moves an already rendered switch to `value` without firing onChange (programmatic updates). */
@@ -31,6 +38,7 @@ export function setSwitchValue(el: HTMLElement, value: number): void {
   el.setAttribute('aria-checked', String(second));
   el.dataset.value = String(value);
   el.classList.toggle('on', second);
+  el.setAttribute('aria-label', switchAriaLabel(NAMES.get(el) ?? '', options, value));
 }
 
 export function renderSwitch(opts: SwitchSpec): HTMLElement {
@@ -38,8 +46,8 @@ export function renderSwitch(opts: SwitchSpec): HTMLElement {
   el.type = 'button';
   el.className = 'switch';
   el.setAttribute('role', 'switch');
-  el.setAttribute('aria-label', opts.label);
   OPTIONS.set(el, opts.options);
+  NAMES.set(el, opts.label);
   const mk = (cls: string, text: string): HTMLSpanElement => {
     const s = document.createElement('span');
     s.className = cls;
