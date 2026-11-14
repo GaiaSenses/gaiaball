@@ -153,7 +153,7 @@ struct __attribute__((packed)) SensorsPacket {
 // Decimated RAW audio for the config-app's spectrum analyzer (the FFT runs in the
 // frontend). Mono mix (L+R)/2, DC-removed, 16 kHz -> 2 kHz by average-of-8, int16
 // (top 16 bits of the 24-bit samples). 96 samples = 48 ms per packet (~21 pkt/s,
-// ~4.4 kB/s). hpHz/lpHz echo the configured band-pass so the UI can draw the
+// ~4.3 kB/s (208 B × 20.8/s)). hpHz/lpHz echo the configured band-pass so the UI can draw the
 // cutoffs without a config read. Needs MTU >= 211.
 struct __attribute__((packed)) AudioChunkPacket {
   uint8_t version, type;
