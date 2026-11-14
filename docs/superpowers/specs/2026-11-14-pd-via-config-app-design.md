@@ -206,12 +206,17 @@ O pacote de movimento troca as três acelerações `int16` em contagens por trê
     registro de patches (`ACC_EPSILON_MAX = 100`, em contagens, em
     `app/[locale]/map3/pd4web-patch-log.tsx`) passa a 1 g.
   - README, `docs/musico/README.md` e `vocabulario.md`: unidade g.
-- **`paraisoGaia43`:** um adaptador na entrada, para o som continuar idêntico. Logo depois de
-  cada `[r gaia.acc.x]`, `[r gaia.acc.y]` e `[r gaia.acc.z]`, e depois de cada um dos três
-  valores de aceleração tirados de `[r gaia.sensors]`, entra um `[* 8192]`. O resto do patch
-  (as onze divisões por 8000 e a "gravidade" em contagens) continua recebendo os mesmos
-  números de antes. Quem faz é o Gabriel, na mesma edição em que já está adaptando o patch
-  (um único editor no arquivo, sem conflito); o PR do site não é publicado antes disso.
+- **`paraisoGaia43` passa a trabalhar em g** (decisão do usuário). Quem faz é o Gabriel, na
+  mesma edição em que já está adaptando o patch (um único editor no arquivo, sem conflito); o
+  PR do site não é publicado antes disso. O que muda, rastreado no `main.pd`:
+  - os 11 `[/ 8000]` aplicados à aceleração saem, e o valor em g é ligado direto. O patch
+    usava 8000 como "1 g"; o certo é 8192. A diferença é de 2,4 %, o equivalente a inclinar a
+    bola cerca de 1° a mais ou a menos;
+  - outras constantes em contagens viram g, com o mesmo efeito de hoje: `[> 6000]` e
+    `[< -6000]` (gatilhos ligados ao `aceX`) → `[> 0.73]` e `[< -0.73]`; `[/ 7000]` (gravidade
+    → `vline~` → `pow~ 8`) → `[* 1.17]`; `[/ 11000]` (gravidade → `abs` → `pow 0.7`) →
+    `[* 0.745]`; `[+ 11000]` seguido de `[/ 22000]` → `[+ 1.34]` e `[/ 2.69]`;
+  - o `[1 6000(` ligado à gravidade não muda (ali 6000 é tempo, em ms).
 - **`[gaiaball]`** (Parte 2): lê os `float32` direto.
 
 ### Testes da Parte 0
@@ -630,8 +635,8 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
     movimento (regra 8 do guia), os outros continuam na 1.
 24. Decodificadores aceitam só a versão 2 do pacote de movimento (sem suporte a bolas
     antigas, que já pedem atualização pela falta da `…0006`).
-25. `paraisoGaia43`: adaptador `[* 8192]` na entrada da aceleração, feito pelo Gabriel na
-    mesma edição; `accEpsilon` de 0.05 para 0.0001.
+25. `paraisoGaia43` em g (as constantes em contagens convertidas, os `[/ 8000]` removidos),
+    feito pelo Gabriel na mesma edição; `accEpsilon` de 0.05 para 0.0001.
 
 ## Deixado ao construtor
 
