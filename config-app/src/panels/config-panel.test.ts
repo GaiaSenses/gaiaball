@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BASIC_FIELD_IDS, CONFIG_FIELDS, FIELD_DEFAULTS, dlpfOptions, imuRebootPending, imuStatusText, isPerBall, navRefError, resolveOptions,
-  stopRuleError, toWireRegs,
+  splitUnknownIds, stopRuleError, toWireRegs,
 } from './config-panel';
 import { decodeNavRef, decodeTlv, encodeTlv, navRefToString, parseNavRefString, TLV } from '../protocol/tlv';
 
@@ -251,5 +251,39 @@ describe('navRef string <-> bytes', () => {
     expect(navRefError('Ref', '0.000000,181.000000')).toMatch(/longitude/);
     expect(navRefError('Ref', 'x')).toMatch(/numéricas/);
     expect(navRefError('Ref', '-22.905556,-47.060833')).toBeNull();
+  });
+});
+
+describe('splitUnknownIds (a firmware older than some registers)', () => {
+  // What an old firmware (no navigation, no CO2 trigger) reports on a config read.
+  const oldRead = new Set<number>([TLV.imuNotifyHz, TLV.co2Enabled, TLV.virtualPeakPpm, TLV.bleName]);
+
+  it('leaves out the ids the device did not report, keeping the order of the rest', () => {
+    const regs = [
+      { id: TLV.imuNotifyHz, value: 100 },
+      { id: TLV.navMode, value: 2 },
+      { id: TLV.virtualPeakPpm, value: 2500 },
+      { id: TLV.co2TriggerPpm, value: 1500 },
+    ];
+    const { send, skipped } = splitUnknownIds(regs, oldRead);
+    expect(send).toEqual([{ id: TLV.imuNotifyHz, value: 100 }, { id: TLV.virtualPeakPpm, value: 2500 }]);
+    expect(skipped.map((r) => r.id)).toEqual([TLV.navMode, TLV.co2TriggerPpm]);
+  });
+
+  it('always sends the PIN: it is write-only and never comes back on a read', () => {
+    const { send, skipped } = splitUnknownIds([{ id: TLV.pin, value: '1234' }, { id: TLV.navNotifyHz, value: 60 }], oldRead);
+    expect(send).toEqual([{ id: TLV.pin, value: '1234' }]);
+    expect(skipped.map((r) => r.id)).toEqual([TLV.navNotifyHz]);
+  });
+
+  it('filters nothing without a read to compare against', () => {
+    const regs = [{ id: TLV.navMode, value: 1 }, { id: TLV.imuNotifyHz, value: 50 }];
+    expect(splitUnknownIds(regs, new Set())).toEqual({ send: regs, skipped: [] });
+  });
+
+  it('filters nothing on a firmware that reports every register', () => {
+    const all = new Set(CONFIG_FIELDS.map((f) => f.id).filter((id) => id !== TLV.pin));
+    const regs = CONFIG_FIELDS.map((f) => ({ id: f.id, value: FIELD_DEFAULTS.get(f.id) ?? '0000' }));
+    expect(splitUnknownIds(regs, all).skipped).toEqual([]);
   });
 });

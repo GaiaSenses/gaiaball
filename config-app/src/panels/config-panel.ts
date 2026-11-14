@@ -374,6 +374,22 @@ export function stopRuleError(regs: TlvWrite[], snapshot: ReadonlyMap<number, nu
   return null;
 }
 
+/**
+ * A firmware older than some registers (e.g. one without navigation) rejects a write
+ * WHOLE when it carries an id it does not know, and the read-back would then read as a
+ * PIN problem. So, once the device has reported its registers (a non-empty read), only
+ * the ids it reported are sent; the PIN always is, being write-only (never read back).
+ * Without a read there is nothing to compare against and nothing is filtered.
+ */
+export function splitUnknownIds(
+  regs: TlvWrite[], reported: ReadonlySet<number>,
+): { send: TlvWrite[]; skipped: TlvWrite[] } {
+  if (reported.size === 0) return { send: regs, skipped: [] };
+  const send: TlvWrite[] = [], skipped: TlvWrite[] = [];
+  for (const r of regs) (r.id === TLV.pin || reported.has(r.id) ? send : skipped).push(r);
+  return { send, skipped };
+}
+
 export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, store: PresetStore = new PresetStore()): void {
   root.innerHTML = `
     <h2>Configuração</h2>
@@ -511,6 +527,8 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
 
   /** Last values known to be on the device (read or read-back). PIN never appears here. */
   let snapshot = new Map<number, number | string>();
+  /** Every register id the device reported on the last read (what this firmware knows). */
+  let reportedIds = new Set<number>();
   /** Fields the user (or a loaded preset) touched that the device never reported. */
   const dirty = new Set<number>();
   for (const [id, el] of inputs) {
@@ -597,6 +615,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   });
   const populate = (regs: Map<number, DataView>): void => {
     snapshot = new Map();
+    reportedIds = new Set(regs.keys());
     const det = regs.get(TLV.imuDetected);
     imuDetected = det && det.byteLength === 1 ? det.getUint8(0) : undefined;
     dirty.clear();
@@ -709,8 +728,9 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
     return null;
   };
 
-  /** Collect only fields that differ from the snapshot (PIN: only when typed). */
-  const collectChanged = (): { regs: TlvWrite[]; error: string | null } => {
+  /** Collect only fields that differ from the snapshot (PIN: only when typed), minus the
+   *  registers this firmware did not report (returned as `skipped`, see splitUnknownIds). */
+  const collectChanged = (): { regs: TlvWrite[]; skipped: TlvWrite[]; error: string | null } => {
     const regs: TlvWrite[] = [];
     for (const f of FIELDS) {
       const v = getValue(f);
@@ -720,14 +740,15 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
         if (snapshot.get(f.id) === v) continue;
       } else if (!dirty.has(f.id)) continue; // never reported by the device and untouched
       const err = validate(f, v);
-      if (err) return { regs: [], error: err };
+      if (err) return { regs: [], skipped: [], error: err };
       regs.push({ id: f.id, value: v as number | string });
     }
-    const bandErr = bandError(regs);
-    if (bandErr) return { regs: [], error: bandErr };
-    const stopErr = stopRuleError(regs, snapshot);
-    if (stopErr) return { regs: [], error: stopErr };
-    return { regs, error: null };
+    const { send, skipped } = splitUnknownIds(regs, reportedIds);
+    const bandErr = bandError(send);
+    if (bandErr) return { regs: [], skipped: [], error: bandErr };
+    const stopErr = stopRuleError(send, snapshot);
+    if (stopErr) return { regs: [], skipped: [], error: stopErr };
+    return { regs: send, skipped, error: null };
   };
 
   /** Single path for every configuration read (button, Aplicar, connect): the panels listen to 'config'. */
@@ -745,9 +766,12 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   q('[data-act=apply]').addEventListener('click', () => {
     void (async () => {
       if (snapshot.size === 0) { say('Leia a configuração do dispositivo antes de aplicar.'); return; }
-      const { regs, error } = collectChanged();
+      const { regs, skipped, error } = collectChanged();
       if (error) { say(error); return; }
-      if (regs.length === 0) { say('Nenhuma alteração para aplicar.'); return; }
+      const skipNote = skipped.length > 0
+        ? ` Não enviado(s), o firmware desta bola não tem esse registro: ${skipped.map((r) => byId(r.id).label).join(', ')}.`
+        : '';
+      if (regs.length === 0) { say(`Nenhuma alteração para aplicar.${skipNote}`); return; }
       await client.writeConfig(toWireRegs(regs));
       // The firmware cannot signal rejected writes: read back and compare.
       const back = await client.readConfig();
@@ -762,12 +786,12 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       publish(back);
       const pinNote = regs.some((r) => r.id === TLV.pin) ? ' Novo PIN enviado (não verificável).' : '';
       if (rejected.length > 0) {
-        say(`⚠ alguns valores não foram aceitos (desbloqueou com o PIN?): ${rejected.join(', ')}.${pinNote}`);
+        say(`⚠ alguns valores não foram aceitos (desbloqueou com o PIN?): ${rejected.join(', ')}.${pinNote}${skipNote}`);
         return;
       }
       // Changes made through this UI are meant to survive power cycles: persist now.
       await client.sendCommand(0x11);
-      say(`Aplicado, verificado e salvo no dispositivo (${regs.length} registro(s)).${pinNote}`);
+      say(`Aplicado, verificado e salvo no dispositivo (${regs.length} registro(s)).${pinNote}${skipNote}`);
     })().catch(fail);
   });
 
@@ -846,7 +870,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   const gated = [...inputs.values(), navLon, ...toggles.values(), q<HTMLButtonElement>('[data-act=read]'), q<HTMLButtonElement>('[data-act=apply]')];
   const render = (d: StatusDetail): void => {
     for (const el of gated) el.disabled = !d.connected;
-    if (!d.connected) { snapshot = new Map(); imuDetected = undefined; refreshImuBanner(); }
+    if (!d.connected) { snapshot = new Map(); reportedIds = new Set(); imuDetected = undefined; refreshImuBanner(); }
   };
   client.addEventListener('status', (ev) => render((ev as CustomEvent<StatusDetail>).detail));
   client.addEventListener('config', (ev) => populate((ev as CustomEvent<Map<number, DataView>>).detail));
