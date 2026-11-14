@@ -125,17 +125,21 @@ read the configuration, and follow the bench script in
 
 ## Deploying with GaiaSenses (order matters)
 
-The site needs the `feature/gaiaball-binary-protocol` branch of `Gaiasenses-web`,
-which adds the binary-protocol decoder (with a JSON fallback for the legacy
-firmware).
+The current GaiaSenses site reads **only** the binary protocol (there is no JSON
+fallback any more) and takes the globe pose and the CO₂ trigger from the ball: it needs
+characteristic `…0006` (NavPacket) to move the globe and the Co2Packet `trigger` bit to
+open compositions.
 
 | Combination | Works? |
 |---|---|
-| New site + old firmware | ✅ yes — the decoder falls back to legacy JSON |
-| New site + new firmware | ✅ yes |
-| Old site + new firmware | ❌ **no** — the old site only parses JSON |
+| Current site + navigation firmware | ✅ yes |
+| Current site + v2 firmware older than the navigation build | ⚠️ partly — orientation and CO₂ ppm arrive, but there is no characteristic `…0006` (the globe does not move; the site shows a warning) and the CO₂ `trigger` bit is never set, so CO₂-triggered compositions silently stop opening |
+| Current site + legacy firmware (`firmware-original.ino`, JSON) | ❌ **no** — the site drops the JSON notifications |
+| A site that still parses only JSON + any v2 firmware | ❌ **no** — that site cannot read the binary packets |
 
-**Deploy the site first (or simultaneously), then flash the v2 firmware.**
+**Flash every ball with the navigation firmware first, then publish the site.** Keep the
+gap between the two short: a site that still parses only JSON cannot read a reflashed
+ball.
 
 ## Testing
 

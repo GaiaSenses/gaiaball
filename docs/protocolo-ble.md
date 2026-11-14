@@ -102,7 +102,7 @@ e um conjunto de **propriedades** que dizem o que se pode fazer com ela:
 | Propriedade | Em palavras simples |
 |---|---|
 | **read** | Você pede e recebe o valor atual da gaveta, quando quiser. |
-| **write** | Você coloca bytes na gaveta e recebe um "recebido" do rádio. Atenção: esse "recebido" só diz que os bytes **chegaram**, não que a bola **aceitou** o pedido. |
+| **write** | Você coloca bytes na gaveta e recebe um "recebido" da camada ATT da bola (o NimBLE, a pilha BLE do firmware, só responde depois de entregar os bytes ao código da bola). Atenção: esse "recebido" só diz que os bytes **chegaram**, não que a bola **aceitou** o pedido. |
 | **write without response** | Igual, mas sem o "recebido". Mais rápido, sem garantia. |
 | **notify** | A bola **empurra** o valor novo sempre que ele muda, sem você pedir. Você precisa **assinar** (*subscribe*) primeiro; as bibliotecas fazem isso com `startNotifications()` (Web Bluetooth) ou `start_notify()` (bleak). |
 
@@ -566,7 +566,7 @@ mapa está girado. Detalhes de uso em [Navegação do globo](#navegacao).
 | 9 | 1 | u8 | `flags` | bits | Veja abaixo |
 | 10 | 4 | i32 | `latE7` | graus × 10⁷ | Latitude do centro da tela, −90 a 90 |
 | 14 | 4 | i32 | `lonE7` | graus × 10⁷ | Longitude do centro da tela, (−180, 180] |
-| 18 | 2 | i16 | `bearingX100` | graus × 100 | Rumo no padrão do Mapbox, (−180, 180] |
+| 18 | 2 | i16 | `bearingX100` | graus × 100 | Rumo no padrão do Mapbox, (−180, 180]; pelo arredondamento pode chegar −18000 (−180,00°) |
 | 20 | 2 | u16 | `speedDegSX10` | °/s × 10 | Velocidade informada do globo; satura em 65535 (6553,5 °/s) |
 
 **Flags:**
@@ -738,8 +738,9 @@ ASCII. Com o PIN de fábrica `1234`:
 
 - O destravamento vale **para aquela conexão**, até ela cair. Ao reconectar, destrave de novo.
 - Errar **5 vezes seguidas** bloqueia os pedidos daquela conexão por **30 s** contados da
-  última falha; durante o bloqueio, até o PIN certo é recusado. Um acerto ou uma desconexão
-  zera a contagem.
+  última falha; durante o bloqueio, até o PIN certo é recusado. Passados os 30 s, a contagem
+  de falhas **continua** (5 ou mais): a próxima tentativa é comparada, e se errar começa outro
+  bloqueio de 30 s na hora. Só um acerto ou uma desconexão zera a contagem.
 - Ler a configuração e assinar notificações **não** precisa de PIN.
 - Para trocar o PIN, escreva o registrador `0x41` (4 dígitos ASCII) e salve com `0x11`. O PIN
   nunca aparece na leitura da configuração.
@@ -1642,8 +1643,10 @@ na ordem em que chegam.
 `moving` (`valid` desligado) · `latE7` 900000000 → 90° · `lonE7` −1800000000 → −180° ·
 `bearingX100` −18000 → −180,00° · `speedDegSX10` 65535 → 6553,5 °/s.
 
-O vetor B testa o **formato** nos extremos. Na prática o firmware normaliza longitude e rumo
-para (−180, 180], então −180 não sai da bola; mesmo assim um decodificador deve aceitar.
+O vetor B testa o **formato** nos extremos. Na prática a longitude nunca sai como −180: o
+firmware a normaliza para (−180, 180]. O rumo também é normalizado para (−180, 180], mas o
+arredondamento para centésimos pode fazer um rumo de −179,996° chegar como −18000
+(−180,00°). Um decodificador deve aceitar os dois extremos.
 
 ### Convenção de Euler legada
 
@@ -1677,7 +1680,9 @@ O protocolo é a **versão 1** e continua 1 enquanto toda mudança for **aditiva
    `tamanho == exato`. Um decodificador do site que exigia tamanho exato parou de funcionar
    quando o IMU cresceu, e um pacote recusado é indistinguível de uma bola desligada.
 3. **Bits de flag novos** são ignorados por quem não os conhece (o `trigger` do CO₂ entrou
-   assim, sem mudar o tamanho do pacote).
+   assim, sem mudar o tamanho do pacote). O contrário também vale: um firmware anterior à
+   navegação **nunca** liga o bit 3 (`trigger`) do CO₂. Um cliente reconhece esse firmware
+   pela falta da característica `…0006`; quem depende do gatilho deve avisar o usuário.
 4. **Tipos de pacote novos** ganham um número novo; quem lê a característica 5 ignora os tipos
    que não conhece.
 5. **Características novas** são opcionais para os clientes: a 6 (navegação) não existe em
@@ -1735,8 +1740,9 @@ a partir de um clique do usuário. No Linux pode ser preciso ativar
 Windows: rode o navegador no Windows.
 
 **A característica `…0006` não existe.**
-O firmware é anterior à navegação. Siga só com IMU e CO₂ e avise o usuário; para ter
-navegação, grave o firmware atual na bola.
+O firmware é anterior à navegação. Siga só com IMU e CO₂ e avise o usuário. Esse firmware
+também nunca liga o bit `trigger` do CO₂, então composições abertas pelo gatilho não abrem.
+Para ter navegação e gatilho, grave o firmware atual na bola.
 
 **O globo não passa de uns 85° de latitude no mapa.**
 É o Mapbox: o centro do mapa fica limitado a cerca de ±85,05°. O pacote traz até ±90°;
