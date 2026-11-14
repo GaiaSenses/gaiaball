@@ -431,8 +431,8 @@ A orientação da bola, a aceleração e o som dos microfones, todos do mesmo in
 
 - **De onde vem o `ppm`.** Durante um pulso virtual, é o pico configurado (`virtualPeakPpm`,
   padrão 2100). Fora dele, é a leitura real se o sensor está habilitado (`co2Enabled` ≠ 0); com
-  o sensor desabilitado (`co2Enabled` = 0), é a constante **600** (o valor "normal" do firmware original), e
-  `valid` fica desligado.
+  o sensor desabilitado (`co2Enabled` = 0), é a constante **600** (o valor "normal" do
+  firmware original), e `valid` fica desligado.
 - **O pulso virtual.** Um sopro agenda o pulso para daqui a `virtualDelayMs` (padrão
   1000 ms); ele dura `virtualHoldMs` (padrão 17000 ms).
 - **O gatilho (`trigger`).** É um nível com histerese calculado **na bola**, sobre o ppm
@@ -579,7 +579,9 @@ mapa está girado. Detalhes de uso em [Navegação do globo](#navegacao).
 
 `moving` **não** é o contrário de `settled`. No modo espelho a velocidade pode ficar entre
 os dois limiares (parada e partida) com a máquina ainda "parada", então `flags = 0x07`
-(`valid + settled + moving`) é um valor legal. No modo joystick a velocidade informada é 0
+(`valid + settled + moving`) é um valor legal. No espelho, a máquina também sai de "parado"
+por um giro lento de 3° (veja [a máquina de estados](#nav-parado)), mesmo
+abaixo do limiar de partida. No modo joystick a velocidade informada é 0
 enquanto parado, então `moving` nunca liga junto com `settled`. **MTU mínimo:** 25.
 
 ---
@@ -615,7 +617,7 @@ inclinar 60° ou mais dá 90 °/s. A curva cúbica deixa os movimentos pequenos 
   **Z é para cima**; **Y é a esquerda da bola, que é a direita de quem usa** (sistema
   destro).
 - **Referencial do globo** (esfera de raio 1): x aponta para (lat 0, lon 0), y para
-  (lat 0, lon 90° L) e z para o polo norte.
+  (lat 0, lon 90° leste) e z para o polo norte.
 - **Orientação identidade = ponto de referência no centro, com o norte para cima.** O ponto
   de referência é o registrador `navRef` (`0x62`); o padrão é Campinas/SP, lat −22,905556,
   lon −47,060833. Logo depois de zerar, a bola mostra esse ponto no centro da tela com rumo 0.
@@ -638,10 +640,14 @@ O site GaiaSenses faz assim
 a cada pacote válido com `settled = 0`, chama `jumpTo`; quando `settled` passa de 0 para 1
 depois de algum movimento, aplica a pose final uma vez e abre o clima do lugar onde o globo
 parou. Um *keepalive* (`valid = 0`) zera esse acompanhamento, para um movimento antigo não
-virar uma parada depois de uma queda de sinal.
+virar uma parada depois de uma queda de sinal. O primeiro pacote parado depois de conectar
+(ou depois de um *keepalive*) sincroniza: leva o globo à pose da bola uma vez e abre o clima
+desse lugar, mesmo que a bola não tenha se mexido.
 
 O Mapbox não aceita centro além de cerca de **±85,05°** de latitude. O pacote traz a pose
 verdadeira até ±90°; limitar perto dos polos é decisão do cliente.
+
+<a id="nav-parado"></a>
 
 ### "Parado": a máquina de estados
 
@@ -651,16 +657,31 @@ stateDiagram-v2
   Parado --> Movendo: velocidade maior ou igual ao limiar de partida
   Movendo --> Movendo: velocidade acima do limiar de parada (zera o tempo baixo)
   Movendo --> Parado: velocidade no limiar de parada ou abaixo por navStopMs seguidos
+  Parado --> Movendo: só no espelho, a bola girou 3 graus desde onde parou
 ```
 
 | | Espelho (`navMode` 1) | Joystick (`navMode` 2) |
 |---|---|---|
-| Velocidade observada | Velocidade angular **medida** do globo | Velocidade **comandada** S(θ) |
+| Velocidade observada | Velocidade angular **medida** do globo, numa janela de ~100 ms | Velocidade **comandada** S(θ) |
 | Limiar de partida | `navStartDegS` (padrão 20 °/s) | `joyStartDegSX10` ÷ 10 (padrão 1,0 °/s) |
 | Limiar de parada | `navStopDegS` (padrão 5 °/s) | `joyStopDegSX10` ÷ 10 (padrão 0,5 °/s) |
 | Tempo abaixo do limiar para parar | `navStopMs` (padrão 420 ms) | `navStopMs` (padrão 420 ms) |
 | Velocidade no pacote | A medida | S(θ); **0 enquanto parado** |
 | Enquanto parado | O globo segue a bola normalmente | O globo **congela** (não é integrado) |
+| Sai de "parado" também | Por um giro de **3°** a partir da pose em que parou, mesmo devagar | Não |
+
+No espelho, a velocidade é o ângulo entre a pose atual e a pose de **pelo menos 100 ms
+antes**, dividido pelo tempo real entre as duas (logo depois de uma volta ao ponto de
+referência, a bola usa a pose mais antiga que tiver). De uma amostra para a seguinte, o
+tremor da mão (8–12 Hz) parece movimento acima do limiar de parada; na janela de 100 ms ele
+se cancela, e a bola na mão consegue ficar "parada". A janela também atrasa em até
+100 ms a queda da velocidade quando a bola para, antes de começar a contar o `navStopMs`.
+
+Ainda no espelho, um giro lento e deliberado, abaixo de `navStartDegS`, nunca passaria do
+limiar de partida. Por isso, enquanto está parada, a bola guarda a pose do momento em que
+parou e volta a "em movimento" quando se afasta **3°** dela, qualquer que seja a velocidade.
+A pose é capturada de novo a cada parada. Os 3° são uma constante do firmware, provisória,
+a ajustar na bancada. O joystick não tem essa regra.
 
 O joystick usa a velocidade **comandada** porque o globo fica congelado enquanto parado: a
 velocidade dele mesmo nunca conseguiria fazê-lo partir de novo.
@@ -1643,7 +1664,7 @@ na ordem em que chegam.
 `moving` (`valid` desligado) · `latE7` 900000000 → 90° · `lonE7` −1800000000 → −180° ·
 `bearingX100` −18000 → −180,00° · `speedDegSX10` 65535 → 6553,5 °/s.
 
-O vetor B testa o **formato** nos extremos. Na prática a longitude nunca sai como −180: o
+O vetor B testa o **formato** nos extremos; não é um estado que a bola produza. Na prática a longitude nunca sai como −180: o
 firmware a normaliza para (−180, 180]. O rumo também é normalizado para (−180, 180], mas o
 arredondamento para centésimos pode fazer um rumo de −179,996° chegar como −18000
 (−180,00°). Um decodificador deve aceitar os dois extremos.
@@ -1742,7 +1763,10 @@ Windows: rode o navegador no Windows.
 **A característica `…0006` não existe.**
 O firmware é anterior à navegação. Siga só com IMU e CO₂ e avise o usuário. Esse firmware
 também nunca liga o bit `trigger` do CO₂, então composições abertas pelo gatilho não abrem.
-Para ter navegação e gatilho, grave o firmware atual na bola.
+Para ter navegação e gatilho, grave o firmware atual na bola. Se você acabou de gravá-lo e
+a `…0006` continua faltando, o sistema operacional está usando a lista de características
+guardada da conexão anterior (cache do GATT): desligue e ligue o Bluetooth, ou esqueça o
+dispositivo nas configurações do sistema, e conecte de novo.
 
 **O globo não passa de uns 85° de latitude no mapa.**
 É o Mapbox: o centro do mapa fica limitado a cerca de ±85,05°. O pacote traz até ±90°;
