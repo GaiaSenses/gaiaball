@@ -41,6 +41,13 @@ int16_t peakToDbfsX100(float peak);
 // The floor (-120 dBFS) is 0; dBFS = value / 2 - 120, so 255 is +7.5 dBFS.
 uint8_t dbX100ToHalfDb(int16_t dbX100);
 
+// Inverse conversions, linear counts (same 24-bit sample units as AudioLevels).
+// RMS scale is AES17 (0 dBFS = full-scale sine = 2^23/sqrt(2)); peak scale 0 dBFS = 2^23.
+float dbfsToRmsCounts(float dbfs);
+float dbfsToPeakCounts(float dbfs);
+// 10^(-db/20): amplitude ratio of a drop of `db` dB (3 dB -> 0.7079).
+float dbToAmplitudeRatio(float db);
+
 // Sliding energy window over the last kBlocks I2S blocks.
 //
 // WHY pool blocks instead of reporting the bare block: at 200 Hz the I2S block is 5 ms,
