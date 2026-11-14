@@ -197,7 +197,8 @@ O pacote de movimento troca as três acelerações `int16` em contagens por trê
     em g, sem conversão adicional. `lib/gaiaball-live.ts` (sketches p5) também expõe g.
   - `lib/gaia-vocabulary.json`: `gaia.acc.*` com faixa `[-4, 4]` g (era `[-16, 16]`);
     `gaia.sensors` com "aceX aceY aceZ em g" na ajuda.
-  - `patches/paraisoGaia43/patch.json`: `tuning.accEpsilon` de `0.05` para `0.0001`. Em
+  - `patches/paraisoGaia43/patch.json` (editado pelo Gabriel, junto com o adaptador abaixo,
+    para o arquivo ter um único editor): `tuning.accEpsilon` de `0.05` para `0.0001`. Em
     contagens, 0,05 não filtrava nada (a menor mudança é 1 contagem); 0,0001 g é menor que
     1 contagem (0,000122 g) e preserva esse comportamento. O padrão do site recebe a mesma
     conversão (`DEFAULT_TUNING.accEpsilon` em `scripts/gen-patch-registry.mjs`, 0.05 →
