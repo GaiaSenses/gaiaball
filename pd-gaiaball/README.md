@@ -1,185 +1,190 @@
 # pd-gaiaball — objeto `[gaiaball]` para Pure Data
 
-Acesso de **leitura** a todos os dados da Gaiaball dentro do Pure Data, via
-Bluetooth Low Energy, nos três sistemas (Windows, Linux e macOS). Nada é
-escrito na bola: o objeto só escuta.
+Os dados da Gaiaball dentro do Pure Data, no Windows, no Linux e no macOS. Quem conversa
+com a bola por Bluetooth é a **config-app**, aberta no Chrome ou no Edge. Ela repassa os
+pacotes ao objeto `[gaiaball]`, que publica cada valor num nome: no seu patch, basta um
+`[r gaia.lat]`, `[r gaia.co2]`, `[r gaia.breath]`… Não há terminal, Python nem programa
+extra: só o Pd e o navegador. Nada é escrito na bola; o objeto só escuta.
 
 ```
-┌──────────┐   BLE (notify)   ┌─────────────────────┐   UDP/FUDI (localhost)   ┌────────────┐
-│ Gaiaball │ ───────────────> │ gaiaball_bridge.py  │ ───────────────────────> │ [gaiaball] │──> 9 outlets
-│ (ESP32)  │                  │ (Python + bleak)    │       porta 9478         │  (Pd puro) │
-└──────────┘                  └─────────────────────┘                          └────────────┘
+┌──────────┐  Bluetooth  ┌───────────────────┐  WebSocket local   ┌────────────┐
+│ Gaiaball │ ──────────> │ config-app        │ ─────────────────> │ [gaiaball] │──> [r gaia.*]
+│ (ESP32)  │             │ (Chrome ou Edge)  │  127.0.0.1:9478    │   (no Pd)  │
+└──────────┘             └───────────────────┘                    └────────────┘
 ```
 
-## Por que uma ponte (e não um external compilado)?
+Por que assim: o Pd não tem Bluetooth, e o Chrome tem (é o mesmo Bluetooth que a
+config-app já usa para configurar a bola). A conexão entre a página e o Pd não sai do
+computador.
 
-O Pure Data não tem Bluetooth nativo. As alternativas reais são:
+## Como usar
 
-| Abordagem | Problema |
-|---|---|
-| External em C (como o [pd-witsensor](https://github.com/ben-wes/pd-witsensor), feito sobre SimpleBLE) | exige **binário compilado para cada OS** e um fork em C++ para falar o protocolo da Gaiaball; instalar deixa de ser "copiar uma pasta" |
-| Web Bluetooth (como o config-app) | só funciona dentro de um navegador |
-| **Abstração Pd vanilla + ponte Python (esta pasta)** | instala sem compilar nada; o lado Pd é 100 % vanilla (idêntico nos 3 OSes) e o lado BLE usa [bleak](https://github.com/hbldh/bleak), a biblioteca BLE multiplataforma mais madura que existe |
+### 1. Instalar o `[gaiaball]` pelo Deken (uma vez)
 
-Se um dia valer a pena eliminar o Python, o caminho natural é um fork do
-pd-witsensor/SimpleBLE decodificando o protocolo da Gaiaball — a abstração
-`[gaiaball]` continuaria a mesma, trocando só o transporte.
+1. Abra o Pd (Pd vanilla 0.51 ou mais novo).
+2. **Ajuda → Encontrar externals** (no Pd em inglês: *Help → Find externals*).
+3. Procure `gaiaball` e clique em **Instalar**. Se o Pd perguntar se deve acrescentar a
+   pasta ao caminho de busca, responda que sim.
 
-## Conteúdo da pasta
+### 2. Abrir a config-app e conectar a bola
 
-| Arquivo | O que é |
-|---|---|
-| `gaiaball.pd` | a abstração — crie um objeto `[gaiaball]` no seu patch |
-| `gaiaball-help.pd` | patch de ajuda/exemplo (clique-direito no objeto → Help, ou abra direto) |
-| `gaiaball_bridge.py` | a ponte BLE → UDP (roda fora do Pd, em qualquer terminal) |
-| `requirements.txt` | dependência Python (`bleak`) |
+1. Ligue a bola.
+2. Abra a config-app no **Chrome** ou no **Edge**:
+   <https://gaiasenses.github.io/gaiaball/>. O Firefox e o Safari não deixam sites usarem o
+   Bluetooth.
+3. Clique em **Conectar** e escolha a sua bola. Para enviar ao Pd não é preciso PIN.
 
-## Requisitos
+A chave **Enviar ao Pd** (painel Conexão, bloco Pd) já vem ligada. Com ela ligada, a
+config-app procura o Pd sozinha a cada 2 segundos, enquanto a bola estiver conectada.
 
-- **Pure Data vanilla ≥ 0.51** (usa `[netreceive -u]`; nenhum external, nenhuma
-  biblioteca do Deken).
-- **Python ≥ 3.9** com o pacote `bleak`.
-- Rádio **Bluetooth 4.0+** no computador.
-- Por sistema:
-  - **Windows 10 (1709+) / 11** — nada além do Python; use o Bluetooth embutido.
-  - **macOS 10.15+** — na primeira execução o sistema pede permissão de
-    Bluetooth para o Terminal (ou para o app Python). Conceda em
-    Ajustes → Privacidade e Segurança → Bluetooth.
-  - **Linux** — BlueZ ≥ 5.43 ativo (`bluetoothctl show` deve listar o adaptador).
-    Não é preciso parear a bola; BLE por GATT não usa pareamento aqui.
+### 3. Criar `[gaiaball]` no Pd
 
-## Instalação
+Crie um objeto `[gaiaball]` em qualquer patch e deixe esse patch aberto. Um só basta: os
+nomes `gaia.*` valem para todos os patches abertos no mesmo Pd. Clique com o botão
+direito no objeto → **Ajuda** para abrir o patch de ajuda, que mostra todos os canais
+funcionando e tem um botão que abre a config-app.
 
-1. **Copie esta pasta** (`pd-gaiaball/`) para onde preferir — por exemplo, para
-   a pasta de externals do Pd (`~/Documents/Pd/externals/` no macOS/Windows,
-   `~/.local/lib/pd/extra/` no Linux) ou junto do seu projeto.
-2. **Diga ao Pd onde ela está** (qualquer uma das opções):
-   - Pd → *File → Preferences → Path* → *New…* → selecione a pasta
-     `pd-gaiaball/`; **ou**
-   - coloque `[declare -path pd-gaiaball]` no seu patch (com a pasta ao lado
-     do patch); **ou**
-   - simplesmente salve seu patch dentro da própria pasta (o Pd sempre acha
-     abstrações no diretório do patch aberto).
-3. **Instale a dependência Python** (uma vez):
+- `[gaiaball]` escuta na porta 9478, a padrão da config-app.
+- `[gaiaball 9500]` escuta na porta 9500. Nesse caso, mude também a porta na config-app
+  (painel Conexão → Pd → Porta).
 
-   ```sh
-   # Windows (PowerShell ou cmd)
-   py -m pip install -r requirements.txt
+### 4. Liberar o Chrome (uma vez)
 
-   # macOS / Linux
-   python3 -m pip install -r requirements.txt
-   ```
+Na primeira conexão, o Chrome pergunta se o site pode acessar **Apps neste dispositivo**.
+Clique em **Permitir**. Sem essa permissão, a página não consegue falar com o Pd, e o
+indicador no alto da config-app mostra "Pd: bloqueado pelo Chrome".
 
-## Uso
+Se você bloqueou sem querer: clique no ícone à esquerda do endereço → **Configurações do
+site** → **Apps neste dispositivo** → **Permitir**, e recarregue a página.
 
-1. Ligue a bola (ela anuncia como `Globo_1` por padrão).
-2. Rode a ponte num terminal — e deixe rodando:
+Pronto: o indicador mostra "Pd: conectado · N pacotes/s", e o outlet do `[gaiaball]`
+manda `connected 1`.
 
-   ```sh
-   # Windows
-   py gaiaball_bridge.py
+**Para testar sem bola:** abra a config-app com `?demo=1` no fim do endereço
+(`https://gaiasenses.github.io/gaiaball/?demo=1`). Ela gera dados sintéticos e também
+os envia ao Pd.
 
-   # macOS / Linux
-   python3 gaiaball_bridge.py
-   ```
+## Canais
 
-   A ponte procura a bola sozinha (pelo nome e pelo UUID do serviço BLE),
-   conecta, e **reconecta sozinha** se a bola reiniciar ou sair do alcance.
-3. No Pd, crie `[gaiaball]`. Pronto: os 9 outlets começam a emitir assim que a
-   ponte conecta. Abra `gaiaball-help.pd` para ver tudo funcionando.
+Cada canal chega a cada pacote da sua origem: o movimento na taxa configurada na bola
+(10 a 200 por segundo, padrão 50), a navegação no mesmo ritmo e o CO₂ cerca de uma vez
+por segundo. Não há zona morta: para ignorar valores repetidos, use `[change]`.
 
-Opcional: `[gaiaball 9500]` escuta em outra porta UDP (rode a ponte com
-`--port 9500`). O inlet aceita as mensagens do `[netreceive]` — por exemplo
-`[listen 9500(` para trocar a porta em tempo real.
-
-## Outlets (esquerda → direita)
-
-| # | Nome | Conteúdo | Unidades |
+| Canal | Valor | Faixa e unidade | Quando chega |
 |---|---|---|---|
-| 1 | `euler` | `roll pitch yaw` | graus (°), **convenção legada — exatamente os mesmos ângulos que o site GaiaSenses entrega ao patch Pd** |
-| 2 | `quat` | `w x y z` | quaternion unitário (adimensional) |
-| 3 | `accel` | `x y z` | contagens cruas do MPU-9250 (±4 g): **g = valor / 8192** |
-| 4 | `co2` | `ppm valido velho virtual idade` | ppm; 3 flags 0/1 (leitura real fresca / sensor sem quadro há >5 s / pulso de sopro ativo); idade em s (255 = nunca) |
-| 5 | `mics` | `dBFS_L dBFS_R rms_L rms_R filtrado` | dBFS (AES17, 0 = senoide de fundo de escala; SPL ≈ dBFS + 120); RMS em contagens de 24 bits; flag 0/1 = RMS medido após o passa-banda do sopro |
-| 6 | `pot` | `porcento cru limiar controla` | % do curso; ADC 0–4095; limiar em RMS (mesma escala dos mics); flag 0/1 = potenciômetro controla o limiar |
-| 7 | `diag` | `uptime hzIMU hzNotify errosI2C errosI2S errosUART heapKb heapMinKb imuOk audioOk co2Ok` | s; Hz; contadores; KB; 3 flags 0/1 — chega 1×/s |
-| 8 | `micenv` | `rms_L rms_R pico_L pico_R` | **dBFS**, medidos pelo firmware em janela de 20 ms, com o pico amostrado nos 16 kHz cheios. Chega **na taxa de orientação** (até 200 Hz) — é este o sinal para controle de sopro, não o `mics` de 5 Hz. RMS na referência AES17 (0 dBFS = senoide de fundo de escala), pico na referência de amplitude (0 dBFS = amostra de fundo de escala), portanto 3,01 dB abaixo para a mesma senoide |
-| 9 | `status` | `bridge <versão>` · `scanning` · `connected <nome>` · `disconnected` | estado da ponte/conexão |
+| `gaia.lat` | latitude do ponto para onde o globo virtual aponta | −90 a 90 graus (sul negativo) | navegação ativa na bola |
+| `gaia.lon` | longitude desse ponto | −180 a 180 graus (oeste negativo) | navegação ativa |
+| `gaia.speed` | velocidade de giro do globo | 0 a 180 graus/s | navegação ativa |
+| `gaia.bearing` | rumo do mapa (padrão do Mapbox: sentido horário, a partir do norte) | −180 a 180 graus | navegação ativa |
+| `gaia.settled` | globo parado | 0 ou 1 | navegação ativa |
+| `gaia.acc.x`, `gaia.acc.y`, `gaia.acc.z` | aceleração em cada eixo | −4000 a 4000 mg (1000 mg = 1 g, a gravidade) | todo pacote de movimento |
+| `gaia.quat` | orientação, como quatérnio: lista `w x y z` | cada valor de −1 a 1 | todo pacote de movimento |
+| `gaia.mic.rms` | nível RMS dos microfones: lista `E D` (esquerdo, direito) | −120 a 0 dBFS (0 = fundo de escala; −120 = piso) | áudio da bola ligado |
+| `gaia.mic.peak` | pico dos microfones: lista `E D` | −120 a 0 dBFS | áudio da bola ligado |
+| `gaia.breath` | sopro reconhecido pela bola (1 enquanto dura) | 0 ou 1 | todo pacote de movimento |
+| `gaia.sensors` | lista `roll pitch yaw aceX aceY aceZ co2` | ângulos em graus, aceleração em mg, CO₂ em ppm (0 até chegar o primeiro pacote de CO₂) | todo pacote de movimento |
+| `gaia.co2` | CO₂ medido | ppm (ar livre fica perto de 420; sala cheia passa de 1000) | todo pacote de CO₂ |
+| `gaia.co2.trigger` | gatilho de CO₂ da bola (o mesmo que abre as composições no site) | 0 ou 1 | todo pacote de CO₂ |
 
-Taxas típicas: `euler`/`quat`/`accel`/`micenv` chegam na taxa configurada na bola
-(10–200 Hz, padrão 50); `co2` quando muda ou 1×/s; `mics`/`pot` 5×/s;
-`diag` 1×/s. O `--imu-div` decima o `micenv` junto com a orientação: eles viajam
-no mesmo pacote.
+- `gaia.lat`, `gaia.lon`, `gaia.speed`, `gaia.acc.*`, `gaia.co2` e `gaia.sensors` têm os
+  mesmos nomes e unidades que o site GaiaSenses manda ao patch. Os ângulos de
+  `gaia.sensors` usam a mesma convenção do site. Um patch que só lê os valores roda igual
+  nos dois.
+- **Um evento por sopro:** `[r gaia.breath]` → `[change]` → `[sel 1]`.
+- O áudio não chega em amostras: chega o nível já medido na bola (RMS e pico de cada
+  microfone, a cada pacote de movimento). O espectro fica só na config-app.
+- **Na desconexão**, `gaia.breath` e `gaia.co2.trigger` recebem 0 uma vez, para nenhum 1
+  ficar preso no patch. Os outros canais mantêm o último valor.
 
-### Áudio: o Pd recebe as variáveis tratadas, não as amostras
+## Outlet de status
 
-A ponte **não** encaminha o áudio cru. O que chega é o envelope já calculado na
-bola — RMS e pico por canal, em dBFS (`micenv`) — porque é isso que um patch
-usa como sinal de controle:
+| Mensagem | Quando |
+|---|---|
+| `connected 1` | a config-app conectou, ou os pacotes voltaram depois de um silêncio |
+| `connected 0` | a config-app fechou a conexão, ou ficou 2 segundos sem mandar pacotes |
+| `rate N` | uma vez por segundo, enquanto conectado: pacotes recebidos no último segundo (movimento + navegação + CO₂; com a bola no padrão, cerca de 100) |
+| `gap N` | junto com o `rate`: o maior intervalo sem pacotes no último segundo, em milissegundos |
 
-| | Amostras cruas (o que saiu) | Envelope tratado (o que fica) |
-|---|---|---|
-| Mensagens/s | ~21, com 96 floats cada ≈ 2000 floats/s | 1 por pacote de orientação, 4 floats |
-| Pronto para usar? | não: exigiria janela, RMS e detecção de pico dentro do Pd | sim: dois números por canal, em dBFS |
-| Fidelidade do pico | o stream é decimado por média de 8 — transientes sumiam | pico amostrado nos 16 kHz cheios |
-| Custo no enlace BLE | ~4,3 kB/s e ~45 ms/s de tempo de ar (mais que todos os outros pacotes somados) | 8 bytes num pacote que já era enviado |
-
-**E o espectro (FFT)?** Fica só no navegador, no config-app, que é onde ele serve
-para ajustar os cortes do passa-banda vendo o resultado. Mandar espectro pelo
-BLE custaria mais banda que mandar o próprio áudio (256 raias por canal × 21/s)
-e não cabe no MTU. Se precisar de análise espectral dentro do Pd, o caminho é
-analisar o sinal de um microfone local ali mesmo — não transportar áudio da bola.
-O `mics` continua informando, no último campo, se o passa-banda do sopro estava
-ativo quando aquele RMS foi medido.
-
-## Opções da ponte
-
-```
-python3 gaiaball_bridge.py --help
-```
-
-| Opção | Padrão | Efeito |
-|---|---|---|
-| `--name NOME` | `Globo_1` | nome BLE da bola a procurar |
-| `--address END` | — | conecta por endereço (MAC no Win/Linux, UUID no macOS); ignora `--name` |
-| `--port N` | `9478` | porta UDP (tem que casar com o argumento do `[gaiaball]`) |
-| `--host IP` | `127.0.0.1` | manda os dados para outro computador (Pd em outra máquina) |
-| `--imu-div N` | `1` | encaminha 1 a cada N pacotes de IMU (alivia patches pesados: `--imu-div 4` a 200 Hz ≈ 50 msg/s). Vale também para o `micenv`, que viaja no mesmo pacote |
-| `--list` | — | só lista os dispositivos BLE visíveis (a Gaiaball aparece marcada) e sai |
-| `-v` | — | imprime contadores de pacotes a cada 5 s |
-
-## Exemplos
-
-O `gaiaball-help.pd` traz os três prontos:
-
-1. **Orientação → som**: `euler` → `[unpack f f f]` → yaw (−180…180°) mapeado
-   para a frequência de um `[osc~]`.
-2. **Sopro → evento**: o 4º campo de `co2` (pulso virtual) → `[sel 1]` → bang.
-   É o mesmo gatilho que o site usa para disparar a composição.
-3. **Nível dos microfones**: `micenv` → RMS e pico por canal na taxa de orientação,
-   pronto para controlar amplitude/filtros (SPL estimado ≈ dBFS + 120). O outlet
-   `mics`, de 5 Hz, serve como leitura lenta/diagnóstico.
+Uma conexão nova substitui a anterior: se duas abas da config-app tentarem enviar ao
+mesmo tempo, vale a mais recente. Feche as outras.
 
 ## Solução de problemas
 
-| Sintoma | Causa provável / correção |
+| Sintoma | Causa provável e o que fazer |
 |---|---|
-| `status` fica em `scanning` | bola desligada, fora de alcance, ou já com **2 centrais conectadas** (o limite do firmware — ex.: site + config-app). Desconecte um deles. |
-| Nada chega no Pd mas a ponte diz `conectado` | porta diferente dos dois lados (`--port` × argumento do `[gaiaball]`), ou firewall bloqueando UDP local (raro em loopback). |
-| macOS: a ponte aborta na hora | permissão de Bluetooth negada ao Terminal — conceda em Ajustes → Privacidade e Segurança → Bluetooth e rode de novo. |
-| Linux: `org.bluez` error / adaptador não achado | `sudo systemctl start bluetooth`; confira `bluetoothctl show`. |
-| Windows: a bola não aparece nem no `--list` | Bluetooth desativado ou rádio sem BLE (4.0+); teste com um dongle BLE. |
-| Quero o áudio cru / o espectro no Pd | não é oferecido de propósito (ver [Áudio](#áudio-o-pd-recebe-as-variáveis-tratadas-não-as-amostras)). Use `micenv` para nível e transiente; o espectro fica no config-app. |
-| `micenv` não chega | a bola está rodando firmware anterior à v8 (pacote de orientação de 23 B em vez de 31 B) — atualize o firmware; a ponte descarta pacotes curtos. |
-| Ângulos "diferentes do site" | não são: é a mesma convenção (`quatToEulerLegacy`). Lembre que zero/montagem são aplicados **na bola** — use o comando "Zerar orientação" do config-app. |
+| O Pd diz `gaiaball ... couldn't create` | o objeto não está instalado ou a pasta não está no caminho do Pd. Instale pelo Deken (passo 1) e confira em Preferências → Caminho. |
+| O console diz `gaiaball: porta 9478 em uso` | outro `[gaiaball]` já escuta nessa porta (por exemplo, em outro patch aberto, ou no patch de ajuda). Use um só. Se for outro programa, escolha outra porta nos dois lados: `[gaiaball 9500]` e a mesma porta na config-app. |
+| A config-app mostra "Pd: aguardando" | o Pd não está aberto, não há `[gaiaball]` em nenhum patch aberto, ou as portas são diferentes nos dois lados. |
+| A config-app mostra "Pd: bloqueado pelo Chrome" | a permissão "Apps neste dispositivo" foi negada. Libere como no passo 4 e recarregue a página. |
+| A config-app mostra "Pd: desligado" | a chave Enviar ao Pd está desligada, ou a bola não está conectada. |
+| `connected 1`, mas `gaia.lat` e `gaia.lon` não chegam | a navegação está desligada na bola. Na config-app, desbloqueie com o PIN e escolha a navegação Espelho ou Joystick. |
+| `gaia.mic.*` não chega | o áudio está desligado na bola. Na config-app, desbloqueie com o PIN e ligue o áudio. |
+| `rate` baixo ou `gap` alto | a página ficou lenta. Feche outras abas pesadas e deixe só uma aba da config-app enviando. |
+| Ângulos "diferentes do site" | não são: é a mesma convenção. O zero e a montagem são ajustados **na bola**: use "Zerar orientação" na config-app (exige o PIN). |
 
-## Notas de projeto
+## Segurança
 
-- **Somente leitura, sem PIN**: as características de notificação e a leitura
-  da config são abertas por design (o PIN protege só escritas/comandos) — a
-  ponte não precisa e não pede desbloqueio.
-- **Duas centrais**: o firmware aceita 2 conexões simultâneas. Ponte + site,
-  ou ponte + config-app — escolha dois.
-- A fonte da verdade do protocolo é `firmware/docs/protocol.md` (deste repo);
-  a ponte decodifica o wire protocol v1 e é independente do site e do
-  config-app.
+O `[gaiaball]` só aceita conexões do próprio computador (`127.0.0.1`): nada de fora chega
+nele pela rede. Ele aceita **qualquer página** que o Chrome autorizar em **Apps neste
+dispositivo**, porque o endereço definitivo da config-app ainda não foi definido. Por isso,
+**não dê essa permissão a sites que você não conhece**: um site autorizado poderia mandar
+dados falsos ao seu patch.
+
+## Para quem mantém o projeto
+
+### Conteúdo da pasta
+
+| Arquivo | O que é |
+|---|---|
+| `gaiaball.c` | a classe do Pd: servidor WebSocket só em `127.0.0.1`, sem threads (os sockets entram no laço do próprio Pd) |
+| `src/gb_decode.{h,c}` | decodificador dos pacotes da bola, independente do transporte |
+| `src/gb_ws.{h,c}`, `src/gb_sha1.{h,c}`, `src/gb_base64.{h,c}` | o protocolo WebSocket (RFC 6455) mínimo, sem sockets |
+| `gaiaball-help.pd` | patch de ajuda (botão direito no objeto → Ajuda) |
+| `Makefile` | compilação com o `pd-lib-builder` e o alvo `test` |
+| `pd-lib-builder/` | submódulo git com o sistema de compilação de externals do Pd |
+| `tests/` | testes em C do decodificador e do WebSocket; `tests/e2e/` tem o teste ponta a ponta com o Pd |
+| [`PUBLICAR-NO-DEKEN.md`](PUBLICAR-NO-DEKEN.md) | como publicar uma versão nova no Deken |
+
+### Compilar e testar
+
+```sh
+git submodule update --init                       # traz o pd-lib-builder
+make -C pd-gaiaball                               # compila o external
+make -C pd-gaiaball PDINCLUDEDIR=<pure-data>/src  # se o m_pd.h não for achado sozinho
+make -C pd-gaiaball floatsize=64 extension=linux-amd64-64.so   # Pd de precisão dupla
+make -C pd-gaiaball test                          # testes em C; não precisam do Pd
+```
+
+O `PDINCLUDEDIR` pode apontar para a pasta `src/` do código-fonte do Pd
+(`git clone --depth 1 --branch 0.55-2 https://github.com/pure-data/pure-data`). No
+Windows, compile com o MSYS2 (MinGW64); o `Makefile` acrescenta o `ws2_32`.
+
+**Ponta a ponta, sem bola e sem navegador** (Linux, com o Pd instalado):
+
+```sh
+pd -nogui -stderr -path pd-gaiaball -open pd-gaiaball/tests/e2e/listen.pd &
+node pd-gaiaball/tests/e2e/send-goldens.mjs
+```
+
+O script faz o aperto de mão como o Chrome, manda os pacotes de referência, testa a
+segunda conexão substituindo a primeira, o silêncio de 2 s, o fechamento e um quadro de
+texto (recusado). Com `--spawn`, ele mesmo abre o Pd e confere tudo o que o `listen.pd`
+imprime:
+
+```sh
+node pd-gaiaball/tests/e2e/send-goldens.mjs --spawn pd -nogui -stderr \
+  -path pd-gaiaball -open pd-gaiaball/tests/e2e/listen.pd
+```
+
+### Notas de projeto
+
+- A fonte da verdade do protocolo é [`firmware/docs/protocol.md`](../firmware/docs/protocol.md).
+  O decodificador confere versão e tipo, aceita pacotes maiores que o mínimo (campos
+  novos são ignorados) e descarta o resto sem travar, incluindo o pacote de movimento v1
+  de firmware antigo.
+- A config-app repassa só os pacotes de movimento (`0x01`), CO₂ (`0x02`) e navegação
+  (`0x07`), sem alterar, um por mensagem binária.
+- O objeto não confere a origem da página (o domínio definitivo ainda não existe). A
+  proteção é escutar só em `127.0.0.1` e o pedido "Apps neste dispositivo" do Chrome.
+- A bola aceita duas conexões Bluetooth ao mesmo tempo: por exemplo, a config-app (que
+  alimenta o Pd) e o site GaiaSenses.

@@ -1,1 +1,13 @@
 build-test/
+# Pd headers fetched for local builds (the CI fetches its own)
+build-deps/
+# pd-lib-builder outputs
+*.o
+*.pd_linux
+*.pd_darwin
+*.d_fat
+*.dll
+*.so
+*.dylib
+*.dek
+*.dek.*

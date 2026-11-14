@@ -1,5 +1,44 @@
-# Test target (self-contained). The pd-lib-builder build is added later and
-# must coexist with this: test binaries live under build-test/ (gitignored).
+# [gaiaball] for Pure Data.
+#
+#   make                              build the external with pd-lib-builder (git submodule)
+#   make PDINCLUDEDIR=<pd>/src        ... when m_pd.h is not found automatically
+#   make test                         C unit tests; needs neither Pd nor its headers
+#
+# pd-lib-builder requires `all` to be the default goal, so its include comes before the
+# test rules.
+
+lib.name = gaiaball
+
+class.sources = gaiaball.c
+gaiaball.class.sources = src/gb_decode.c src/gb_ws.c src/gb_sha1.c src/gb_base64.c
+
+cflags = -Isrc
+
+datafiles = gaiaball-help.pd README.md
+
+define forWindows
+  ldlibs += -lws2_32
+endef
+
+TEST_GOALS = test test-san test-clean
+PDLIBBUILDER_DIR = pd-lib-builder
+ifneq ($(MAKECMDGOALS),)
+ifeq ($(filter-out $(TEST_GOALS),$(MAKECMDGOALS)),)
+  only-tests = yes
+endif
+endif
+
+ifeq ($(only-tests),yes)
+  # test goals only: no pd-lib-builder, so no Pd headers or submodule needed
+else ifeq ($(wildcard $(PDLIBBUILDER_DIR)/Makefile.pdlibbuilder),)
+all:
+	@echo "pd-lib-builder not found: run 'git submodule update --init' at the repository root" >&2
+	@exit 1
+else
+include $(PDLIBBUILDER_DIR)/Makefile.pdlibbuilder
+endif
+
+# ---- C unit tests (self-contained; binaries under build-test/, gitignored) ----
 TEST_CC ?= cc
 TEST_CFLAGS = -std=c99 -Wall -Wextra -Werror -O1
 TEST_DIR = build-test

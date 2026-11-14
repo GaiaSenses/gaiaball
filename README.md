@@ -57,8 +57,9 @@ The full netlist cross-check against the KiCAD board design lives in
   halts the active stream until the next power cycle — and resynchronizes on the
   frame header after any byte loss.
 - **Transport.** Everything leaves the ball as small, versioned, little-endian
-  binary packets with sequence numbers and timestamps (31 B orientation packets, microphone
-  envelope included, at up to 200 Hz), over a NimBLE GATT server that accepts **two centrals at once** —
+  binary packets with sequence numbers and timestamps (27 B orientation packets, version 2:
+  acceleration in milli-g and the microphone envelope in half-dB steps, at up to 200 Hz),
+  over a NimBLE GATT server that accepts **two centrals at once** —
   the site and the config-app side by side. Sensitive commands and configuration
   writes require a 4-digit PIN unlock per connection.
 - **Configuration.** Every parameter (rates, filters, thresholds, pins, names) is a
@@ -80,7 +81,7 @@ vectors. The task/queue architecture, including a per-core execution diagram, is
 |---|---|
 | `firmware/` | **The v2 firmware** (ESP32, FreeRTOS, NimBLE, binary protocol). Dual toolchain: PlatformIO and Arduino IDE/CLI. See [`firmware/README.md`](firmware/README.md). |
 | `config-app/` | **Bench & configuration web app** (Vite + TypeScript, Web Bluetooth): 3D orientation view, per-sensor real-time charts with a shared time axis, audio spectrum analyzer, stream metrics, full parameter editor with presets. See [`config-app/README.md`](config-app/README.md). |
-| `pd-gaiaball/` | **Pure Data object `[gaiaball]`** (vanilla abstraction + cross-platform BLE→UDP bridge in Python/bleak): read-only access to every Gaiaball reading from inside Pd on Windows, Linux and macOS. Audio arrives as the treated envelope (per-channel RMS and peak, at the orientation rate), never as samples — the spectrum stays in the browser. See [`pd-gaiaball/README.md`](pd-gaiaball/README.md). |
+| `pd-gaiaball/` | **Pure Data external `[gaiaball]`** (C, pd-lib-builder, installable from Deken): the config-app forwards the ball's packets over a local WebSocket (`127.0.0.1:9478`) and the object publishes them as `[r gaia.*]` channels, read-only, on Windows, Linux and macOS. Audio arrives as the treated envelope (per-channel RMS and peak, at the orientation rate), never as samples — the spectrum stays in the browser. See [`pd-gaiaball/README.md`](pd-gaiaball/README.md). |
 | `docs/protocolo-ble.md` | **Didactic BLE protocol guide** (pt-BR): BLE basics, every packet and TLV register, navigation, runnable JavaScript/Python/C clients and golden vectors. An identical copy lives in `Gaiasenses-web` as `docs/gaiaball-protocolo-ble.md`; this one is the reference. See [`docs/protocolo-ble.md`](docs/protocolo-ble.md). |
 | `docs/bench-validation.md` | Step-by-step hardware validation script (flash, rates, loss, filters, CO₂, 24 h soak). |
 | `relatorio/index.html` | Interactive report (pt-BR): every defect found in the legacy firmware, the fix, the expected impact, and the bench checklist. Open it in a browser. |
@@ -148,7 +149,8 @@ ball.
 | Firmware logic (packets, TLV, fusion, filters, SC8 framing, DSP) | `firmware/test/` | `pio test -d firmware -e native` |
 | Config-app (decoders, FFT, Euler convention, presets) | `config-app/src/**/*.test.ts` | `npm test` |
 | Site decoder (same golden vectors) | `Gaiasenses-web/tests/` | `npm test` in that repo |
+| `[gaiaball]` decoder and WebSocket core (golden vectors, RFC 6455 handshake and frames) | `pd-gaiaball/tests/` | `make -C pd-gaiaball test` |
 
-The three test suites share verbatim golden byte vectors from
-`firmware/docs/protocol.md`, so the wire contract is pinned across C++, the
-config-app and the site.
+The four test suites share verbatim golden byte vectors from
+`firmware/docs/protocol.md`, so the wire contract is pinned across the firmware, the
+config-app, the site and the Pd external.
