@@ -44,6 +44,15 @@ export function thresholdToDbfs(s: Pick<SensorsSample, 'threshold' | 'metricPeak
   return s.metricPeak ? peakToDbfs(s.threshold) : rmsToDbfs(s.threshold);
 }
 
+/**
+ * Potentiometer ADC (0..4095) -> dBFS, linear -60..0. Mirror of `potRawToDbfs` in
+ * firmware/Gaiaball/src/logic/PotMapping.h; change them only together.
+ */
+export function potRawToDbfs(potRaw: number): number {
+  const v = -60 + (potRaw / 4095) * 60;
+  return Math.min(0, Math.max(-60, v));
+}
+
 /** Floor of the firmware's dBFS audio fields (-120 dBFS; half-dB u8 value 0 on the wire; firmware logic/AudioFeatures.h). */
 export const AUDIO_DB_FLOOR = -120;
 

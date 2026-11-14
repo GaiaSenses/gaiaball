@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeAudioChunkPacket, decodeCo2Packet, decodeDiagPacket, decodeImuPacket, decodeMagChunkPacket, decodeNav, decodeSensorsPacket, isLegacyImuPacket, peakToDbfs, rmsToDbfs, thresholdToDbfs } from './packets';
+import { decodeAudioChunkPacket, decodeCo2Packet, decodeDiagPacket, decodeImuPacket, decodeMagChunkPacket, decodeNav, decodeSensorsPacket, isLegacyImuPacket, peakToDbfs, potRawToDbfs, rmsToDbfs, thresholdToDbfs } from './packets';
 import { TLV, VALID_OUTPUT_GPIOS, buildCommand, decodeNavRef, decodeTlv, encodeNavRef, encodeTlv, navRefToString, parseNavRefString } from './tlv';
 
 const hex = (s: string) => new DataView(new Uint8Array(s.trim().split(/\s+/).map((b) => parseInt(b, 16))).buffer);
@@ -101,6 +101,14 @@ describe('golden decode', () => {
     expect(peakToDbfs(8388608)).toBe(0);
     expect(peakToDbfs(4194304)).toBeCloseTo(-6.0206, 3);
     expect(peakToDbfs(0)).toBe(-120);
+  });
+
+  it('potRawToDbfs: linear -60..0 dBFS, clamped', () => {
+    expect(potRawToDbfs(0)).toBe(-60);
+    expect(potRawToDbfs(4095)).toBe(0);
+    expect(potRawToDbfs(2047.5)).toBeCloseTo(-30, 9);
+    expect(potRawToDbfs(-10)).toBe(-60);
+    expect(potRawToDbfs(5000)).toBe(0);
   });
 
   it('thresholdToDbfs picks the formula by the active metric', () => {

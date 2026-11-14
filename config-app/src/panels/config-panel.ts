@@ -1,7 +1,7 @@
 import type { GaiaballClient, StatusDetail } from '../ble/gaiaball-client.ts';
 import { PresetStore } from '../presets/preset-store.ts';
 import { decodeNavRef, encodeNavRef, encodeTlv, navRefToString, parseNavRefString, TLV, type TlvWrite } from '../protocol/tlv.ts';
-import { thresholdToDbfs, type SensorsSample } from '../protocol/packets.ts';
+import { potRawToDbfs, type SensorsSample } from '../protocol/packets.ts';
 import { renderSwitch, setSwitchValue, type SwitchOptions } from '../ui/switch.ts';
 import { infoDot } from './info.ts';
 
@@ -691,7 +691,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   const refreshPotLabel = (): void => {
     const pot = Number(inputs.get(TLV.potControlsThreshold)?.value) === 1;
     potLabel.hidden = !(pot && lastSensors);
-    if (lastSensors) potLabel.textContent = `Potenciômetro: ${thresholdToDbfs(lastSensors).toFixed(1).replace('.', ',')} dBFS`;
+    if (lastSensors) potLabel.textContent = `Potenciômetro: ${potRawToDbfs(lastSensors.potRaw).toFixed(1).replace('.', ',')} dBFS`;
   };
   client.addEventListener('sensors', (ev) => {
     lastSensors = (ev as CustomEvent<SensorsSample>).detail;
