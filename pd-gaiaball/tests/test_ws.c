@@ -214,6 +214,28 @@ static void test_frames(void) {
     CHECK(nxt(&p) == GB_WS_ERROR);
 }
 
+static void test_stream_chunks(void) {
+    static uint8_t big[1024], one[1100], stream[1100 * 20];
+    for (size_t i = 0; i < sizeof big; i++) big[i] = (uint8_t)(i * 7);
+    size_t on = cframe(0x82, big, 1024, 1, one), tot = 0;
+    for (int k = 0; k < 20; k++) { memcpy(stream + tot, one, on); tot += on; }
+    gb_ws_parser p; init(&p);
+    CHECK(gb_ws_space(&p) == sizeof p.buf);
+    int got = 0, bad = 0;
+    for (size_t pos = 0; pos < tot; ) {
+        size_t c = tot - pos; if (c > 1024) c = 1024;
+        CHECK(c <= gb_ws_space(&p));
+        gb_ws_feed(&p, stream + pos, c); pos += c;
+        for (;;) {
+            gb_ws_kind k = nxt(&p);
+            if (k == GB_WS_NONE) break;
+            if (k != GB_WS_BINARY || plen != 1024 || memcmp(pay, big, 1024) != 0) { bad++; break; }
+            got++;
+        }
+    }
+    CHECK(got == 20); CHECK(bad == 0);
+}
+
 static void test_server_frame(void) {
     uint8_t out[2200], d[300]; memset(d, 0x5A, sizeof d);
     size_t n = gb_ws_frame(0x2, d, 5, out, sizeof out);
@@ -267,7 +289,7 @@ static void test_fuzz(void) {
 
 int main(void) {
     test_sha1(); test_base64(); test_accept(); test_request(); test_responses();
-    test_frames(); test_server_frame(); test_fuzz();
+    test_frames(); test_stream_chunks(); test_server_frame(); test_fuzz();
     if (fails) { printf("%d FAILED\n", fails); return 1; }
     printf("test_ws: all passed\n");
     return 0;

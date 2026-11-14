@@ -86,6 +86,10 @@ size_t gb_ws_response_400(char *out, size_t cap) {
 }
 
 /* ---- frames ---- */
+size_t gb_ws_space(const gb_ws_parser *p) {
+    return (p->err || p->len >= sizeof p->buf) ? 0 : sizeof p->buf - p->len;
+}
+
 void gb_ws_feed(gb_ws_parser *p, const uint8_t *data, size_t n) {
     if (p->err || n == 0) return;
     if (p->len > sizeof p->buf || n > sizeof p->buf - p->len) { p->err = 1009; return; }

@@ -17,7 +17,8 @@ extern "C" {
 int gb_ws_accept_key(const char *client_key, char out[29]);
 
 typedef enum { GB_HS_NEED_MORE, GB_HS_OK, GB_HS_BAD } gb_hs_result;
-/* Needs GET, Upgrade: websocket, Connection: upgrade, Sec-WebSocket-Version: 13 and a key (<= 63 chars,
+/* Does NOT report consumed bytes: anything after CRLFCRLF in buf is discarded, so the caller must
+ * not pipeline frames before the 101 has been sent (clients do not). Needs GET, Upgrade: websocket, Connection: upgrade, Sec-WebSocket-Version: 13 and a key (<= 63 chars,
  * copied NUL-terminated into key). Origin is ignored. buf need not be NUL-terminated. */
 gb_hs_result gb_ws_parse_request(const char *buf, size_t n, char key[64]);
 /* Return the length written (excluding NUL), or 0 if cap is too small. */
@@ -31,8 +32,12 @@ typedef struct {
 } gb_ws_parser;
 typedef enum { GB_WS_NONE, GB_WS_BINARY, GB_WS_PING, GB_WS_CLOSE, GB_WS_ERROR } gb_ws_kind;
 
-/* Appends data. If it does not fit in the buffer the parser enters the error state (1009)
- * and nothing is written out of bounds. Call gb_ws_next until NONE between feeds. */
+/* Contract: drain with gb_ws_next until GB_WS_NONE, then feed at most gb_ws_space() bytes.
+ * After a full drain, GB_WS_MAX_PAYLOAD (1024) bytes per call is always safe (a partial frame
+ * left in the buffer is at most 1037 bytes). If a feed does not fit, the parser enters the error
+ * state (1009), the chunk is dropped and nothing is written out of bounds. Do not hand a whole
+ * recv(4096) to a single feed: split it into chunks, draining between them. */
+size_t gb_ws_space(const gb_ws_parser *p);
 void gb_ws_feed(gb_ws_parser *p, const uint8_t *data, size_t n);
 /* payload must have room for GB_WS_MAX_PAYLOAD bytes. BINARY/PING: unmasked payload. CLOSE: close_code
  * (1005 if none) and the payload (code + reason). ERROR: close_code to send (1002/1003/1009), sticky.
