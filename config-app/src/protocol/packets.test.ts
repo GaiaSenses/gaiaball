@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { decodeAudioChunkPacket, decodeCo2Packet, decodeDiagPacket, decodeImuPacket, decodeMagChunkPacket, decodeNav, decodeSensorsPacket, rmsToDbfs } from './packets';
+import { decodeAudioChunkPacket, decodeCo2Packet, decodeDiagPacket, decodeImuPacket, decodeMagChunkPacket, decodeNav, decodeSensorsPacket, isLegacyImuPacket, rmsToDbfs } from './packets';
 import { TLV, VALID_OUTPUT_GPIOS, buildCommand, decodeNavRef, decodeTlv, encodeNavRef, encodeTlv, navRefToString, parseNavRefString } from './tlv';
 
 const hex = (s: string) => new DataView(new Uint8Array(s.trim().split(/\s+/).map((b) => parseInt(b, 16))).buffer);
 
 // Golden vectors copied verbatim from firmware/docs/protocol.md
 const IMU =
+  '02 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 E8 03 0C FE 97 00 0B F0 C8 F0 E4';
+// Version 1 IMU packet (31 B, acceleration in LSB, audio int16 dBFS x100): legacy firmware.
+const IMU_V1 =
   '01 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 01 00 FE FF 03 00 0B' +
   ' 00 00 30 F8 00 00 A6 FD';
 const CO2 = '01 02 02 01 0D 0C 0B 0A E8 03 05 07';
@@ -21,26 +24,30 @@ describe('golden decode', () => {
     expect(s.seq).toBe(258);
     expect(s.tUs).toBe(0x0a0b0c0d);
     expect(s.quat).toEqual({ w: 1.0, x: 0, y: 0, z: 0 });
-    expect(s.acc).toEqual([1, -2, 3]);
+    expect(s.acc).toEqual([1000, -500, 151]); // mg
     expect(s.flags).toBe(0b1011);
     expect([s.quatValid, s.nineAxis, s.moving]).toEqual([true, true, false]);
-    // Microphone envelope appended in v8: AES17 dBFS for the RMS, amplitude dBFS for
-    // the peak, both x100 on the wire.
+    // Microphone envelope: u8 half-dB, dBFS = value / 2 - 120.
     expect(s.audioValid).toBe(true);
     expect(s.audioRmsDbfs).toEqual([0, -20]);
-    expect(s.audioPeakDbfs[0]).toBe(0);
-    expect(s.audioPeakDbfs[1]).toBeCloseTo(-6.02, 2);
+    expect(s.audioPeakDbfs).toEqual([0, -6]);
   });
 
   it('IMU without a microphone reads the dB floor, not 0 dBFS', () => {
-    // Same packet with kImuAudioValid clear and both levels at the floor (-120.00).
+    // Same packet with kImuAudioValid clear and all four levels at the floor (0 = -120 dBFS).
     const silent =
-      '01 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 01 00 FE FF 03 00 01' +
-      ' 20 D1 20 D1 20 D1 20 D1';
+      '02 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 E8 03 0C FE 97 00 01 00 00 00 00';
     const s = decodeImuPacket(hex(silent))!;
     expect(s.audioValid).toBe(false);
     expect(s.audioRmsDbfs).toEqual([-120, -120]);
     expect(s.audioPeakDbfs).toEqual([-120, -120]);
+  });
+
+  it('legacy 31-byte v1 IMU packet decodes to null and is flagged as legacy', () => {
+    expect(decodeImuPacket(hex(IMU_V1))).toBeNull();
+    expect(isLegacyImuPacket(hex(IMU_V1))).toBe(true);
+    expect(isLegacyImuPacket(hex(IMU))).toBe(false);
+    expect(isLegacyImuPacket(hex(CO2))).toBe(false);
   });
   it('CO2', () => {
     const s = decodeCo2Packet(hex(CO2))!;
@@ -126,7 +133,7 @@ describe('invalid input returns null', () => {
   it('wrong version / type', () => {
     dec.forEach((d, i) => {
       const v = new Uint8Array(hex(good[i]).buffer);
-      v[0] = 2;
+      v[0] = 3;
       expect(d(new DataView(v.buffer))).toBeNull();
       const t = new Uint8Array(hex(good[i]).buffer);
       t[1] = 0x7f;

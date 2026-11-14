@@ -7,6 +7,7 @@ import {
   decodeImuPacket,
   decodeNav,
   decodeSensorsPacket,
+  isLegacyImuPacket,
 } from '../protocol/packets.ts';
 import { buildCommand, decodeTlv, encodeTlv, type TlvWrite } from '../protocol/tlv.ts';
 
@@ -58,6 +59,7 @@ export class GaiaballClient extends EventTarget {
   private cmdChar: BtCharacteristic | null = null;
   private cfgChar: BtCharacteristic | null = null;
   private isConnected = false;
+  private outdatedReported = false;
   private hasNav = false;
   private readonly onDisconnected = (): void => {
     this.cleanup();
@@ -183,6 +185,10 @@ export class GaiaballClient extends EventTarget {
         if (!ch.value) return;
         const sample = decode(ch.value);
         if (sample !== null) this.dispatchEvent(new CustomEvent(event, { detail: sample }));
+        else if (event === 'imu' && !this.outdatedReported && isLegacyImuPacket(ch.value)) {
+          this.outdatedReported = true;
+          this.dispatchEvent(new CustomEvent('firmware-outdated'));
+        }
       } catch {
         // Malformed packet: drop silently, never break the notification stream.
       }
@@ -191,6 +197,7 @@ export class GaiaballClient extends EventTarget {
 
   private cleanup(): void {
     this.isConnected = false;
+    this.outdatedReported = false;
     this.hasNav = false;
     this.cmdChar = null;
     this.cfgChar = null;

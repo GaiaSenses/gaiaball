@@ -66,6 +66,10 @@ if (!(navigator as Navigator & { bluetooth?: unknown }).bluetooth) {
 }
 
 const client = new GaiaballClient();
+client.addEventListener('firmware-outdated', () => {
+  app.querySelector('#banner')!.innerHTML =
+    '<div class="banner">Firmware da bola desatualizado: grave o firmware novo (o pacote de movimento agora é a versão 2).</div>';
+});
 export const stats = new StreamStats();
 // Reset on every (re)connect, otherwise a device reboot freezes the stats.
 client.addEventListener('status', (ev) => {
@@ -189,7 +193,7 @@ if (new URLSearchParams(location.search).get('demo')) {
       seq: seq++ & 0xffff,
       tUs: Math.round(t * 1e6),
       quat: q,
-      acc: [Math.round(Math.sin(t * 1.3) * 2048), Math.round(Math.cos(t * 0.9) * 2048), Math.round(8192 + Math.sin(t * 3) * 300)],
+      acc: [Math.round(Math.sin(t * 1.3) * 250), Math.round(Math.cos(t * 0.9) * 250), Math.round(1000 + Math.sin(t * 3) * 40)],
       flags: 0b1101,
       quatValid: true,
       nineAxis: false,

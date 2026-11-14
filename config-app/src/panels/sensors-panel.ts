@@ -16,7 +16,6 @@ import { computeSpectrum } from '../metrics/fft.ts';
 import { onThemeChange, resolvedTheme } from '../theme.ts';
 import { quatToEulerLegacy } from '../protocol/euler.ts';
 import {
-  ACCEL_LSB_PER_G,
   rmsToDbfs,
   type AudioChunkSample,
   type Co2Sample,
@@ -205,9 +204,9 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
     line('roll (°)', p0.euler[0], 1),
     line('pitch (°)', p0.euler[1], 1),
     line('yaw (°)', p0.euler[2], 1),
-    line('acc X (g)', p0.acc[0], 2),
-    line('acc Y (g)', p0.acc[1], 2),
-    line('acc Z (g)', p0.acc[2], 2),
+    line('acc X (mg)', p0.acc[0], 2),
+    line('acc Y (mg)', p0.acc[1], 2),
+    line('acc Z (mg)', p0.acc[2], 2),
     line('mic E (dBFS)', p0.micL, 3),
     line('limiar (dBFS)', p0.threshold, 3, 'dot'),
     line('mic D (dBFS)', p0.micR, 4),
@@ -229,7 +228,7 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
     showlegend: false,
     grid: { rows: N_ROWS, columns: 1, pattern: 'independent', ygap: 0.08 },
   };
-  const rowTitles = ['Orientação (°)', 'Aceleração (g)', 'Mic esquerdo (dBFS)', 'Mic direito (dBFS)', 'Pico por canal (dBFS)', 'CO₂ (ppm)', 'Potenciômetro (%)'];
+  const rowTitles = ['Orientação (°)', 'Aceleração (mg)', 'Mic esquerdo (dBFS)', 'Mic direito (dBFS)', 'Pico por canal (dBFS)', 'CO₂ (ppm)', 'Potenciômetro (%)'];
   for (let i = 1; i <= N_ROWS; i++) {
     const xk = i === 1 ? 'xaxis' : `xaxis${i}`;
     const yk = i === 1 ? 'yaxis' : `yaxis${i}`;
@@ -289,8 +288,8 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
       q('[data-el=v-euler]').textContent = imu.quatValid
         ? `roll ${fmt(e.rollDeg)}° · pitch ${fmt(e.pitchDeg)}° · yaw ${fmt(e.yawDeg)}°`
         : 'quaternion inválido';
-      q('[data-el=v-acc]').textContent = `X ${fmt(imu.acc[0] / ACCEL_LSB_PER_G, 2)} g · Y ${fmt(
-        imu.acc[1] / ACCEL_LSB_PER_G, 2)} g · Z ${fmt(imu.acc[2] / ACCEL_LSB_PER_G, 2)} g`;
+      q('[data-el=v-acc]').textContent = `X ${fmt(imu.acc[0], 0)} mg · Y ${fmt(
+        imu.acc[1], 0)} mg · Z ${fmt(imu.acc[2], 0)} mg`;
     }
     if (sensors) {
       // RMS and peak come from the orientation packet (firmware, 20 ms window at the
@@ -339,9 +338,9 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
       e ? e.rollDeg : null,
       e ? e.pitchDeg : null,
       e ? e.yawDeg : null,
-      imu ? imu.acc[0] / ACCEL_LSB_PER_G : null,
-      imu ? imu.acc[1] / ACCEL_LSB_PER_G : null,
-      imu ? imu.acc[2] / ACCEL_LSB_PER_G : null,
+      imu ? imu.acc[0] : null,
+      imu ? imu.acc[1] : null,
+      imu ? imu.acc[2] : null,
       rmsLDb,
       thrDb,
       rmsRDb,

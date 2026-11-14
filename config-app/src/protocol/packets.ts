@@ -2,6 +2,8 @@
 // (little-endian, packed). Decoders return null on any malformed input and never throw.
 
 export const PROTOCOL_VERSION = 1;
+/** The IMU (movement) packet is at version 2; every other packet stays at version 1. */
+export const IMU_PACKET_VERSION = 2;
 export const PKT_IMU = 0x01;
 export const PKT_CO2 = 0x02;
 export const PKT_DIAG = 0x03;
@@ -10,7 +12,7 @@ export const PKT_AUDIO = 0x05;
 export const PKT_MAG = 0x06;
 export const PKT_NAV = 0x07;
 
-export const IMU_PACKET_SIZE = 31;
+export const IMU_PACKET_SIZE = 27;
 export const CO2_PACKET_SIZE = 12;
 export const DIAG_PACKET_SIZE = 34;
 export const SENSORS_PACKET_SIZE = 23;
@@ -23,8 +25,6 @@ export const MAG_CHUNK_MAX_SAMPLES = 16;
 export const MAG_LSB_PER_UT = 10;
 
 export const QUAT_SCALE = 16384; // Q14
-/** MPU-9250 accel full scale is ±4 g -> 8192 LSB/g. */
-export const ACCEL_LSB_PER_G = 8192;
 /** Audio RMS counts: INMP441 24-bit samples (int32 >> 8), full-scale amplitude 2^23. */
 export const AUDIO_FULL_SCALE = 8388608;
 /** AES17 dBFS: 0 dBFS = RMS of a full-scale sine (FS/sqrt(2)). Floor at -120 dBFS. */
@@ -69,6 +69,7 @@ export interface ImuSample {
   seq: number;
   tUs: number;
   quat: { w: number; x: number; y: number; z: number };
+  /** Acceleration in mg (1000 = 1 g), already converted by the firmware. */
   acc: [number, number, number];
   flags: number;
   quatValid: boolean;
@@ -196,15 +197,21 @@ export interface AudioChunkSample {
   lpHz: number;
 }
 
-function header(dv: DataView, size: number, type: number): boolean {
-  return dv.byteLength === size && dv.getUint8(0) === PROTOCOL_VERSION && dv.getUint8(1) === type;
+function header(dv: DataView, size: number, type: number, version = PROTOCOL_VERSION): boolean {
+  return dv.byteLength === size && dv.getUint8(0) === version && dv.getUint8(1) === type;
+}
+
+/** True for an IMU packet from firmware that still speaks version 1 (31 B, acceleration in LSB). */
+export function isLegacyImuPacket(dv: DataView): boolean {
+  return dv.byteLength >= 2 && dv.getUint8(0) === 1 && dv.getUint8(1) === PKT_IMU;
 }
 
 export function decodeImuPacket(dv: DataView): ImuSample | null {
-  if (!header(dv, IMU_PACKET_SIZE, PKT_IMU)) return null;
+  if (!header(dv, IMU_PACKET_SIZE, PKT_IMU, IMU_PACKET_VERSION)) return null;
   const q = (o: number) => dv.getInt16(o, true) / QUAT_SCALE;
   const flags = dv.getUint8(22);
-  const db = (o: number) => dv.getInt16(o, true) / 100;
+  // u8 half-dB: 0 = floor (-120 dBFS), 1 step = 0.5 dB.
+  const db = (o: number) => dv.getUint8(o) / 2 - 120;
   return {
     seq: dv.getUint16(2, true),
     tUs: dv.getUint32(4, true),
@@ -215,8 +222,8 @@ export function decodeImuPacket(dv: DataView): ImuSample | null {
     nineAxis: (flags & IMU_FLAG_NINE_AXIS) !== 0,
     moving: (flags & IMU_FLAG_MOVING) !== 0,
     audioValid: (flags & IMU_FLAG_AUDIO_VALID) !== 0,
-    audioRmsDbfs: [db(23), db(25)],
-    audioPeakDbfs: [db(27), db(29)],
+    audioRmsDbfs: [db(23), db(24)],
+    audioPeakDbfs: [db(25), db(26)],
   };
 }
 
