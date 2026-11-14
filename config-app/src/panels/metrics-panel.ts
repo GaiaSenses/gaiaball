@@ -52,7 +52,7 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
       <dt data-info="Se há uma calibração hard/soft-iron gravada na bola. Sem ela, o modo Quat9 pode errar o rumo em dezenas de graus. Sem unidade.">Calibração magnética</dt><dd id="d-magcal">–</dd><span></span>
       <dt data-info="Intervalo de conexão BLE concedido por este navegador. O firmware pede 7,5–15 ms; o navegador decide. É o teto de qualquer taxa de notificação: notificações por segundo ≤ (pacotes por evento de conexão) ÷ intervalo. Com 15 ms e 3 pacotes por evento o teto é 200/s. Unidade: milissegundos (ms).">Intervalo de conexão</dt><dd id="d-itvl">–</dd><span></span>
       <dt data-info="Posição do globo calculada pela bola: modo (Desligado / Espelho / Joystick), latitude e longitude em graus, rumo (ângulo da direção que aponta para cima na tela, em relação ao norte, no padrão do Mapbox), velocidade angular do globo e se ele está parado ou em movimento. “parado” vale sempre que a bola indica parado, mesmo que a velocidade instantânea ainda esteja acima do limiar de parada. Bola com firmware antigo não tem essa característica. Unidades: graus (°), graus por segundo (°/s).">Navegação</dt><dd id="d-nav">–</dd><span></span>
-      <dt data-info="Última leitura de CO₂. “virtual” = pulso disparado por sopro; “desatualizado” = sem quadro novo do sensor dentro do timeout. Unidade: ppm.">CO₂</dt><dd id="d-co2">–</dd><span></span>
+      <dt data-info="Última leitura de CO₂. “virtual” = pulso disparado por sopro; “desatualizado” = sem quadro novo do sensor dentro do timeout. “gatilho” = o bit que o site usa para abrir a composição: ligado quando o CO₂ passou do “Gatilho de CO₂ (ppm)” e ainda não caiu abaixo do gatilho menos a histerese (firmware sem navegação nunca liga esse bit). Unidade: ppm.">CO₂</dt><dd id="d-co2">–</dd><span></span>
     </dl>`;
   decorateInfo(root);
   const $ = (id: string) => root.querySelector<HTMLElement>('#' + id)!;
@@ -132,7 +132,7 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
     }
     $('d-nav').textContent = navText(nav, navMissing);
     if (co2) {
-      $('d-co2').innerHTML = `${co2.ppm} ppm` +
+      $('d-co2').innerHTML = `${co2.ppm} ppm · gatilho: ${co2.trigger ? 'ligado' : 'desligado'}` +
         (co2.stale ? ' <span class="badge warn">desatualizado</span>' : '') +
         (co2.virtualActive ? ' <span class="badge">virtual</span>' : '');
     }
