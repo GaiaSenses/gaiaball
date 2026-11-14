@@ -253,7 +253,8 @@ if (new URLSearchParams(location.search).get('demo')) {
     emit('audio', detail);
   }, 48);
   // Navigation: lat/lon/bearing drift slowly around the default reference; the globe alternates
-  // between moving (~6 s) and settled (~4 s). Cadence 20 Hz, like the real default notify rate.
+  // between moving (~6 s) and settled (~4 s). Cadence 20 Hz, enough for the demo (the real
+  // default navNotifyHz is 50 Hz).
   let navSeq = 0;
   setInterval(() => {
     const t = performance.now() / 1000;
