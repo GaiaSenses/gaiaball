@@ -53,7 +53,7 @@ O painel "Sensores em tempo real" mostra o valor atual de cada sensor com a unid
 correta e, abaixo, gráficos de linha empilhados verticalmente que **compartilham o
 mesmo eixo X (tempo, em segundos)**, cada gráfico com uma cor própria.
 
-- **Janela:** 5, 8 ou 12 s (padrão 12), escolhida acima dos gráficos.
+- **Janela:** 5, 10, 30 ou 60 s (padrão 10), escolhida acima dos gráficos. Os gráficos guardam só o que a janela mostra: ao passar para uma janela maior, ela se completa com o tempo.
 - **Todos os pacotes:** os gráficos mostram cada pacote recebido, sem decimar. O rodapé diz
   "Últimos N s, com todos os pacotes recebidos. Os gráficos são redesenhados 10 vezes por
   segundo; isso não atrasa o envio ao Pd nem o site."

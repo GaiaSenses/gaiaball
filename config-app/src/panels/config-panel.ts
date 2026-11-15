@@ -2,7 +2,7 @@ import type { GaiaballClient, StatusDetail } from '../ble/gaiaball-client.ts';
 import { PresetStore } from '../presets/preset-store.ts';
 import { decodeNavRef, encodeNavRef, encodeTlv, navRefToString, parseNavRefString, TLV, type TlvWrite } from '../protocol/tlv.ts';
 import { potRawToDbfs, type SensorsSample } from '../protocol/packets.ts';
-import { renderSwitch, setSwitchValue, type SwitchOptions } from '../ui/switch.ts';
+import { isToggleOn, renderSwitch, renderToggle, setSwitchValue, setToggleValue, type SwitchOptions } from '../ui/switch.ts';
 import { infoDot } from './info.ts';
 
 type Kind = 'number' | 'range' | 'checkbox' | 'select' | 'text' | 'pin' | 'navref' | 'switch';
@@ -172,8 +172,8 @@ const GROUPS: Group[] = [
       info: 'Compara cada amostra nova com a mediana das 5 últimas e a substitui pela mediana se ela se afastar mais de k desvios robustos (MAD). Remove leitura corrompida do I²C sem adicionar atraso nenhum — ao contrário da EMA, que espalharia a espícula pelas amostras seguintes. 0 desliga; 30 = k 3,0. Adimensional ×10.' },
   ] },
   { title: 'Áudio', fields: [
-    { id: TLV.audioEnabled, label: 'Habilitado', kind: 'checkbox',
-      info: 'Liga a captura dos dois microfones I²S e o detector de sopro. Liga/desliga, sem unidade.' },
+    { id: TLV.audioEnabled, label: 'Detector de sopro', kind: 'checkbox',
+      info: 'Liga o detector de sopro. Desligado, nenhum sopro é reconhecido e os campos do detector ficam inativos; os microfones continuam medindo: o RMS e o pico seguem para os gráficos e para o Pd, e o passa-banda e o stream cru continuam valendo. Liga/desliga, sem unidade.' },
     { id: TLV.breathDetector, label: 'Tipo de detector', kind: 'switch',
       switchOptions: [{ value: 0, label: 'Absoluto' }, { value: 1, label: 'Adaptativo' }],
       describe: (v) => (v === 1 ? DETECTOR_ADAPTIVE : DETECTOR_ABSOLUTE),
@@ -211,13 +211,12 @@ const GROUPS: Group[] = [
       info: 'Corte superior do passa-banda: atenua o que fica acima dele. Precisa ficar acima do high-pass. Unidade: hertz (Hz).' },
     { id: TLV.audioLpQX100, label: 'Q do low-pass (×100)', kind: 'number', min: 10, max: 2000,
       info: 'Fator de qualidade do corte ×100 (71 = 0,71 = resposta plana); valores altos criam pico ressonante no corte. Adimensional.' },
-    { id: TLV.audioRawStream, label: 'Stream de áudio cru (2 kHz)', kind: 'select',
-      options: [[0, 'desligado'], [1, 'ligado']],
+    { id: TLV.audioRawStream, label: 'Stream de áudio cru (2 kHz)', kind: 'checkbox',
       info: 'Envia o áudio mono decimado a 2 kHz para desenhar o espectro no painel Sensores. Ligue só para ajustar os cortes do passa-banda: enquanto está ligado ele consome ~4,3 kB/s e ~45 ms de tempo de ar por segundo — mais que todos os outros pacotes somados. O RMS e o pico não dependem dele (vêm medidos do firmware em cada pacote de orientação). Liga/desliga, sem unidade.' },
   ] },
   { title: 'CO₂', fields: [
-    { id: TLV.co2Enabled, label: 'Habilitado', kind: 'checkbox',
-      info: 'Liga a leitura do sensor SC8 na UART (o firmware apenas escuta — nunca transmite, pois qualquer consulta emudece o sensor). Liga/desliga, sem unidade.' },
+    { id: TLV.co2Enabled, label: 'Sensor de CO₂ (SC8)', kind: 'checkbox',
+      info: 'Liga a leitura do sensor SC8 na UART (o firmware apenas escuta — nunca transmite, pois qualquer consulta emudece o sensor). Desligado, a bola manda 600 ppm no lugar da leitura e os campos do sensor ficam inativos; o pulso virtual do sopro e o gatilho continuam valendo. Liga/desliga, sem unidade.' },
     { id: TLV.co2StaleTimeoutMs, label: 'Timeout de dado velho (ms)', kind: 'number', min: 0, max: 65535,
       info: 'Sem quadro novo do sensor por esse tempo, a leitura é marcada como desatualizada (stale). Unidade: milissegundos (ms).' },
     { id: TLV.virtualPeakPpm, label: 'Pico virtual (ppm)', kind: 'number', min: 0, max: 65535,
@@ -274,6 +273,41 @@ const GROUPS: Group[] = [
   ] },
 ];
 const FIELDS = GROUPS.flatMap((g) => g.fields);
+
+/**
+ * On/off fields and the fields that stop having any effect while they are off. Taken from
+ * what the firmware does, not from where the rows sit: audioEnabled turns off the breath
+ * detector only (the microphones keep measuring, filtering and streaming), and co2Enabled
+ * turns off the real sensor only (the virtual pulse and the trigger keep working, on the
+ * 600 ppm fallback). The log of raw CO₂ frames also needs the serial log itself.
+ */
+export const GOVERNORS: ReadonlyMap<number, readonly number[]> = new Map([
+  [TLV.audioEnabled, [
+    TLV.breathDetector, TLV.potControlsThreshold, TLV.breathMetric, TLV.breathThresholdNegDbX100,
+    TLV.breathRearmDb, TLV.debounceMs, TLV.audioFastAlphaX1000, TLV.audioSlowAlphaX1000,
+  ]],
+  [TLV.audioBpfEnabled, [TLV.audioHpHz, TLV.audioHpQX100, TLV.audioLpHz, TLV.audioLpQX100]],
+  [TLV.co2Enabled, [TLV.co2StaleTimeoutMs, TLV.co2EmaAlphaX1000, TLV.co2RawLogMode]],
+  [TLV.serialLogEnabled, [TLV.co2RawLogMode]],
+]);
+
+/** True while some on/off field that governs `id` is off in `cfg` (a missing value counts as on). */
+export function governedOff(id: number, cfg: ReadonlyMap<number, unknown>): boolean {
+  for (const [gov, ids] of GOVERNORS) {
+    if (ids.includes(id) && cfg.has(gov) && Number(cfg.get(gov)) === 0) return true;
+  }
+  return false;
+}
+
+/** Spectrum band as the form shows it right now (the cutoffs the person is choosing). */
+export interface FormBand { enabled: boolean; hpHz: number | null; lpHz: number | null }
+export interface BandSource {
+  current(): FormBand;
+  /** Calls `fn` now and on every change of the band-pass controls. */
+  subscribe(fn: (b: FormBand) => void): void;
+}
+/** Registers whose edits move the spectrum's band. */
+const BAND_IDS: ReadonlySet<number> = new Set([TLV.audioBpfEnabled, TLV.audioHpHz, TLV.audioLpHz]);
 const byId = (id: number): Field => FIELDS.find((f) => f.id === id)!;
 
 /**
@@ -442,7 +476,7 @@ export function splitUnknownIds(
  */
 export function mountConfigPanel(
   root: HTMLElement, client: GaiaballClient, store: PresetStore = new PresetStore(),
-): { advancedSections: HTMLElement } {
+): { advancedSections: HTMLElement; band: BandSource } {
   root.innerHTML = `
     <h2>Configuração</h2>
     <div class="row">
@@ -485,8 +519,12 @@ export function mountConfigPanel(
   };
   const pmsg = q('[data-el=pmsg]');
   const inputs = new Map<number, HTMLInputElement | HTMLSelectElement>();
-  /** On/off checkboxes for fields with offValue (one toggle per filter). */
-  const toggles = new Map<number, HTMLInputElement>();
+  /** On/off toggles for fields with offValue (one per filter). */
+  const toggles = new Map<number, HTMLButtonElement>();
+  /** On/off toggles of the on/off fields (kind 'checkbox'); the value lives in a hidden input. */
+  const onOff = new Map<number, HTMLButtonElement>();
+  /** Connection state: every control is disabled while there is no device. */
+  let connected = client.connected;
   /** The row element of every field, so `visible` can hide it. */
   const rows = new Map<number, HTMLElement>();
   /** Second input (longitude) of the navRef field; the first one lives in `inputs`. */
@@ -577,12 +615,28 @@ export function mountConfigPanel(
           sw.setAttribute('aria-describedby', d.id);
           descs.set(f.id, d);
         }
+      } else if (f.kind === 'checkbox') {
+        // A toggle instead of a checkbox; the value lives in a hidden input, as for switches.
+        const hid = document.createElement('input');
+        hid.type = 'hidden';
+        hid.value = '0';
+        const tg = renderToggle({
+          on: false, label: f.label, showState: true,
+          onChange: (on) => {
+            hid.value = on ? '1' : '0';
+            hid.dispatchEvent(new Event('input', { bubbles: true }));
+            hid.dispatchEvent(new Event('change', { bubbles: true }));
+          },
+        });
+        onOff.set(f.id, tg);
+        el = hid;
+        extra = tg;
       } else if (f.kind === 'select') {
         el = document.createElement('select');
         for (const [v, t] of resolveOptions(f, new Map())) el.add(new Option(t, String(v)));
       } else {
         el = document.createElement('input');
-        el.type = f.kind === 'checkbox' ? 'checkbox' : f.kind === 'pin' ? 'password' : f.kind === 'text' ? 'text' : f.kind;
+        el.type = f.kind === 'pin' ? 'password' : f.kind === 'text' ? 'text' : f.kind;
         const lo = f.min !== undefined ? toDisplay(f, f.min) : undefined;
         const hi = f.max !== undefined ? toDisplay(f, f.max) : undefined;
         if (lo !== undefined && hi !== undefined) { el.min = String(Math.min(lo, hi)); el.max = String(Math.max(lo, hi)); }
@@ -593,15 +647,17 @@ export function mountConfigPanel(
       }
       el.dataset.reg = String(f.id);
       if (f.offValue !== undefined) {
-        const tg = document.createElement('input');
-        tg.type = 'checkbox';
-        tg.className = 'filter-toggle';
+        const tg = renderToggle({
+          on: true, label: f.label,
+          onChange: (on) => {
+            label.classList.toggle('filter-off', !on);
+            tg.dispatchEvent(new Event('change'));
+          },
+        });
+        tg.classList.add('filter-toggle');
         tg.title = 'Ligar/desligar este filtro';
-        tg.setAttribute('aria-label', `Ligar/desligar: ${f.label}`);
-        tg.checked = true;
         name.prepend(tg);
         toggles.set(f.id, tg);
-        tg.addEventListener('change', () => label.classList.toggle('filter-off', !tg.checked));
       }
       if (f.id === TLV.breathThresholdNegDbX100) {
         // Current potentiometer level (from 'sensors'), next to the input; only meaningful while the pot is the source.
@@ -615,6 +671,7 @@ export function mountConfigPanel(
         extra = wrap;
       }
       label.append(name, extra ?? el);
+      if (f.kind === 'checkbox') label.append(el);
       if (f.kind === 'switch') {
         label.append(el);
         const d = descs.get(f.id);
@@ -649,18 +706,21 @@ export function mountConfigPanel(
       refreshAdvCount();
       if (id === TLV.imuChip) { refreshDependentOptions(); refreshImuBanner(); }
       if (id === TLV.navMode || id === TLV.breathDetector || id === TLV.potControlsThreshold) refreshVisibility();
+      if (GOVERNORS.has(id)) applyEnabled();
+      if (BAND_IDS.has(id)) emitBand();
       refreshDescribe();
     });
+    if (BAND_IDS.has(id)) el.addEventListener('input', () => emitBand());
   }
   navLon.addEventListener('input', () => { dirty.add(TLV.navRef); refreshAdvCount(); });
   navLon.addEventListener('change', () => refreshAdvCount());
-  for (const [id, tg] of toggles) tg.addEventListener('change', () => { dirty.add(id); refreshAdvCount(); });
+  for (const [id, tg] of toggles) tg.addEventListener('change', () => { dirty.add(id); refreshAdvCount(); applyEnabled(); });
 
   const getValue = (f: Field): number | string | null => {
     const el = inputs.get(f.id)!;
     // A filter whose toggle is off writes its "off" value, whatever the input shows.
-    if (f.offValue !== undefined && !toggles.get(f.id)!.checked) return f.offValue;
-    if (f.kind === 'checkbox') return (el as HTMLInputElement).checked ? 1 : 0;
+    if (f.offValue !== undefined && !isToggleOn(toggles.get(f.id)!)) return f.offValue;
+    if (f.kind === 'checkbox') return Number(el.value) !== 0 ? 1 : 0;
     if (f.kind === 'switch') return Number(el.value);
     if (f.kind === 'text' || f.kind === 'pin') return el.value;
     if (f.kind === 'navref') {
@@ -676,13 +736,17 @@ export function mountConfigPanel(
     const el = inputs.get(f.id)!;
     if (f.offValue !== undefined) {
       const on = Number(v) !== f.offValue;
-      toggles.get(f.id)!.checked = on;
+      setToggleValue(toggles.get(f.id)!, on);
       el.closest('.cfg-field')?.classList.toggle('filter-off', !on);
       // Keep a sensible value visible while off, so turning the filter back on works.
       el.value = String(on ? v : (f.onDefault ?? f.min ?? 0));
       return;
     }
-    if (f.kind === 'checkbox') (el as HTMLInputElement).checked = Number(v) !== 0;
+    if (f.kind === 'checkbox') {
+      const on = Number(v) !== 0;
+      el.value = on ? '1' : '0';
+      setToggleValue(onOff.get(f.id)!, on);
+    }
     else if (f.kind === 'switch') { el.value = String(v); setSwitchValue(switches.get(f.id)!, Number(v)); }
     else if (f.kind === 'navref') {
       const ref = parseNavRefString(String(v));
@@ -697,10 +761,50 @@ export function mountConfigPanel(
     const view = formView();
     for (const f of FIELDS) {
       if (f.visible) rows.get(f.id)!.hidden = !f.visible(view);
-      if (f.enabled) inputs.get(f.id)!.disabled = !f.enabled(view);
     }
+    applyEnabled();
+    emitBand();
     refreshDescribe();
     refreshPotLabel();
+  };
+  /**
+   * Which controls take input. Nothing does without a device; a field governed by an on/off
+   * field that is off is dimmed and locked (GOVERNORS), as is the input of a filter whose own
+   * toggle is off, and a field whose `enabled` rule says no (sensitivity under the pot).
+   */
+  const applyEnabled = (): void => {
+    const view = formView();
+    for (const f of FIELDS) {
+      const off = governedOff(f.id, view);
+      rows.get(f.id)!.classList.toggle('cfg-off', off);
+      const can = connected && !off;
+      const own = f.enabled ? f.enabled(view) : true;
+      const tg = toggles.get(f.id);
+      const filterOn = !tg || isToggleOn(tg);
+      inputs.get(f.id)!.disabled = !(can && own && filterOn);
+      if (tg) tg.disabled = !can;
+      const sw = switches.get(f.id);
+      if (sw) sw.disabled = !can;
+      const oo = onOff.get(f.id);
+      if (oo) oo.disabled = !can;
+      if (f.kind === 'navref') navLon.disabled = !can;
+    }
+  };
+  /** The band-pass as the form shows it, for the spectrum's shading (it follows the controls, applied or not). */
+  const formBand = (): FormBand => {
+    const hp = getValue(byId(TLV.audioHpHz));
+    const lp = getValue(byId(TLV.audioLpHz));
+    return {
+      enabled: getValue(byId(TLV.audioBpfEnabled)) === 1,
+      hpHz: typeof hp === 'number' ? hp : null,
+      lpHz: typeof lp === 'number' ? lp : null,
+    };
+  };
+  const bandListeners = new Set<(b: FormBand) => void>();
+  const emitBand = (): void => {
+    if (bandListeners.size === 0) return;
+    const b = formBand();
+    for (const fn of bandListeners) fn(b);
   };
   const refreshDescribe = (): void => {
     for (const f of FIELDS) {
@@ -1001,11 +1105,12 @@ export function mountConfigPanel(
   });
 
   // ---- connection gating (presets stay usable offline) ----
-  const gated = [...inputs.values(), ...switches.values(), navLon, ...toggles.values(), q<HTMLButtonElement>('[data-act=read]'), q<HTMLButtonElement>('[data-act=apply]')];
+  const actions = [q<HTMLButtonElement>('[data-act=read]'), q<HTMLButtonElement>('[data-act=apply]')];
   const render = (d: StatusDetail): void => {
-    for (const el of gated) el.disabled = !d.connected;
-    // Gating just re-enabled everything: put back the fields that are disabled by their own rule.
-    if (d.connected) refreshVisibility();
+    connected = d.connected;
+    for (const el of actions) el.disabled = !d.connected;
+    // Re-applies the enabled state of every field: connection, on/off sections and own rules.
+    refreshVisibility();
     if (!d.connected) { snapshot = new Map(); reportedIds = new Set(); imuDetected = undefined; refreshImuBanner(); }
   };
   client.addEventListener('status', (ev) => render((ev as CustomEvent<StatusDetail>).detail));
@@ -1013,5 +1118,11 @@ export function mountConfigPanel(
   render({ connected: client.connected, name: null });
   // Descriptions under the switches must read right from the first paint, connected or not (also in demo mode).
   refreshDescribe();
-  return { advancedSections: q('[data-el=adv-sections]') };
+  return {
+    advancedSections: q('[data-el=adv-sections]'),
+    band: {
+      current: formBand,
+      subscribe: (fn: (b: FormBand) => void): void => { bandListeners.add(fn); fn(formBand()); },
+    },
+  };
 }

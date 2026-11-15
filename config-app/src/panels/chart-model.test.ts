@@ -29,14 +29,16 @@ describe('SampleQueue', () => {
 
 describe('window persistence', () => {
   const store = (v: string | null) => ({ getItem: () => v });
-  it('falls back to 12 for null storage, invalid values and errors', () => {
-    expect(loadWindowS(null)).toBe(12);
+  it('falls back to 10 for null storage, invalid values (including the old 8 and 12) and errors', () => {
+    expect(loadWindowS(null)).toBe(10);
     expect(loadWindowS(store(null))).toBe(DEFAULT_WINDOW_S);
-    expect(loadWindowS(store('7'))).toBe(12);
-    expect(loadWindowS({ getItem: () => { throw new Error('blocked'); } })).toBe(12);
+    expect(loadWindowS(store('7'))).toBe(10);
+    expect(loadWindowS(store('8'))).toBe(10);
+    expect(loadWindowS(store('12'))).toBe(10);
+    expect(loadWindowS({ getItem: () => { throw new Error('blocked'); } })).toBe(10);
   });
   it('reads a valid value', () => {
-    expect(loadWindowS(store('8'))).toBe(8);
+    expect(loadWindowS(store('60'))).toBe(60);
   });
   it('saves, tolerating null and errors', () => {
     let saved = '';

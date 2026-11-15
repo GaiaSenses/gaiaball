@@ -1,9 +1,9 @@
 // Pure chart logic for the sensors panel. Kept free of theme.ts (it touches `window`
 // at import) so it can be unit-tested in plain node.
 
-export const WINDOW_OPTIONS_S = [5, 8, 12] as const;
+export const WINDOW_OPTIONS_S = [5, 10, 30, 60] as const;
 export type WindowS = (typeof WINDOW_OPTIONS_S)[number];
-export const DEFAULT_WINDOW_S: WindowS = 12;
+export const DEFAULT_WINDOW_S: WindowS = 10;
 export const WINDOW_STORAGE_KEY = 'gaiaball-chart-window';
 
 /** Fixed Y axis ranges (CO2 depends on the configured virtual peak: see co2Range). */

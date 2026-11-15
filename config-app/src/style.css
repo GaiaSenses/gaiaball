@@ -350,13 +350,24 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
 
 /* ---- sensors ------------------------------------------------------------------ */
 .sensor-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(235px, 1fr)); gap: 12px; margin: 12px 0 16px; }
-.sensor-card { background: var(--raised); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+/* Each card is tinted with the color of its own line in the charts (set from the chart
+   palette, per theme, as --card-tint), so card and chart read as one. */
+.sensor-card {
+  background: color-mix(in srgb, var(--card-tint, transparent) 14%, var(--raised));
+  border-left: 3px solid var(--card-tint, var(--line));
+  border-radius: 8px;
+  padding: 10px 12px;
+  min-width: 0;
+}
 .sensor-card h3 { margin: 0 0 6px; font-size: 0.8rem; color: var(--muted); }
 .sensor-card p { margin: 0 0 4px; font: 500 0.92rem/1.4 'IBM Plex Mono', monospace; overflow-wrap: break-word; }
 .sensor-card small { color: var(--muted); font-size: 0.72rem; line-height: 1.35; display: block; }
 .sensor-chart { width: 100%; }
 .sensor-spectrum { width: 100%; margin-bottom: 8px; }
 .spec-title { margin: 16px 0 4px; }
+.spec-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
+.spec-head .spec-title { margin-bottom: 0; }
+.spec-scale { margin-top: 12px; }
 
 /* ---- responsive ---------------------------------------------------------------- */
 @media (max-width: 1080px) {
@@ -513,6 +524,18 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
 }
 .switch.on .switch-knob { transform: translateX(16px); }
 .switch:disabled { opacity: 0.45; cursor: not-allowed; }
+/* On/off toggle: the knob goes grey when off, so the state reads without the label. */
+.toggle { gap: 6px; padding: 2px 4px; }
+.toggle:not(.on) .switch-knob { background: var(--muted); }
+.toggle-state { min-width: 5.5em; text-align: left; color: var(--muted); font-size: 0.82rem; }
+.toggle.on .toggle-state { color: var(--text); }
+.filter-toggle { padding: 0 2px; }
+.filter-toggle .switch-track { width: 30px; height: 16px; }
+.filter-toggle .switch-knob { width: 10px; height: 10px; }
+.filter-toggle.on .switch-knob { transform: translateX(14px); }
+/* A field whose on/off field is off (GOVERNORS in config-panel.ts): dimmed and locked. */
+.cfg-field.cfg-off { opacity: 0.45; }
+.cfg-field.cfg-off :disabled { opacity: 1; }
 @media (prefers-reduced-motion: reduce) {
   .switch-opt, .switch-track, .switch-knob { transition: none; }
 }

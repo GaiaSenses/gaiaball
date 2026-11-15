@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BASIC_FIELD_IDS, CONFIG_FIELDS, FIELD_DEFAULTS, dlpfOptions, imuRebootPending, imuStatusText, isPerBall, navRefError, resolveOptions,
+  BASIC_FIELD_IDS, CONFIG_FIELDS, FIELD_DEFAULTS, GOVERNORS, dlpfOptions, governedOff, imuRebootPending, imuStatusText, isPerBall, navRefError, resolveOptions,
   splitUnknownIds, stopRuleError, toWireRegs, fromDisplay, toDisplay,
 } from './config-panel';
 import { decodeNavRef, decodeTlv, encodeTlv, navRefToString, parseNavRefString, TLV } from '../protocol/tlv';
@@ -345,5 +345,54 @@ describe('breath detector fields', () => {
     }
     expect(f(TLV.breathDetector).describe!(0)).toMatch(/^Dispara quando o som de qualquer microfone passa da linha\./);
     expect(f(TLV.breathDetector).describe!(1)).toMatch(/^Aprende o ruído da sala em cerca de 3 segundos/);
+  });
+});
+
+describe('on/off fields and what they switch off', () => {
+  const byId = new Map(CONFIG_FIELDS.map((f) => [f.id, f]));
+
+  it('every governor is an on/off field and every governed id is a field', () => {
+    for (const [gov, ids] of GOVERNORS) {
+      expect(byId.get(gov)?.kind).toBe('checkbox');
+      for (const id of ids) expect(byId.has(id)).toBe(true);
+    }
+  });
+
+  it('the raw audio stream is an on/off toggle too', () => {
+    expect(byId.get(TLV.audioRawStream)?.kind).toBe('checkbox');
+  });
+
+  it('a field is off only while one of its governors is 0', () => {
+    expect(governedOff(TLV.audioHpHz, new Map([[TLV.audioBpfEnabled, 0]]))).toBe(true);
+    expect(governedOff(TLV.audioHpHz, new Map([[TLV.audioBpfEnabled, 1]]))).toBe(false);
+    // A value the form does not have yet counts as on.
+    expect(governedOff(TLV.audioHpHz, new Map())).toBe(false);
+    // The governor itself stays usable, or it could never be turned back on.
+    expect(governedOff(TLV.audioEnabled, new Map([[TLV.audioEnabled, 0]]))).toBe(false);
+  });
+
+  it('the raw CO2 log needs both the sensor and the serial log', () => {
+    const on = new Map([[TLV.co2Enabled, 1], [TLV.serialLogEnabled, 1]]);
+    expect(governedOff(TLV.co2RawLogMode, on)).toBe(false);
+    expect(governedOff(TLV.co2RawLogMode, new Map([...on, [TLV.serialLogEnabled, 0]]))).toBe(true);
+    expect(governedOff(TLV.co2RawLogMode, new Map([...on, [TLV.co2Enabled, 0]]))).toBe(true);
+  });
+
+  it('follows the firmware: audioEnabled stops the detector, not the microphones', () => {
+    const off = new Map([[TLV.audioEnabled, 0]]);
+    expect(governedOff(TLV.breathThresholdNegDbX100, off)).toBe(true);
+    expect(governedOff(TLV.debounceMs, off)).toBe(true);
+    // Levels, band-pass and raw stream keep working with the detector off.
+    expect(governedOff(TLV.audioBpfEnabled, off)).toBe(false);
+    expect(governedOff(TLV.audioHpHz, off)).toBe(false);
+    expect(governedOff(TLV.audioRawStream, off)).toBe(false);
+  });
+
+  it('follows the firmware: co2Enabled stops the real sensor, not the virtual pulse or the trigger', () => {
+    const off = new Map([[TLV.co2Enabled, 0]]);
+    expect(governedOff(TLV.co2EmaAlphaX1000, off)).toBe(true);
+    expect(governedOff(TLV.co2StaleTimeoutMs, off)).toBe(true);
+    expect(governedOff(TLV.virtualPeakPpm, off)).toBe(false);
+    expect(governedOff(TLV.co2TriggerPpm, off)).toBe(false);
   });
 });

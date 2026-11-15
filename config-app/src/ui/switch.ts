@@ -75,3 +75,67 @@ export function renderSwitch(opts: SwitchSpec): HTMLElement {
   });
   return el;
 }
+
+/**
+ * On/off toggle for a feature ("Detector de sopro", "Log serial"). Same track and knob as the
+ * two-way switch, without the two option labels; `showState` adds a short "Ligado"/"Desligado"
+ * after the track. aria-checked carries the state, and the accessible name repeats it.
+ */
+export interface ToggleSpec {
+  on: boolean;
+  onChange(on: boolean): void;
+  /** Accessible name of the control (the field label). */
+  label: string;
+  showState?: boolean;
+}
+
+export const TOGGLE_STATE_TEXT = { on: 'Ligado', off: 'Desligado' } as const;
+
+/** Accessible name that carries the state. */
+export function toggleAriaLabel(label: string, on: boolean): string {
+  return `${label}: ${on ? TOGGLE_STATE_TEXT.on.toLowerCase() : TOGGLE_STATE_TEXT.off.toLowerCase()}`;
+}
+
+const TOGGLE_NAMES = new WeakMap<HTMLElement, string>();
+
+export function isToggleOn(el: HTMLElement): boolean {
+  return el.getAttribute('aria-checked') === 'true';
+}
+
+/** Moves a rendered toggle without firing onChange (programmatic updates). */
+export function setToggleValue(el: HTMLElement, on: boolean): void {
+  el.setAttribute('aria-checked', String(on));
+  el.classList.toggle('on', on);
+  el.setAttribute('aria-label', toggleAriaLabel(TOGGLE_NAMES.get(el) ?? '', on));
+  const state = el.querySelector<HTMLElement>('.toggle-state');
+  if (state) state.textContent = on ? TOGGLE_STATE_TEXT.on : TOGGLE_STATE_TEXT.off;
+}
+
+export function renderToggle(opts: ToggleSpec): HTMLButtonElement {
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = 'switch toggle';
+  el.setAttribute('role', 'switch');
+  TOGGLE_NAMES.set(el, opts.label);
+  const track = document.createElement('span');
+  track.className = 'switch-track';
+  track.setAttribute('aria-hidden', 'true');
+  const knob = document.createElement('span');
+  knob.className = 'switch-knob';
+  track.append(knob);
+  el.append(track);
+  if (opts.showState) {
+    const state = document.createElement('span');
+    state.className = 'toggle-state';
+    state.setAttribute('aria-hidden', 'true');
+    el.append(state);
+  }
+  setToggleValue(el, opts.on);
+  // Space and Enter already fire "click" on a <button>.
+  el.addEventListener('click', () => {
+    const next = !isToggleOn(el);
+    setToggleValue(el, next);
+    opts.onChange(next);
+  });
+  return el;
+}

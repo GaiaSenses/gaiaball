@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nextSwitchValue, switchAriaLabel } from './switch';
+import { nextSwitchValue, switchAriaLabel, toggleAriaLabel } from './switch';
 
 const opts = [{ value: 0, label: 'A' }, { value: 1, label: 'B' }] as const;
 const rev = [{ value: 1, label: 'Pot' }, { value: 0, label: 'Fixo' }] as const;
@@ -24,5 +24,12 @@ describe('switchAriaLabel', () => {
     expect(switchAriaLabel('Medida', opts, 0)).toBe('Medida: A');
     expect(switchAriaLabel('Medida', opts, 1)).toBe('Medida: B');
     expect(switchAriaLabel('Fonte', rev, 1)).toBe('Fonte: Pot');
+  });
+});
+
+describe('toggleAriaLabel', () => {
+  it('carries the on/off state in the accessible name', () => {
+    expect(toggleAriaLabel('Log serial (USB)', true)).toBe('Log serial (USB): ligado');
+    expect(toggleAriaLabel('Log serial (USB)', false)).toBe('Log serial (USB): desligado');
   });
 });

@@ -23,6 +23,8 @@ import {
   type SensorsSample,
 } from '../protocol/packets.ts';
 import { TLV } from '../protocol/tlv.ts';
+import { renderSwitch } from '../ui/switch.ts';
+import type { BandSource, FormBand } from './config-panel.ts';
 import {
   SampleQueue,
   WINDOW_OPTIONS_S,
@@ -33,17 +35,17 @@ import {
   thresholdRows,
   type WindowS,
 } from './chart-model.ts';
+import { bandShading, loadSpectrumScale, saveSpectrumScale, specXRange, type SpectrumScale } from './spectrum-model.ts';
 
 const TICK_MS = 100; // chart sampling period (10 Hz)
 const FFT_SIZE = 512; // 256 ms window at 2 kHz -> 3.9 Hz bins
 const FFT_MS = 250; // spectrum refresh period
-// Spectrum frequency axis: log scale from 10 Hz to Nyquist of the 2 kHz stream, as audio
-// analysers draw it, so the low band where breath lives is not squeezed into the left edge.
-const SPEC_MIN_HZ = 10;
-const SPEC_MAX_HZ = 1000;
+// Spectrum frequency axis, up to Nyquist of the 2 kHz stream. The log scale (the default, as
+// audio analysers draw it) starts at 10 Hz so the low band where breath lives is not squeezed
+// into the left edge; the linear one starts at 0.
 const SPEC_TICKS_HZ = [10, 20, 50, 100, 200, 500, 1000];
-/** Largest window (12 s) at the highest notify rate (200 Hz). */
-const MAX_POINTS = 12 * 200;
+/** Largest window (60 s) at the highest notify rate (200 Hz). */
+const MAX_POINTS = 60 * 200;
 
 // One color family per chart (each chart visually distinct), picked per theme so
 // every line keeps contrast on both backgrounds.
@@ -97,10 +99,24 @@ function safeStorage(): Storage | null {
 
 const fmt = (v: number, digits = 1): string =>
   v.toLocaleString('pt-BR', { minimumFractionDigits: digits, maximumFractionDigits: digits });
-/** Whole dB, never "-0". */
-const fmtDb = (v: number): string => fmt(Math.round(v) + 0, 0);
+/** Whole number, never "-0". */
+const fmtInt = (v: number): string => fmt(Math.round(v) + 0, 0);
+/** Light grey over the parts of the spectrum the band-pass removes. */
+const SHADE: Record<'dark' | 'light', string> = { dark: 'rgba(148, 163, 184, 0.16)', light: 'rgba(100, 116, 139, 0.14)' };
+/** Card tint per sensor: the color of its line in the charts below. */
+const cardTints = (p: ChartPalette): Record<string, string> => ({
+  'card-ori': p.euler[0], 'card-acc': p.acc[0], 'card-micl': p.micL,
+  'card-micr': p.micR, 'card-co2': p.co2, 'card-pot': p.pot,
+});
 
-export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): { setPaused(p: boolean): void } {
+export interface SensorsPanelOptions {
+  /** Band-pass as the configuration form shows it; without it the spectrum follows the firmware's echo. */
+  band?: BandSource;
+}
+
+export function mountSensorsPanel(
+  root: HTMLElement, client: GaiaballClient, opts: SensorsPanelOptions = {},
+): { setPaused(p: boolean): void } {
   root.innerHTML = `
     <h2>Sensores em tempo real</h2>
     <div class="sensor-cards">
@@ -111,8 +127,11 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): { 
       <div class="sensor-card" data-el="card-co2"><h3>CO₂ (SC8)</h3><p data-el="v-co2">—</p><small>ppm · partes por milhão</small></div>
       <div class="sensor-card" data-el="card-pot"><h3>Potenciômetro</h3><p data-el="v-pot">—</p><small>% do curso (ADC 0–4095) · limiar de sopro em dBFS</small></div>
     </div>
-    <h3 class="spec-title">Espectro do áudio (cru) — ajuste do passa-banda</h3>
-    <p class="msg">FFT de 512 pontos calculado aqui no navegador sobre o fluxo bruto de 2 kHz vindo da bola (janela de 256 ms, bins de ~3,9 Hz). A frequência está em escala log, de 10 a 1000 Hz. Sopre na bola e observe quais frequências sobem; as linhas tracejadas marcam os cortes HP/LP configurados.</p>
+    <div class="spec-head">
+      <h3 class="spec-title">Espectro do áudio (cru) — ajuste do passa-banda</h3>
+      <span class="spec-scale" data-el="spec-scale"></span>
+    </div>
+    <p class="msg">FFT de 512 pontos calculado aqui no navegador sobre o fluxo bruto de 2 kHz vindo da bola (janela de 256 ms, bins de ~3,9 Hz). A frequência pode ficar em escala linear (0 a 1000 Hz) ou log (10 a 1000 Hz). Sopre na bola e observe quais frequências sobem. As linhas tracejadas marcam os cortes HP/LP como estão na Configuração, e o cinza cobre o que o passa-banda corta; mudar os cortes lá move a faixa aqui na hora, antes mesmo de aplicar.</p>
     <div data-el="spectrum" class="sensor-chart sensor-spectrum" role="img" aria-label="Espectro de frequências do áudio"></div>
     <div class="chart-window" role="group" aria-label="Janela de tempo dos gráficos">
       <span>Últimos</span>
@@ -154,6 +173,16 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): { 
   let specIdle: boolean | null = null;
   let specShapesKey = '';
   const p0 = pal();
+  let scale: SpectrumScale = loadSpectrumScale(safeStorage());
+  /** Plotly x-axis settings for a scale; on a log axis the range is given in log10 units. */
+  const xAxisFor = (s: SpectrumScale): Record<string, unknown> => {
+    const [lo, hi] = specXRange(s);
+    return s === 'log'
+      ? { type: 'log', range: [Math.log10(lo), Math.log10(hi)], tickmode: 'array',
+          tickvals: SPEC_TICKS_HZ, ticktext: SPEC_TICKS_HZ.map(String), title: { text: 'frequência (Hz, escala log)' } }
+      : { type: 'linear', range: [lo, hi], tickmode: 'auto', tickvals: null, ticktext: null,
+          title: { text: 'frequência (Hz, escala linear)' } };
+  };
   client.addEventListener('audio', (ev) => {
     const c = (ev as CustomEvent<AudioChunkSample>).detail;
     if (paused) return;
@@ -180,13 +209,7 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): { 
       plot_bgcolor: 'rgba(0,0,0,0)',
       font: { color: p0.font, size: 11 },
       showlegend: false,
-      // On a log axis Plotly takes the range in log10 units.
-      xaxis: {
-        type: 'log', gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font,
-        title: { text: 'frequência (Hz, escala log)' },
-        range: [Math.log10(SPEC_MIN_HZ), Math.log10(SPEC_MAX_HZ)],
-        tickvals: SPEC_TICKS_HZ, ticktext: SPEC_TICKS_HZ.map(String),
-      },
+      xaxis: { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font, ...xAxisFor(scale) },
       yaxis: { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font, title: { text: 'nível (dBFS)' }, range: [-120, 0] },
     },
     { responsive: true, displaylogo: false },
@@ -220,28 +243,73 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): { 
     const freqs = Array.from(sp.freqsHz).slice(1);
     const levels = Array.from(sp.dbfs).slice(1);
     void Plotly.restyle(specEl, { x: [freqs], y: [levels] }, [0]);
-    // Dashed cutoff markers follow the configured band (echoed in every chunk).
-    const key = `${lastChunk.hpHz}|${lastChunk.lpHz}|${lastChunk.bpfEnabled}`;
-    if (key !== specShapesKey) {
-      specShapesKey = key;
-      // Shapes take data values (Hz) even on a log axis; annotations take log10(Hz).
-      // A cutoff outside the plotted 10-1000 Hz gets no marker.
-      const inView = (hz: number): boolean => hz >= SPEC_MIN_HZ && hz <= SPEC_MAX_HZ;
-      const cuts = lastChunk.bpfEnabled
-        ? [{ hz: lastChunk.hpHz, label: 'HP', y: -4 }, { hz: lastChunk.lpHz, label: 'LP', y: -12 }].filter((c) => inView(c.hz))
-        : [];
-      void Plotly.relayout(specEl, {
-        shapes: cuts.map((c) => ({
+    drawBand();
+  };
+  /**
+   * Grey over what the band-pass removes, plus a dashed line at each cutoff. The band is the
+   * one in the Configuração form (it moves as the person edits it); the firmware echoes the
+   * band it is actually using in every chunk, and a cutoff that differs from that echo is
+   * labelled "não aplicado". Without the form, the echo is drawn.
+   */
+  let formBand: FormBand | null = null;
+  const currentBand = (): { enabled: boolean; hpHz: number; lpHz: number; pending: boolean } | null => {
+    const echo = lastChunk;
+    if (formBand && formBand.hpHz !== null && formBand.lpHz !== null) {
+      const pending = echo !== null && (echo.bpfEnabled !== formBand.enabled
+        || (formBand.enabled && (echo.hpHz !== formBand.hpHz || echo.lpHz !== formBand.lpHz)));
+      return { enabled: formBand.enabled, hpHz: formBand.hpHz, lpHz: formBand.lpHz, pending };
+    }
+    return echo ? { enabled: echo.bpfEnabled, hpHz: echo.hpHz, lpHz: echo.lpHz, pending: false } : null;
+  };
+  const drawBand = (): void => {
+    if (specIdle !== false) return; // no spectrum on screen: the idle notice owns the chart
+    const band = currentBand();
+    const theme = resolvedTheme();
+    const key = band ? `${scale}|${theme}|${band.enabled}|${band.hpHz}|${band.lpHz}|${band.pending}` : `${scale}|none`;
+    if (key === specShapesKey) return;
+    specShapesKey = key;
+    const range = specXRange(scale);
+    const inView = (hz: number): boolean => hz >= range[0] && hz <= range[1];
+    const cuts = band && band.enabled
+      ? [{ hz: band.hpHz, label: 'HP', y: -4 }, { hz: band.lpHz, label: 'LP', y: -12 }].filter((c) => inView(c.hz))
+      : [];
+    const note = band?.pending ? ' (não aplicado)' : '';
+    void Plotly.relayout(specEl, {
+      // Shapes take data values (Hz) even on a log axis; annotations take log10(Hz) there.
+      shapes: [
+        ...(band ? bandShading(band, range) : []).map((s) => ({
+          type: 'rect', xref: 'x', yref: 'paper', x0: s.x0, x1: s.x1, y0: 0, y1: 1,
+          fillcolor: SHADE[theme], line: { width: 0 }, layer: 'below',
+        })),
+        ...cuts.map((c) => ({
           type: 'line', x0: c.hz, x1: c.hz, y0: -120, y1: 0,
           line: { color: pal().threshold, width: 1, dash: 'dot' },
         })),
-        annotations: cuts.map((c) => ({
-          x: Math.log10(c.hz), y: c.y, text: `${c.label} ${c.hz} Hz`, showarrow: false,
-          font: { size: 10, color: pal().font }, xanchor: 'left',
-        })),
-      });
-    }
+      ],
+      annotations: cuts.map((c) => ({
+        x: scale === 'log' ? Math.log10(c.hz) : c.hz, y: c.y, text: `${c.label} ${c.hz} Hz${note}`,
+        showarrow: false, font: { size: 10, color: pal().font }, xanchor: 'left',
+      })),
+    });
   };
+  opts.band?.subscribe((b) => { formBand = b; drawBand(); });
+  // Linear / log frequency axis, remembered in this browser.
+  const scaleSwitch = renderSwitch({
+    options: [{ value: 0, label: 'Linear' }, { value: 1, label: 'Log' }],
+    value: scale === 'log' ? 1 : 0,
+    label: 'Escala da frequência',
+    onChange: (v) => {
+      scale = v === 1 ? 'log' : 'linear';
+      saveSpectrumScale(safeStorage(), scale);
+      const ax = xAxisFor(scale);
+      const upd: Record<string, unknown> = {};
+      for (const [k, val] of Object.entries(ax)) upd[`xaxis.${k}`] = val;
+      void Plotly.relayout(specEl, upd);
+      specShapesKey = '';
+      drawBand();
+    },
+  });
+  q<HTMLElement>('[data-el=spec-scale]').append(scaleSwitch);
   let paused = false;
   const specTimer = setInterval(() => {
     if (!document.hidden && !paused) refreshSpectrum();
@@ -319,9 +387,18 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): { 
     modeBarButtonsToRemove: ['lasso2d', 'select2d'],
   });
 
+  /** Each card takes the color of its own line in the charts (CSS mixes it into the background). */
+  const applyCardTints = (p: ChartPalette): void => {
+    for (const [el, color] of Object.entries(cardTints(p))) {
+      q<HTMLElement>(`[data-el=${el}]`).style.setProperty('--card-tint', color);
+    }
+  };
+  applyCardTints(pal());
+
   // Re-skin both Plotly charts when the theme flips (axes, fonts and line colors).
   const applyChartTheme = (): void => {
     const p = pal();
+    applyCardTints(p);
     const cols = traceColors(p);
     void Plotly.restyle(chartEl, { 'line.color': cols }, cols.map((_, i) => i));
     const re: Record<string, unknown> = { 'font.color': p.font };
@@ -372,7 +449,7 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): { 
     if (imu) {
       const e = quatToEulerLegacy(imu.quat);
       q('[data-el=v-euler]').textContent = imu.quatValid
-        ? `roll ${fmt(e.rollDeg)}° · pitch ${fmt(e.pitchDeg)}° · yaw ${fmt(e.yawDeg)}°`
+        ? `roll ${fmtInt(e.rollDeg)}° · pitch ${fmtInt(e.pitchDeg)}° · yaw ${fmtInt(e.yawDeg)}°`
         : 'quaternion inválido';
       q('[data-el=v-acc]').textContent = `X ${fmt(imu.acc[0], 0)} mg · Y ${fmt(
         imu.acc[1], 0)} mg · Z ${fmt(imu.acc[2], 0)} mg`;
@@ -388,13 +465,13 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): { 
         (!sensors.audioOk ? ' · falha de I²S' : !sensors.audioEnabled ? ' · detector desativado' : '') +
         (sensors.audioFiltered ? ' · filtrado (HP/LP)' : ' · cru');
       const peakNote = (ch: 0 | 1) =>
-        live ? ` · pico ${fmtDb(imu.audioPeakDbfs[ch])} dBFS` : '';
-      q('[data-el=v-micl]').textContent = `${fmtDb(dbL)} dBFS${peakNote(0)}${audioNote}`;
-      q('[data-el=v-micr]').textContent = `${fmtDb(dbR)} dBFS${peakNote(1)}${audioNote}`;
+        live ? ` · pico ${fmtInt(imu.audioPeakDbfs[ch])} dBFS` : '';
+      q('[data-el=v-micl]').textContent = `${fmtInt(dbL)} dBFS${peakNote(0)}${audioNote}`;
+      q('[data-el=v-micr]').textContent = `${fmtInt(dbR)} dBFS${peakNote(1)}${audioNote}`;
       const potPct = (sensors.potRaw / 4095) * 100;
       const thrSrc = sensors.potControls ? 'potenciômetro' : 'fixo';
       const metric = sensors.metricPeak ? 'pico' : 'RMS';
-      q('[data-el=v-pot]').textContent = `${fmt(potPct)} % (bruto ${sensors.potRaw}) · limiar ${fmt(thresholdToDbfs(sensors))} dBFS (${metric}, ${thrSrc})`;
+      q('[data-el=v-pot]').textContent = `${fmtInt(potPct)} % (bruto ${sensors.potRaw}) · limiar ${fmtInt(thresholdToDbfs(sensors))} dBFS (${metric}, ${thrSrc})`;
     }
     if (co2) {
       const estado = co2.virtualActive ? 'virtual' : co2.stale ? 'sem leitura (stale)' : co2.valid ? 'real' : 'inválido';
@@ -404,6 +481,10 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): { 
 
   // --- sampler: one tick plots every packet queued since the previous one ------
   const NT = 16; // trace count (see `traces`)
+  // Orientation packets per second, smoothed: the traces keep only what the chosen window
+  // shows (plus a margin), so a short window stays light even after minutes of data.
+  let imuRate = 50;
+  let lastTickT = now();
   const tick = (): void => {
     // Drain first: if renderCards throws, the queues must not grow without bound.
     const imus = imuQ.drain();
@@ -446,7 +527,11 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): { 
     const lay = (chartEl as unknown as { layout?: Record<string, { range?: number[]; autorange?: boolean }> }).layout;
     const xa = lay?.[`xaxis${N_ROWS}`];
     if (xa) { xa.range = [t - windowS, t]; xa.autorange = false; }
-    void Plotly.extendTraces(chartEl, { x: xs, y: ys }, xs.map((_, i) => i), MAX_POINTS);
+    const dt = t - lastTickT;
+    lastTickT = t;
+    if (dt > 0 && imus.length > 0) imuRate = 0.8 * imuRate + 0.2 * (imus.length / dt);
+    const keep = Math.min(MAX_POINTS, Math.ceil(windowS * Math.max(imuRate, 5) * 1.3) + 20);
+    void Plotly.extendTraces(chartEl, { x: xs, y: ys }, xs.map((_, i) => i), keep);
   };
 
   const timer = setInterval(() => {
