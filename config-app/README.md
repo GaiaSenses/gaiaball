@@ -39,6 +39,14 @@ A chave **Modo ajuste ⟷ Modo palco** fica no topo.
   não pegou, diz para desbloquear com o PIN no painel Conexão). O modo escolhido fica
   guardado no navegador.
 
+## Abas da Configuração
+
+O painel **Configuração** tem duas abas. **Básico** traz o que se muda para operar o globo
+(detector de sopro, navegação, CO₂, nome e PIN). **Avançado** traz o ajuste da cadeia de
+sinais e, abaixo dos campos, a **calibração do magnetômetro** e as **Métricas** (taxa,
+jitter, perda, idade da amostra, navegação e o diagnóstico do firmware): são ferramentas de
+bancada, que não precisam ficar à vista de quem opera.
+
 ## Sensores em tempo real
 
 O painel "Sensores em tempo real" mostra o valor atual de cada sensor com a unidade
@@ -58,7 +66,7 @@ mesmo eixo X (tempo, em segundos)**, cada gráfico com uma cor própria.
 |---|---|---|
 | Orientação (IMU ICM-20948 ou GY-91/MPU-9250) | graus (°) | fusão Madgwick no firmware → quaternion → Euler na convenção legada (mesma saída que o site entrega ao patch Pd) |
 | Aceleração (IMU) | mg | já chega em milli-g no pacote de movimento v2 (1000 mg = 1 g; fundo de escala ±4 g = ±4000 mg) |
-| Microfones esq./dir. (INMP441) | dBFS (AES17) + dB SPL estimado | **RMS e pico medidos no firmware** (janela de 20 ms; o pico amostrado no 16 kHz cheio) em passos de 0,5 dB (1 byte cada) e enviados em cada pacote de orientação — ou seja, na taxa de orientação, não a 5 Hz. 0 dBFS do RMS = seno de fundo de escala (AES17); 0 dBFS do pico = amostra de fundo de escala, 3,01 dB abaixo para a mesma senoide. SPL ≈ dBFS + 120 (sensibilidade do INMP441: −26 dBFS @ 94 dB SPL, 1 kHz) |
+| Microfones esq./dir. (INMP441) | dBFS (AES17), em dB inteiros no cartão | **RMS e pico medidos no firmware** (janela de 20 ms; o pico amostrado no 16 kHz cheio) em passos de 0,5 dB (1 byte cada) e enviados em cada pacote de orientação — ou seja, na taxa de orientação, não a 5 Hz. 0 dBFS do RMS = seno de fundo de escala (AES17); 0 dBFS do pico = amostra de fundo de escala, 3,01 dB abaixo para a mesma senoide. |
 | CO₂ (SC8-CO2-5K) | ppm | o sensor emite 1 quadro/s sozinho por UART (9600 8N1); o firmware só escuta, nunca transmite (uma consulta pararia o fluxo do sensor). EMA opcional, TLV `0x28`. O pacote de CO₂ também traz o bit de **gatilho** (nível `0x29` com histerese `0x2A`) |
 | Potenciômetro | % do curso | ADC filtrado 0–4095 → 0–100 % (o limiar em dBFS aparece no cartão e como linha contínua nos gráficos da medida ativa: RMS nos dos microfones, pico no "Pico por canal") |
 
@@ -71,8 +79,10 @@ painel roda com dados sintéticos.
 ### Analisador de espectro (ajuste do passa-banda do sopro)
 
 A bola transmite o **áudio bruto decimado** (mono, 2 kHz, int16, ~4,3 kB/s) e o
-**FFT roda aqui no navegador** (512 pontos, janela Hann de 256 ms, bins de ~3,9 Hz,
-0–1000 Hz).
+**FFT roda aqui no navegador** (512 pontos, janela Hann de 256 ms, bins de ~3,9 Hz).
+O gráfico mostra o nível em dBFS contra a frequência em **escala log, de 10 a 1000 Hz**,
+como num analisador de áudio: assim os graves, onde está o sopro, não ficam espremidos
+no canto esquerdo.
 
 > **Esse stream vem desligado de fábrica.** Ligue em **Configuração › Avançado › Áudio ›
 > Stream de áudio cru (2 kHz)** e aplique; enquanto está desligado o gráfico mostra o
@@ -91,7 +101,7 @@ exatamente no corte; a inclinação da atenuação vem da ordem do filtro, não 
 
 A bola calcula sozinha para onde o globo virtual aponta e envia o resultado num pacote próprio (`NavPacket`, característica `…0006`); o app só o mostra e configura. Firmware antigo não tem essa característica: o painel Métricas avisa "sem característica de navegação".
 
-- **Painel Métricas › Navegação:** modo, latitude e longitude do centro da tela, rumo (padrão Mapbox: graus no sentido horário, a partir do norte, da direção que aponta para cima na tela), velocidade angular do globo e "parado" / "em movimento". "Parado" vem da máquina de estados da bola (histerese e tempo de espera), que é a autoridade; o bit "em movimento" é instantâneo e pode divergir dela por um instante.
+- **Configuração › Avançado › Métricas › Navegação:** modo, latitude e longitude do centro da tela, rumo (padrão Mapbox: graus no sentido horário, a partir do norte, da direção que aponta para cima na tela), velocidade angular do globo e "parado" / "em movimento". "Parado" vem da máquina de estados da bola (histerese e tempo de espera), que é a autoridade; o bit "em movimento" é instantâneo e pode divergir dela por um instante.
 - **Painel Configuração › Navegação do globo:**
   - **Modo de navegação:** Desligado, **Espelho** (o globo é exatamente a orientação da bola) ou **Joystick** (a inclinação da bola, a partir do zero, faz o globo girar com velocidade crescente com o desvio; devolvida ao zero, ele para).
   - Joystick: velocidade máxima (1–720 °/s), ângulo da velocidade máxima (5–90°) e curva de resposta p (1,0–4,0; 3,0 = cúbica).
@@ -99,7 +109,7 @@ A bola calcula sozinha para onde o globo virtual aponta e envia o resultado num 
   - Limiares de partida/parada do Espelho (°/s) e do Joystick (°/s, uma casa decimal) e o tempo para considerar parado (ms). A parada precisa ser menor que a partida, nos dois pares; senão o firmware rejeita a escrita inteira. No Espelho, a velocidade é medida numa janela de ~100 ms (o tremor da mão não conta como movimento) e, parado, o globo volta a "em movimento" depois de um giro de 3°, mesmo lento.
   - Os parâmetros do joystick e os limiares valem na hora e não movem o globo. Só trocar o modo, trocar o ponto de referência ou mudar a referência do IMU (**Zerar orientação**, **Calibrar montagem**, Quat6 ↔ Quat9) leva o globo de volta ao ponto de referência.
 - **Referência e Zerar orientação** (painel Conexão): ligue a bola apoiada numa superfície plana e parada — a postura em que ela liga é a referência, sem “frente” marcada (o movimento é relativo a ela). O zero **não é gravado** e não precisa ser: ao religar, a referência volta a ser a postura do boot. **Zerar orientação** só troca a referência sem religar (bola parada na superfície). O lado da bola voltado para o público no instante da referência define como os gestos aparecem na tela.
-- **Gatilho de CO₂** (Configuração › CO₂): nível e histerese do bit de gatilho do pacote de CO₂; o painel Métricas mostra o bit na linha CO₂ ("gatilho: ligado/desligado"). O sopro só liga o gatilho se o pico virtual (`0x23`, padrão 2100 ppm) ficar acima do nível.
+- **Gatilho de CO₂** (Configuração › CO₂): nível e histerese do bit de gatilho do pacote de CO₂; Métricas (Configuração › Avançado) mostra o bit na linha CO₂ ("gatilho: ligado/desligado"). O sopro só liga o gatilho se o pico virtual (`0x23`, padrão 2100 ppm) ficar acima do nível.
 - **Firmware antigo:** **Aplicar** só envia os registradores que a bola informou na leitura (o PIN sempre vai). Um firmware sem navegação recusaria a escrita inteira por causa de um registrador desconhecido; os que ficaram de fora são listados na mensagem.
 
 ### Persistência
@@ -131,7 +141,7 @@ npm test           # testes (vitest)
 1. **Conectar** (painel Conexão) e escolher o Gaiaball na lista do navegador.
 2. **Desbloquear** com o PIN (padrão de fábrica: `1234`). O firmware não confirma o PIN; sem ele, comandos e escritas sensíveis são ignorados.
 3. **Ler do dispositivo** (painel Configuração) para preencher o formulário.
-4. Em **superfície plana**, gire a bola e acompanhe **Taxa**, **Perda** e **Jitter** no painel Métricas.
+4. Em **superfície plana**, gire a bola e acompanhe **Taxa**, **Perda** e **Jitter** em Configuração › Avançado › Métricas.
 5. Acompanhe a vista 3D — ela mostra o quaternion tratado exatamente como chega da bola — e ajuste Modo e Taxa (Hz). Para suavizar o movimento, use **Suavização do quaternion (slerp)** no painel Configuração: como a vista reflete o fluxo real, o efeito do slerp (e o atraso que ele adiciona) aparece nela ao aplicar.
 6. **Aplicar**: só os campos alterados são enviados; em seguida o app relê o dispositivo para verificar. Se algum valor voltar ao anterior, aparece o aviso "alguns valores não foram aceitos (desbloqueou com o PIN?)".
 7. **Salvar no dispositivo** (painel Conexão) para persistir. "Aplicar" vale somente até reiniciar.

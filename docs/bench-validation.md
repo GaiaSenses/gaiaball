@@ -126,7 +126,7 @@ npm run dev        # abre em http://localhost:5173 (use Chrome/Edge)
 ```
 
 Além da vista 3D e das métricas, o painel **Sensores em tempo real** mostra cada sensor
-com sua unidade (orientação °, aceleração g, microfones dBFS/dB SPL, CO₂ ppm,
+com sua unidade (orientação °, aceleração g, microfones dBFS, CO₂ ppm,
 potenciômetro %) e gráficos de linha com eixo X (tempo) compartilhado — útil para ver,
 por exemplo, o pico de áudio cruzando o limiar quando se bate palma, e a leitura do SC8
 mudando ao respirar perto do sensor.
@@ -155,7 +155,7 @@ os critérios e onde olhar cada número.
    de operação) e **Avançado** (26 de afinação da cadeia de sinais). A contagem na aba
    Avançado acende quando algum parâmetro está fora do padrão — confira isso antes de
    culpar o firmware por um comportamento estranho.
-4. Medir no painel **Métricas** (deixe a bola em movimento):
+4. Medir em **Métricas**, no fim da aba Configuração › Avançado (deixe a bola em movimento):
 
 | Critério | Onde olhar | Meta |
 |---|---|---|
@@ -307,7 +307,7 @@ Tudo aqui se observa em Métricas › Firmware, que agora publica o estado inter
 | Filtro 1€ | Modo **filtro 1€**; compare com **slerp fixo** em 100 | Parada: ambos ficam quietos. Em movimento rápido: o 1€ acompanha, o slerp fixo “borracha” (~190 ms) |
 | Espícula da aceleração | Ligue o filtro de espícula (k 3,0) e observe o gráfico de aceleração | Picos isolados desaparecem sem atraso visível; movimento real passa intacto |
 
-## 4.2 Calibração do magnetômetro (painel Magnetômetro)
+## 4.2 Calibração do magnetômetro (Configuração › Avançado › Magnetômetro)
 
 1. Desbloqueie com o PIN e afaste a bola de metal, caixas de som e computadores.
 2. **Iniciar calibração** e gire devagar desenhando um 8 até os **8 setores** acenderem.
