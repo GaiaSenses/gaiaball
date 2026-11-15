@@ -4,17 +4,17 @@ name: pd-gaiaball
 # and packages everything as a Deken package (a workflow artifact; publishing to
 # puredata.info is a manual step, see pd-gaiaball/PUBLICAR-NO-DEKEN.md).
 
+# Automatic runs are switched OFF for now: the workflow only runs when started by hand
+# (Actions tab -> pd-gaiaball -> "Run workflow"). To turn the automatic runs back on,
+# add these triggers under `on:` again:
+#
+#   push:
+#     branches: [main]
+#     tags: ['v*']
+#     paths: ['pd-gaiaball/**', '.github/workflows/pd-gaiaball.yml']
+#   pull_request:
+#     paths: ['pd-gaiaball/**', '.github/workflows/pd-gaiaball.yml']
 on:
-  push:
-    branches: ['**']
-    tags: ['v*']
-    paths:
-      - 'pd-gaiaball/**'
-      - '.github/workflows/pd-gaiaball.yml'
-  pull_request:
-    paths:
-      - 'pd-gaiaball/**'
-      - '.github/workflows/pd-gaiaball.yml'
   workflow_dispatch:
 
 permissions:
@@ -136,6 +136,7 @@ jobs:
       - name: Assemble the gaiaball/ folder
         run: |
           cp pd-gaiaball/gaiaball-help.pd pd-gaiaball/README.md pd-gaiaball/gaiaball.c pd-gaiaball/Makefile gaiaball/
+          cp LICENSE gaiaball/LICENSE
           mkdir -p gaiaball/src gaiaball/pd-lib-builder
           cp pd-gaiaball/src/*.c pd-gaiaball/src/*.h gaiaball/src/
           cp pd-gaiaball/pd-lib-builder/Makefile.pdlibbuilder gaiaball/pd-lib-builder/

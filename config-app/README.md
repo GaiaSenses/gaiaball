@@ -2,7 +2,7 @@
 
 App web (Vite + TypeScript) para configurar e testar o Gaiaball v2 via Web Bluetooth: visualização 3D da orientação (o quaternion tratado, exatamente como chega por BLE), métricas do fluxo (taxa, perda, jitter), parâmetros do firmware, presets e um painel de **sensores em tempo real** com gráficos de linha (Plotly.js). Ele também repassa os dados da bola ao Pure Data (veja [Enviar ao Pd](#enviar-ao-pd)).
 
-Endereço publicado, provisório: <https://gaiasenses.github.io/gaiaball/> (é o que o workflow do GitHub Pages publica, depois que as Pages forem habilitadas no repositório; quando o domínio final existir, o endereço troca).
+Endereço publicado, provisório: <https://gaiasenses.github.io/gaiaball/>. É o que o workflow `config-app-pages` publica quando é rodado à mão (Actions → config-app-pages → Run workflow), depois que as Pages forem habilitadas no repositório; a publicação automática a cada merge está desligada por enquanto. Quando o domínio final existir, o endereço troca.
 
 Interface: **tema claro/escuro** (botão no topo; sem escolha salva, segue o tema do sistema), **tooltips didáticos ⓘ** em cada parâmetro — passe o mouse, foque com Tab ou toque para ver o que o parâmetro faz e sua unidade (em telas estreitas o texto aparece como folha no rodapé) — e **layout responsivo** (desktop com o 3D fixo ao rolar, tablet e celular em uma coluna). Fontes IBM Plex embutidas via `@fontsource`: o app continua funcionando offline na bancada.
 
@@ -60,7 +60,7 @@ mesmo eixo X (tempo, em segundos)**, cada gráfico com uma cor própria.
 | Aceleração (IMU) | mg | já chega em milli-g no pacote de movimento v2 (1000 mg = 1 g; fundo de escala ±4 g = ±4000 mg) |
 | Microfones esq./dir. (INMP441) | dBFS (AES17) + dB SPL estimado | **RMS e pico medidos no firmware** (janela de 20 ms; o pico amostrado no 16 kHz cheio) em passos de 0,5 dB (1 byte cada) e enviados em cada pacote de orientação — ou seja, na taxa de orientação, não a 5 Hz. 0 dBFS do RMS = seno de fundo de escala (AES17); 0 dBFS do pico = amostra de fundo de escala, 3,01 dB abaixo para a mesma senoide. SPL ≈ dBFS + 120 (sensibilidade do INMP441: −26 dBFS @ 94 dB SPL, 1 kHz) |
 | CO₂ (SC8-CO2-5K) | ppm | o sensor emite 1 quadro/s sozinho por UART (9600 8N1); o firmware só escuta, nunca transmite (uma consulta pararia o fluxo do sensor). EMA opcional, TLV `0x28`. O pacote de CO₂ também traz o bit de **gatilho** (nível `0x29` com histerese `0x2A`) |
-| Potenciômetro | % do curso | ADC filtrado 0–4095 → 0–100 % (o limiar mapeado aparece no cartão e como linha pontilhada nos gráficos dos microfones) |
+| Potenciômetro | % do curso | ADC filtrado 0–4095 → 0–100 % (o limiar em dBFS aparece no cartão e como linha contínua nos gráficos da medida ativa: RMS nos dos microfones, pico no "Pico por canal") |
 
 O nível efetivo de disparo do detector, o potenciômetro e as flags de saúde chegam num pacote
 próprio (`SensorsPacket`, 5 Hz, na característica de diagnóstico — ver

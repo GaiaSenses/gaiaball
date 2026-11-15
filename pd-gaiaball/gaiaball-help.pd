@@ -80,10 +80,11 @@
 #X text 20 1126 Na desconexão gaia.breath e gaia.co2.trigger vão a 0 uma vez: nenhum 1 fica preso no patch. Os outros canais mantêm o último valor., f 132;
 #X text 20 1162 NÃO CONECTA? Confira se a bola está conectada na config-app e se a chave Enviar ao Pd está ligada. A porta tem de ser a mesma nos dois lados e o Chrome tem de ter Apps neste dispositivo permitido (passo 4). Mais detalhes no README.md da pasta do objeto., f 132;
 #X text 20 1202 SEGURANÇA: o objeto só aceita conexões do próprio computador e aceita qualquer página que o Chrome autorizar em Apps neste dispositivo. Não dê essa permissão a sites que você não conhece. Um navegador que não pede essa permissão deixa qualquer página aberta chegar ao objeto: ela pode mandar dados falsos ou cortar os dados de verdade (uma conexão nova substitui a anterior). Por isso feche as páginas que você não conhece durante uma apresentação., f 132;
-#N canvas 120 120 560 140 META 0;
+#N canvas 120 120 560 160 META 0;
 #X text 12 10 DESCRIPTION dados da Gaiaball no Pd: movimento e microfones e CO2 e navegação chegam da config-app por WebSocket local e saem em [r gaia.*];
 #X text 12 60 VERSION 0.1.0;
 #X text 12 90 AUTHOR GaiaSenses;
+#X text 12 115 LICENSE GPL-3.0;
 #X restore 890 1280 pd META;
 #X connect 3 0 4 0;
 #X connect 10 0 11 0;

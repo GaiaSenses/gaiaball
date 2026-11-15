@@ -2,12 +2,14 @@ name: config-app-pages
 
 # Publishes the config-app to GitHub Pages (https://gaiasenses.github.io/gaiaball/).
 
+# Automatic publishing is switched OFF for now: the workflow only runs when started by
+# hand (Actions tab -> config-app-pages -> "Run workflow"). To publish on every merge
+# again, add this trigger under `on:`:
+#
+#   push:
+#     branches: [main]
+#     paths: ['config-app/**', '.github/workflows/config-app-pages.yml']
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'config-app/**'
-      - '.github/workflows/config-app-pages.yml'
   workflow_dispatch:
 
 permissions:

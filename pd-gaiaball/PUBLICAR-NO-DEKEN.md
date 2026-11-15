@@ -69,19 +69,21 @@ gaiaball/
 ├── gaiaball.<extensão de cada sistema>   ← um binário por sistema/processador/precisão
 ├── gaiaball-help.pd                      ← patch de ajuda (o Pd abre com clique-direito → Ajuda)
 ├── README.md
-├── LICENSE                               ← ainda não existe no repositório (ver passo 5, abaixo)
+├── LICENSE                               ← GPL-3.0, copiado da raiz do repositório
 └── *.c, *.h, Makefile                    ← o código-fonte (ver "Fontes", abaixo)
 ```
 
 - **De onde vêm os binários:** o CI do GitHub compila o `[gaiaball]` para Windows, Linux
   (Intel/AMD e ARM) e macOS (Intel + Apple Silicon), nas duas precisões do Pd, e já monta e
   empacota a pasta `gaiaball/` com o `deken`. O fluxo de trabalho se chama **`pd-gaiaball`**
-  (arquivo `.github/workflows/pd-gaiaball.yml`) e roda a cada push ou pull request que mexe
-  em `pd-gaiaball/`, a cada tag `v*` e, quando você quiser, em **Actions → pd-gaiaball →
-  Run workflow**. Para publicar uma versão:
-  1. Crie e envie a tag da versão, por exemplo `v0.1.0`: o `.dek` sai com a versão `0.1.0`.
-     (Sem tag, o CI usa a versão provisória `0.0.0-dev`, que serve só para testar.)
-  2. Na aba **Actions**, abra a execução de `pd-gaiaball` dessa tag. No fim da página, em
+  (arquivo `.github/workflows/pd-gaiaball.yml`). **Por enquanto ele só roda quando você manda**,
+  em **Actions → pd-gaiaball → Run workflow**: as execuções automáticas (a cada push, pull
+  request ou tag) estão desligadas, e o comentário no topo do arquivo diz como religá-las.
+  Para publicar uma versão:
+  1. Crie e envie a tag da versão, por exemplo `v0.1.0`. Depois, em **Run workflow**, escolha
+     essa tag no seletor **Use workflow from**: o `.dek` sai com a versão `0.1.0`. (Rodando a
+     partir de uma branch, o CI usa a versão provisória `0.0.0-dev`, que serve só para testar.)
+  2. Na aba **Actions**, abra essa execução de `pd-gaiaball`. No fim da página, em
      **Artifacts**, baixe **`gaiaball-deken`**: um `.zip` com o `.dek`, o `.dek.txt` e o
      `.dek.sha256`. Os binários soltos de cada sistema também ficam lá, como
      `gaiaball-bin-<sistema>-<precisão>`, caso você queira conferi-los.
@@ -95,9 +97,8 @@ gaiaball/
 - **Fontes:** o `deken` exige que cada publicação inclua também o código-fonte (a
   pseudoarquitetura `Sources`). Como a pasta já contém os `.c`, ele detecta isso
   automaticamente.
-- **Licença:** o repositório ainda não tem um arquivo `LICENSE` (decisão pendente), então o
-  pacote do CI sai sem ele. Antes de publicar de verdade, defina a licença e acrescente o
-  `LICENSE` à pasta `gaiaball/` (ou ao repositório e ao fluxo de trabalho).
+- **Licença:** o projeto é **GPL-3.0** (arquivo `LICENSE` na raiz do repositório). O CI copia
+  esse arquivo para dentro da pasta `gaiaball/` do pacote, junto com o código-fonte.
 - **Descrição na busca:** o `deken` gera a lista de objetos a partir do `gaiaball-help.pd`. A
   descrição curta vem do comentário `DESCRIPTION` dentro do subpatch `[pd META]` do patch de
   ajuda. Confira que ele existe e está em uma linha.
