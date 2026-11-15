@@ -166,7 +166,15 @@ export function mountSensorsPanel(
         '1000 mg = 1 g; o fundo de escala é ±4000 mg.', 5)}
       ${levelCard('micl', 'Microfone esquerdo', ['rms', 'RMS', 'dBFS'], ['peak', 'Pico', 'dBFS'], MIC_NOTE, 4)}
       ${levelCard('micr', 'Microfone direito', ['rms', 'RMS', 'dBFS'], ['peak', 'Pico', 'dBFS'], MIC_NOTE, 4)}
-      <div class="sensor-card" data-el="card-co2"><h3>CO₂ (SC8)</h3><p data-el="v-co2">—</p><small>ppm · partes por milhão</small></div>
+      <div class="sensor-card level-card" data-el="card-co2" style="--num-ch: 5">
+        <div class="card-head"><h3>CO₂ (SC8)</h3><span class="card-state" data-el="st-co2"></span></div>
+        <dl class="readings">
+          <div class="reading reading-bar"><dt>Concentração</dt><dd><span class="reading-num" data-el="ppm-co2">—</span><span class="reading-unit">ppm</span></dd></div>
+          <div class="reading reading-tick"><dt>Gatilho</dt><dd><span class="reading-word" data-el="trig-co2">—</span></dd></div>
+        </dl>
+        <div class="meter" aria-hidden="true"><span class="meter-fill" data-el="bar-co2"></span><span class="meter-peak" data-el="tick-co2" hidden></span></div>
+        <small data-el="note-co2"></small>
+      </div>
       ${levelCard('pot', 'Potenciômetro', ['pos', 'Posição', '%'], ['sens', 'Sensibilidade', 'dBFS'],
         'O curso inteiro vai de −60 a 0 dBFS de sensibilidade.', 3, true)}
     </div>
@@ -486,11 +494,32 @@ export function mountSensorsPanel(
     latest.co2 = (ev as CustomEvent<Co2Sample>).detail;
     co2Q.push(now(), latest.co2);
   });
+  // The CO2 meter shares the chart's scale (0..max(5000, virtual peak)) and marks the
+  // trigger level; both come from the configuration read from the ball. Until it is
+  // read (or in the demo) the scale is 0..5000 and there is no trigger mark.
+  let co2Max = co2Range(0)[1];
+  let co2TriggerPpm: number | null = null;
+  const syncCo2Scale = (): void => {
+    const tick = q('[data-el=tick-co2]');
+    tick.hidden = co2TriggerPpm === null;
+    if (co2TriggerPpm !== null) tick.style.left = `${Math.min(1, co2TriggerPpm / co2Max) * 100}%`;
+    q('[data-el=note-co2]').textContent = co2TriggerPpm === null
+      ? `Escala de 0 a ${co2Max} ppm. O nível do gatilho aparece depois de ler a configuração da bola.`
+      : `Escala de 0 a ${co2Max} ppm. O traço é o nível do gatilho (${co2TriggerPpm} ppm).`;
+  };
+  syncCo2Scale();
   // CO2 axis follows the configured virtual peak (0x23, u16 little-endian).
   client.addEventListener('config', (ev) => {
-    const v = (ev as CustomEvent<Map<number, DataView>>).detail.get(TLV.virtualPeakPpm);
-    if (!v || v.byteLength !== 2) return;
-    void Plotly.relayout(chartEl, { 'yaxis7.range': co2Range(v.getUint16(0, true)) });
+    const cfg = (ev as CustomEvent<Map<number, DataView>>).detail;
+    const v = cfg.get(TLV.virtualPeakPpm);
+    if (v && v.byteLength === 2) {
+      const range = co2Range(v.getUint16(0, true));
+      co2Max = range[1];
+      void Plotly.relayout(chartEl, { 'yaxis7.range': range });
+    }
+    const t = cfg.get(TLV.co2TriggerPpm);
+    if (t && t.byteLength === 2) co2TriggerPpm = t.getUint16(0, true);
+    syncCo2Scale();
   });
 
   const renderCards = (): void => {
@@ -544,8 +573,18 @@ export function mountSensorsPanel(
         : sensors.potControls ? 'em uso pelo detector' : 'fora de uso (valor fixo)';
     }
     if (co2) {
-      const estado = co2.virtualActive ? 'virtual' : co2.stale ? 'sem leitura (stale)' : co2.valid ? 'real' : 'inválido';
-      q('[data-el=v-co2]').textContent = `${co2.ppm} ppm · ${estado}`;
+      // Where the number comes from: the virtual pulse wins, then a stale or invalid sensor.
+      const [src, tone] = co2.virtualActive ? ['pulso virtual', 'accent']
+        : co2.stale ? ['sem leitura', 'warn']
+        : co2.valid ? ['leitura real', ''] : ['inválido', 'danger'];
+      const st = q('[data-el=st-co2]');
+      st.textContent = src;
+      st.dataset.tone = tone;
+      q('[data-el=ppm-co2]').textContent = String(Math.round(co2.ppm));
+      q('[data-el=bar-co2]').style.width = `${Math.min(1, Math.max(0, co2.ppm / co2Max)) * 100}%`;
+      const trig = q('[data-el=trig-co2]');
+      trig.textContent = co2.trigger ? 'ligado' : 'desligado';
+      trig.dataset.on = String(co2.trigger);
     }
   };
 

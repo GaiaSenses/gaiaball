@@ -77,7 +77,10 @@ o botão está em uso pelo detector. **Orientação** (roll, pitch e yaw, em gra
 milhar. Em todos esses cartões, cada número fica alinhado à direita numa caixa da largura do
 maior valor que pode ter (4 caracteres para graus e dBFS, 5 para mg), na fonte monoespaçada:
 a casa das unidades não se mexe quando o sinal troca ou o número de dígitos muda. O traço
-antes de cada eixo é a cor dele nos gráficos.
+antes de cada eixo é a cor dele nos gráficos. O cartão do **CO₂** mostra a concentração (ppm) e
+o gatilho (ligado/desligado) sobre um medidor na mesma escala do gráfico; o traço marca o nível
+do gatilho, lido da configuração da bola, e o cabeçalho diz de onde vem o número (leitura
+real, pulso virtual, sem leitura ou inválido).
 
 - **Janela:** 5, 10, 30 ou 60 s (padrão 10), escolhida acima dos gráficos. Os últimos 60 s
   ficam sempre guardados, então trocar para uma janela maior já mostra o passado.

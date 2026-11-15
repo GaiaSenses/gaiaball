@@ -370,6 +370,8 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
 .sensor-card .card-head h3 { margin: 0; }
 .card-state { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
 .card-state[data-tone='danger'] { color: var(--danger); font-weight: 600; }
+.card-state[data-tone='warn'] { color: var(--warn); font-weight: 600; }
+.card-state[data-tone='accent'] { color: var(--accent); font-weight: 600; }
 .readings { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin: 0 0 10px; }
 .reading { min-width: 0; }
 .reading dt { display: flex; align-items: center; gap: 6px; margin: 0 0 2px; font-size: 0.74rem; color: var(--muted); }
@@ -393,8 +395,11 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
 /* Orientation and acceleration: the line before the label is that axis's line color. */
 .reading-line dt::before { content: ''; flex: none; width: 12px; height: 2px; border-radius: 1px; background: var(--swatch, var(--muted)); }
 .reading-unit { font-size: 0.74rem; color: var(--muted); }
-.reading-rms dt::before { content: ''; flex: none; width: 12px; height: 6px; border-radius: 3px; background: var(--card-tint, var(--accent)); }
-.reading-peak dt::before { content: ''; flex: none; width: 2px; height: 11px; background: var(--text); }
+.reading-rms dt::before, .reading-bar dt::before { content: ''; flex: none; width: 12px; height: 6px; border-radius: 3px; background: var(--card-tint, var(--accent)); }
+.reading-peak dt::before, .reading-tick dt::before { content: ''; flex: none; width: 2px; height: 11px; background: var(--text); }
+/* A state in place of a number (the CO₂ trigger): same line as the numbers, in the text face. */
+.reading-word { font-size: 1rem; font-weight: 600; line-height: 1.55; color: var(--muted); }
+.reading-word[data-on='true'] { color: var(--accent); }
 .meter {
   position: relative;
   height: 8px;
