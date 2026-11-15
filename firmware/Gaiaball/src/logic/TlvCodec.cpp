@@ -4,7 +4,7 @@
 namespace gaia {
 namespace {
 
-enum class Kind : uint8_t { U8, U16, U32, Str, Pin, MagCal };
+enum class Kind : uint8_t { U8, U16, U32, Str, Pin, MagCal, NavRef };
 
 struct Reg {
   uint8_t id;
@@ -18,6 +18,9 @@ constexpr size_t kNameMax = 16;
 constexpr size_t kPinLen = 4;
 // Magnetometer calibration record: 3 x int16 hard iron + 9 x int16 soft iron.
 constexpr size_t kMagCalLen = 24;
+// Navigation reference point: int32 lat x 1e6 then int32 lon x 1e6.
+constexpr size_t kNavRefLen = 8;
+constexpr int32_t kNavRefLatMaxE6 = 90000000, kNavRefLonMaxE6 = 180000000;
 
 constexpr Reg kRegs[] = {
     {0x01, Kind::U8, 0, kAnyU8},      {0x02, Kind::U8, 10, 200},
@@ -42,11 +45,19 @@ constexpr Reg kRegs[] = {
     {0x23, Kind::U16, 0, kAnyU16},    {0x24, Kind::U16, 0, kAnyU16},
     {0x25, Kind::U16, 0, kAnyU16},    {0x26, Kind::U8, 0, kAnyU8},
     {0x28, Kind::U16, 1, 1000},
+    {0x29, Kind::U16, 400, 10000},    {0x2A, Kind::U16, 0, 2000},
     {0x30, Kind::U8, 0, kMaxGpio},    {0x31, Kind::U8, 0, kMaxGpio},
     {0x32, Kind::U16, 0, kAnyU16},
     {0x34, Kind::U8, 0, 2},           {0x36, Kind::U8, 0, 23},
     {0x40, Kind::Str, 0, 0},
     {kTlvPin, Kind::Pin, 0, 0},       {0x50, Kind::U8, 0, 1},
+    // Globe navigation (v9).
+    {0x60, Kind::U8, 0, 2},           {0x61, Kind::U8, 10, 200},
+    {0x62, Kind::NavRef, 0, 0},       {0x63, Kind::U16, 1, 720},
+    {0x64, Kind::U8, 5, 90},          {0x65, Kind::U8, 10, 40},
+    {0x66, Kind::U8, 1, 200},         {0x67, Kind::U8, 1, 100},
+    {0x68, Kind::U16, 50, 5000},      {0x69, Kind::U16, 1, 2000},
+    {0x6A, Kind::U16, 1, 2000},
 };
 // Reserved ids (never reuse): 0x21 (was co2ChecksumVariant) and 0x27 (was co2Protocol)
 // — both removed once the SC8-CO2-5K datasheet fixed the frame format; 0x33 (was
@@ -100,12 +111,24 @@ void *numField(GaiaConfig &c, uint8_t id) {
     case 0x25: return &c.virtualHoldMs;
     case 0x26: return &c.co2RawLogMode;
     case 0x28: return &c.co2EmaAlphaX1000;
+    case 0x29: return &c.co2TriggerPpm;
+    case 0x2A: return &c.co2TriggerHystPpm;
     case 0x30: return &c.soundLedPin;
     case 0x31: return &c.co2LedPin;
     case 0x32: return &c.co2AlertPpm;
     case 0x34: return &c.imuChip;
     case 0x36: return &c.magAxisRemap;
     case 0x50: return &c.serialLogEnabled;
+    case 0x60: return &c.navMode;
+    case 0x61: return &c.navNotifyHz;
+    case 0x63: return &c.joyMaxSpeedDegS;
+    case 0x64: return &c.joyFullAngleDeg;
+    case 0x65: return &c.joyCurveX10;
+    case 0x66: return &c.navStartDegS;
+    case 0x67: return &c.navStopDegS;
+    case 0x68: return &c.navStopMs;
+    case 0x69: return &c.joyStartDegSX10;
+    case 0x6A: return &c.joyStopDegSX10;
     default: return nullptr;
   }
 }
@@ -150,6 +173,17 @@ void readMagCal(const uint8_t *v, GaiaConfig &c) {
   for (int i = 0; i < 9; i++) c.magSoftIron[i] = (int16_t)readLe(v + 6 + 2 * i, 2);
 }
 
+// Navigation reference: int32 lat x 1e6, int32 lon x 1e6 (little-endian).
+void writeNavRef(uint8_t *out, const GaiaConfig &c) {
+  writeLe(out, 4, static_cast<uint32_t>(c.navRefLatE6));
+  writeLe(out + 4, 4, static_cast<uint32_t>(c.navRefLonE6));
+}
+
+void readNavRef(const uint8_t *v, GaiaConfig &c) {
+  c.navRefLatE6 = static_cast<int32_t>(readLe(v, 4));
+  c.navRefLonE6 = static_cast<int32_t>(readLe(v + 4, 4));
+}
+
 // Output-capable ESP32 GPIOs; excludes SPI-flash 6..11 and nonexistent 20, 24, 28..31.
 bool isValidOutputGpio(uint8_t pin) {
   static const uint8_t kValid[] = {0, 1, 2, 3, 4, 5, 12, 13, 14, 15, 16,
@@ -177,6 +211,13 @@ bool validValue(const Reg &r, const uint8_t *v, size_t len) {
       }
       return true;
     }
+    case Kind::NavRef: {
+      if (len != kNavRefLen) return false;
+      const int32_t lat = static_cast<int32_t>(readLe(v, 4));
+      const int32_t lon = static_cast<int32_t>(readLe(v + 4, 4));
+      return lat >= -kNavRefLatMaxE6 && lat <= kNavRefLatMaxE6 && lon >= -kNavRefLonMaxE6 &&
+             lon <= kNavRefLonMaxE6;
+    }
     case Kind::Pin:
       if (len != kPinLen) return false;
       for (size_t i = 0; i < len; i++)
@@ -203,6 +244,8 @@ size_t tlvSerialize(const GaiaConfig &cfg, uint8_t *out, size_t cap) {
       vlen = strnlen(c.bleName, kNameMax);
     } else if (r.kind == Kind::MagCal) {
       vlen = kMagCalLen;
+    } else if (r.kind == Kind::NavRef) {
+      vlen = kNavRefLen;
     } else {
       vlen = numSize(r.kind);
     }
@@ -213,6 +256,8 @@ size_t tlvSerialize(const GaiaConfig &cfg, uint8_t *out, size_t cap) {
       memcpy(out + pos + 2, c.bleName, vlen);
     } else if (r.kind == Kind::MagCal) {
       writeMagCal(out + pos + 2, c);
+    } else if (r.kind == Kind::NavRef) {
+      writeNavRef(out + pos + 2, c);
     } else {
       writeLe(out + pos + 2, vlen, loadNum(numField(c, r.id), r.kind));
     }
@@ -228,6 +273,10 @@ bool tlvApply(GaiaConfig &cfg, const uint8_t *data, size_t len) {
   // pin = one function); (b) the audio band-pass must be a real band (lpHz > hpHz).
   uint8_t ledPins[2] = {cfg.soundLedPin, cfg.co2LedPin};
   uint16_t hpHz = cfg.audioHpHz, lpHz = cfg.audioLpHz;
+  // (c) navigation hysteresis pairs: stop must stay below start (mirror deg/s and
+  // joystick deg/s x10), judged after the whole write.
+  uint8_t navStart = cfg.navStartDegS, navStop = cfg.navStopDegS;
+  uint16_t joyStart = cfg.joyStartDegSX10, joyStop = cfg.joyStopDegSX10;
   for (size_t pos = 0; pos < len;) {
     if (len - pos < 2) return false;
     const Reg *r = findReg(data[pos]);
@@ -238,10 +287,16 @@ bool tlvApply(GaiaConfig &cfg, const uint8_t *data, size_t len) {
     if (r->id == 0x31) ledPins[1] = data[pos + 2];
     if (r->id == 0x17) hpHz = (uint16_t)readLe(data + pos + 2, 2);
     if (r->id == 0x19) lpHz = (uint16_t)readLe(data + pos + 2, 2);
+    if (r->id == 0x66) navStart = data[pos + 2];
+    if (r->id == 0x67) navStop = data[pos + 2];
+    if (r->id == 0x69) joyStart = (uint16_t)readLe(data + pos + 2, 2);
+    if (r->id == 0x6A) joyStop = (uint16_t)readLe(data + pos + 2, 2);
     pos += 2 + vlen;
   }
   if (ledPins[0] == ledPins[1]) return false;
   if (lpHz <= hpHz) return false;
+  if (navStop >= navStart) return false;
+  if (joyStop >= joyStart) return false;
   // Pass 2: commit (cannot fail).
   for (size_t pos = 0; pos < len;) {
     const Reg *r = findReg(data[pos]);
@@ -252,6 +307,8 @@ bool tlvApply(GaiaConfig &cfg, const uint8_t *data, size_t len) {
       memcpy(cfg.bleName, v, vlen);
     } else if (r->kind == Kind::MagCal) {
       readMagCal(v, cfg);
+    } else if (r->kind == Kind::NavRef) {
+      readNavRef(v, cfg);
     } else if (r->kind == Kind::Pin) {
       memcpy(cfg.pin, v, kPinLen);
       cfg.pin[kPinLen] = 0;
@@ -279,6 +336,8 @@ size_t tlvApplyLenient(GaiaConfig &cfg, const uint8_t *data, size_t len) {
       memcpy(cfg.bleName, v, vlen);
     } else if (r->kind == Kind::MagCal) {
       readMagCal(v, cfg);
+    } else if (r->kind == Kind::NavRef) {
+      readNavRef(v, cfg);
     } else {
       storeNum(numField(cfg, r->id), r->kind, readLe(v, vlen));
     }
@@ -293,6 +352,14 @@ size_t tlvApplyLenient(GaiaConfig &cfg, const uint8_t *data, size_t len) {
   if (cfg.audioLpHz <= cfg.audioHpHz) {
     cfg.audioHpHz = defaults.audioHpHz;
     cfg.audioLpHz = defaults.audioLpHz;
+  }
+  if (cfg.navStopDegS >= cfg.navStartDegS) {
+    cfg.navStartDegS = defaults.navStartDegS;
+    cfg.navStopDegS = defaults.navStopDegS;
+  }
+  if (cfg.joyStopDegSX10 >= cfg.joyStartDegSX10) {
+    cfg.joyStartDegSX10 = defaults.joyStartDegSX10;
+    cfg.joyStopDegSX10 = defaults.joyStopDegSX10;
   }
   return applied;
 }

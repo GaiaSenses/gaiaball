@@ -232,6 +232,7 @@ void ImuService::applyPendingSettings(bool force) {
     ahrs_.restart();
     gyroBias_.reset();
     qZero_ = Quat{1, 0, 0, 0};
+    ++zeroEpoch_;
     smoother_.reset();
     havePrev_ = false;
     GB_LOGI(kTag, "mode -> %s", next.orientationMode == 1 ? "Quat9" : "Quat6");
@@ -394,6 +395,7 @@ void ImuService::processSample(uint32_t tUs) {
   if (mountRequested_.exchange(false)) {
     qMount_ = raw;
     qZero_ = Quat{1, 0, 0, 0};  // the old zero lived in the previous mounting frame
+    ++zeroEpoch_;
     havePrev_ = false;
     smoother_.reset();
     portENTER_CRITICAL(&mountMux_);
@@ -409,6 +411,7 @@ void ImuService::processSample(uint32_t tUs) {
   const Quat mounted = quatMultiply(quatConjugate(qMount_), raw);
   if (zeroRequested_.exchange(false)) {
     qZero_ = mounted;
+    ++zeroEpoch_;
     havePrev_ = false;  // jump straight to the new reference, no smoothing glide
     smoother_.reset();
     GB_LOGI(kTag, "orientation zeroed");
@@ -455,7 +458,8 @@ bool ImuService::takeCapturedMounting(float out[4]) {
   return had;
 }
 
-void ImuService::publish(const ImuSample &s) {
+void ImuService::publish(ImuSample &s) {
+  s.zeroEpoch = zeroEpoch_;
   if (xQueueSend(queue_, &s, 0) == pdTRUE) return;
   // Full: drop the oldest so the newest sample always gets in (single producer).
   ImuSample dropped;

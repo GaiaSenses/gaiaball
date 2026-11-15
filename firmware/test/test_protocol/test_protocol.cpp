@@ -168,6 +168,84 @@ void test_mag_chunk_size_fits_default_mtu() {
   TEST_ASSERT_EQUAL(106, sizeof(MagChunkPacket));
 }
 
+void test_nav_packet_size() { TEST_ASSERT_EQUAL(22, sizeof(NavPacket)); }
+
+void test_nav_golden_a() {
+  const NavPacket p = makeNavPacket(258, 12345678u, 1, kNavValid | kNavSettled, -229055560,
+                                    -470608330, 4500, 123);
+  const uint8_t expected[22] = {0x01, 0x07, 0x02, 0x01, 0x4E, 0x61, 0xBC, 0x00, 0x01, 0x03, 0xB8,
+                                0xE3, 0x58, 0xF2, 0x36, 0x16, 0xF3, 0xE3, 0x94, 0x11, 0x7B, 0x00};
+  uint8_t got[22];
+  std::memcpy(got, &p, 22);
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, got, 22);
+}
+
+void test_nav_golden_b() {
+  const NavPacket p = makeNavPacket(65535, 4294967295u, 2, kNavSettled | kNavMoving, 900000000,
+                                    -1800000000, -18000, 65535);
+  const uint8_t expected[22] = {0x01, 0x07, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02, 0x06, 0x00,
+                                0xE9, 0xA4, 0x35, 0x00, 0x2E, 0xB6, 0x94, 0xB0, 0xB9, 0xFF, 0xFF};
+  uint8_t got[22];
+  std::memcpy(got, &p, 22);
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, got, 22);
+}
+
+void test_nav_flag_constants() {
+  TEST_ASSERT_EQUAL(0x01, kNavValid);
+  TEST_ASSERT_EQUAL(0x02, kNavSettled);
+  TEST_ASSERT_EQUAL(0x04, kNavMoving);
+  TEST_ASSERT_EQUAL(0x08, kCo2Trigger);
+  TEST_ASSERT_EQUAL(0x07, kTypeNav);
+}
+
+void test_nav_lat_conversion() {
+  TEST_ASSERT_INT32_WITHIN(20, -229055560, navLatE7(-22.905556f));
+  TEST_ASSERT_EQUAL_INT32(900000000, navLatE7(90.0f));
+  TEST_ASSERT_EQUAL_INT32(900000000, navLatE7(123.0f));
+  TEST_ASSERT_EQUAL_INT32(-900000000, navLatE7(-123.0f));
+  TEST_ASSERT_EQUAL_INT32(0, navLatE7(0.0f));
+  TEST_ASSERT_EQUAL_INT32(0, navLatE7(NAN));
+  TEST_ASSERT_INT32_WITHIN(1, 450000000, navLatE7(45.0f));
+}
+
+void test_nav_lon_conversion() {
+  TEST_ASSERT_EQUAL_INT32(1800000000, navLonE7(180.0f));
+  TEST_ASSERT_EQUAL_INT32(1800000000, navLonE7(-180.0f));  // (-180,180] normalisation
+  TEST_ASSERT_INT32_WITHIN(1, -1790000000, navLonE7(181.0f));
+  TEST_ASSERT_INT32_WITHIN(1, 1790000000, navLonE7(-181.0f));
+  TEST_ASSERT_INT32_WITHIN(1, 900000000, navLonE7(90.0f));
+  TEST_ASSERT_INT32_WITHIN(1, 100000000, navLonE7(370.0f));
+  TEST_ASSERT_EQUAL_INT32(0, navLonE7(NAN));
+}
+
+void test_nav_bearing_conversion() {
+  TEST_ASSERT_EQUAL_INT16(18000, navBearingX100(180.0f));
+  TEST_ASSERT_EQUAL_INT16(18000, navBearingX100(-180.0f));
+  TEST_ASSERT_EQUAL_INT16(-17900, navBearingX100(181.0f));
+  TEST_ASSERT_EQUAL_INT16(17900, navBearingX100(-181.0f));
+  TEST_ASSERT_EQUAL_INT16(4500, navBearingX100(45.0f));
+  TEST_ASSERT_EQUAL_INT16(-18000 + 1, navBearingX100(-179.99f));
+  TEST_ASSERT_EQUAL_INT16(0, navBearingX100(NAN));
+  TEST_ASSERT_EQUAL_INT16(0, navBearingX100(720.0f));
+}
+
+void test_nav_speed_conversion() {
+  TEST_ASSERT_EQUAL_UINT16(0, navSpeedX10(0.0f));
+  TEST_ASSERT_EQUAL_UINT16(123, navSpeedX10(12.3f));
+  TEST_ASSERT_EQUAL_UINT16(0, navSpeedX10(-5.0f));
+  TEST_ASSERT_EQUAL_UINT16(0, navSpeedX10(NAN));
+  TEST_ASSERT_EQUAL_UINT16(65535, navSpeedX10(7000.0f));
+  TEST_ASSERT_EQUAL_UINT16(65535, navSpeedX10(INFINITY));
+}
+
+void test_co2_trigger_flag_roundtrip_layout() {
+  Co2Packet p{};
+  p.flags = kCo2Valid | kCo2Trigger;
+  uint8_t raw[12];
+  std::memcpy(raw, &p, 12);
+  TEST_ASSERT_EQUAL_HEX8(0x09, raw[10]);
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_packet_sizes);
@@ -182,5 +260,14 @@ int main(int, char **) {
   RUN_TEST(test_mag_chunk_encode_golden);
   RUN_TEST(test_mag_chunk_clamps_count);
   RUN_TEST(test_mag_chunk_size_fits_default_mtu);
+  RUN_TEST(test_nav_packet_size);
+  RUN_TEST(test_nav_golden_a);
+  RUN_TEST(test_nav_golden_b);
+  RUN_TEST(test_nav_flag_constants);
+  RUN_TEST(test_nav_lat_conversion);
+  RUN_TEST(test_nav_lon_conversion);
+  RUN_TEST(test_nav_bearing_conversion);
+  RUN_TEST(test_nav_speed_conversion);
+  RUN_TEST(test_co2_trigger_flag_roundtrip_layout);
   return UNITY_END();
 }

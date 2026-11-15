@@ -1,4 +1,5 @@
 #include <unity.h>
+#include <cstdio>
 #include <cstring>
 #include "../../Gaiaball/src/logic/GaiaConfig.h"
 #include "../../Gaiaball/src/logic/ImuStatus.h"
@@ -565,6 +566,363 @@ void test_serialized_config_leaves_room_for_status_record(void) {
   TEST_ASSERT_TRUE(n + 3 <= sizeof(buf));
 }
 
+// ------------------------------------------------------------- navigation registers
+
+static size_t putRec(uint8_t *b, uint8_t id, uint32_t v, size_t n) {
+  b[0] = id;
+  b[1] = static_cast<uint8_t>(n);
+  for (size_t i = 0; i < n; i++) b[2 + i] = static_cast<uint8_t>(v >> (8 * i));
+  return 2 + n;
+}
+
+static size_t putNavRef(uint8_t *b, int32_t lat, int32_t lon) {
+  b[0] = 0x62;
+  b[1] = 8;
+  for (int i = 0; i < 4; i++) {
+    b[2 + i] = static_cast<uint8_t>(static_cast<uint32_t>(lat) >> (8 * i));
+    b[6 + i] = static_cast<uint8_t>(static_cast<uint32_t>(lon) >> (8 * i));
+  }
+  return 10;
+}
+
+// Finds the record for `id` in a serialized config; returns its value pointer or null.
+static const uint8_t *findRec(const uint8_t *buf, size_t n, uint8_t id, size_t *len = nullptr) {
+  for (size_t pos = 0; pos + 2 <= n; pos += 2 + buf[pos + 1]) {
+    if (buf[pos] == id) {
+      if (len) *len = buf[pos + 1];
+      return buf + pos + 2;
+    }
+  }
+  return nullptr;
+}
+
+void test_nav_defaults() {
+  GaiaConfig c;
+  TEST_ASSERT_EQUAL(1200, c.co2TriggerPpm);
+  TEST_ASSERT_EQUAL(50, c.co2TriggerHystPpm);
+  TEST_ASSERT_EQUAL(1, c.navMode);
+  TEST_ASSERT_EQUAL(50, c.navNotifyHz);
+  TEST_ASSERT_EQUAL_INT32(-22905556, c.navRefLatE6);
+  TEST_ASSERT_EQUAL_INT32(-47060833, c.navRefLonE6);
+  TEST_ASSERT_EQUAL(90, c.joyMaxSpeedDegS);
+  TEST_ASSERT_EQUAL(60, c.joyFullAngleDeg);
+  TEST_ASSERT_EQUAL(30, c.joyCurveX10);
+  TEST_ASSERT_EQUAL(20, c.navStartDegS);
+  TEST_ASSERT_EQUAL(5, c.navStopDegS);
+  TEST_ASSERT_EQUAL(420, c.navStopMs);
+  TEST_ASSERT_EQUAL(10, c.joyStartDegSX10);
+  TEST_ASSERT_EQUAL(5, c.joyStopDegSX10);
+}
+
+void test_nav_registers_serialize_defaults() {
+  GaiaConfig c;
+  uint8_t buf[384];
+  const size_t n = tlvSerialize(c, buf, sizeof buf);
+  TEST_ASSERT_TRUE(n > 0);
+  size_t len = 0;
+  const uint8_t *v = findRec(buf, n, 0x62, &len);
+  TEST_ASSERT_NOT_NULL(v);
+  TEST_ASSERT_EQUAL(8, len);
+  int32_t lat = (int32_t)((uint32_t)v[0] | (uint32_t)v[1] << 8 | (uint32_t)v[2] << 16 | (uint32_t)v[3] << 24);
+  int32_t lon = (int32_t)((uint32_t)v[4] | (uint32_t)v[5] << 8 | (uint32_t)v[6] << 16 | (uint32_t)v[7] << 24);
+  TEST_ASSERT_EQUAL_INT32(-22905556, lat);
+  TEST_ASSERT_EQUAL_INT32(-47060833, lon);
+  const uint8_t ids[] = {0x29, 0x2A, 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0x68, 0x69, 0x6A};
+  for (uint8_t id : ids) TEST_ASSERT_NOT_NULL(findRec(buf, n, id));
+}
+
+void test_nav_registers_roundtrip_every_id() {
+  GaiaConfig src;
+  src.co2TriggerPpm = 4321;
+  src.co2TriggerHystPpm = 77;
+  src.navMode = 2;
+  src.navNotifyHz = 120;
+  src.navRefLatE6 = 51500000;
+  src.navRefLonE6 = -123456789;
+  src.joyMaxSpeedDegS = 333;
+  src.joyFullAngleDeg = 45;
+  src.joyCurveX10 = 25;
+  src.navStartDegS = 77;
+  src.navStopDegS = 9;
+  src.navStopMs = 1234;
+  src.joyStartDegSX10 = 99;
+  src.joyStopDegSX10 = 33;
+  uint8_t buf[384];
+  const size_t n = tlvSerialize(src, buf, sizeof buf);
+  TEST_ASSERT_TRUE(n > 0);
+  GaiaConfig dst;
+  TEST_ASSERT_TRUE(tlvApply(dst, buf, n));
+  TEST_ASSERT_EQUAL(4321, dst.co2TriggerPpm);
+  TEST_ASSERT_EQUAL(77, dst.co2TriggerHystPpm);
+  TEST_ASSERT_EQUAL(2, dst.navMode);
+  TEST_ASSERT_EQUAL(120, dst.navNotifyHz);
+  TEST_ASSERT_EQUAL_INT32(51500000, dst.navRefLatE6);
+  TEST_ASSERT_EQUAL_INT32(-123456789, dst.navRefLonE6);
+  TEST_ASSERT_EQUAL(333, dst.joyMaxSpeedDegS);
+  TEST_ASSERT_EQUAL(45, dst.joyFullAngleDeg);
+  TEST_ASSERT_EQUAL(25, dst.joyCurveX10);
+  TEST_ASSERT_EQUAL(77, dst.navStartDegS);
+  TEST_ASSERT_EQUAL(9, dst.navStopDegS);
+  TEST_ASSERT_EQUAL(1234, dst.navStopMs);
+  TEST_ASSERT_EQUAL(99, dst.joyStartDegSX10);
+  TEST_ASSERT_EQUAL(33, dst.joyStopDegSX10);
+  // The lenient (NVS) path restores the same values.
+  GaiaConfig dst2;
+  tlvApplyLenient(dst2, buf, n);
+  TEST_ASSERT_EQUAL_INT32(51500000, dst2.navRefLatE6);
+  TEST_ASSERT_EQUAL_INT32(-123456789, dst2.navRefLonE6);
+  TEST_ASSERT_EQUAL(1234, dst2.navStopMs);
+  TEST_ASSERT_EQUAL(4321, dst2.co2TriggerPpm);
+}
+
+void test_nav_ref_wire_bytes() {
+  uint8_t buf[16];
+  const size_t n = putNavRef(buf, 90000000, -180000000);
+  GaiaConfig c;
+  TEST_ASSERT_TRUE(tlvApply(c, buf, n));
+  TEST_ASSERT_EQUAL_INT32(90000000, c.navRefLatE6);
+  TEST_ASSERT_EQUAL_INT32(-180000000, c.navRefLonE6);
+  uint8_t out[384];
+  const size_t m = tlvSerialize(c, out, sizeof out);
+  const uint8_t *v = findRec(out, m, 0x62);
+  TEST_ASSERT_NOT_NULL(v);
+  // 90000000 = 0x055D4A80 ; -180000000 = 0xF5456B00 (little-endian)
+  const uint8_t expected[8] = {0x80, 0x4A, 0x5D, 0x05, 0x00, 0x6B, 0x45, 0xF5};
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, v, 8);
+}
+
+void test_nav_registers_reject_out_of_range() {
+  uint8_t b[16];
+  size_t n;
+  n = putNavRef(b, 90000001, 0);
+  assertRejected(b, n);
+  n = putNavRef(b, -90000001, 0);
+  assertRejected(b, n);
+  n = putNavRef(b, 0, -180000001);
+  assertRejected(b, n);
+  n = putNavRef(b, 0, 180000001);
+  assertRejected(b, n);
+  n = putRec(b, 0x60, 3, 1);
+  assertRejected(b, n);
+  n = putRec(b, 0x65, 9, 1);
+  assertRejected(b, n);
+  n = putRec(b, 0x65, 41, 1);
+  assertRejected(b, n);
+  n = putRec(b, 0x61, 9, 1);
+  assertRejected(b, n);
+  n = putRec(b, 0x61, 201, 1);
+  assertRejected(b, n);
+  n = putRec(b, 0x29, 399, 2);
+  assertRejected(b, n);
+  n = putRec(b, 0x29, 10001, 2);
+  assertRejected(b, n);
+  n = putRec(b, 0x2A, 2001, 2);
+  assertRejected(b, n);
+  n = putRec(b, 0x63, 0, 2);
+  assertRejected(b, n);
+  n = putRec(b, 0x63, 721, 2);
+  assertRejected(b, n);
+  n = putRec(b, 0x64, 4, 1);
+  assertRejected(b, n);
+  n = putRec(b, 0x64, 91, 1);
+  assertRejected(b, n);
+  n = putRec(b, 0x66, 0, 1);
+  assertRejected(b, n);
+  n = putRec(b, 0x66, 201, 1);
+  assertRejected(b, n);
+  n = putRec(b, 0x67, 0, 1);
+  assertRejected(b, n);
+  n = putRec(b, 0x67, 101, 1);
+  assertRejected(b, n);
+  n = putRec(b, 0x68, 49, 2);
+  assertRejected(b, n);
+  n = putRec(b, 0x68, 5001, 2);
+  assertRejected(b, n);
+  n = putRec(b, 0x69, 0, 2);
+  assertRejected(b, n);
+  n = putRec(b, 0x69, 2001, 2);
+  assertRejected(b, n);
+  n = putRec(b, 0x6A, 0, 2);
+  assertRejected(b, n);
+  n = putRec(b, 0x6A, 2001, 2);
+  assertRejected(b, n);
+}
+
+void test_nav_registers_accept_boundaries() {
+  uint8_t b[160];
+  size_t n = 0;
+  n += putRec(b + n, 0x29, 400, 2);
+  n += putRec(b + n, 0x2A, 0, 2);
+  n += putRec(b + n, 0x60, 0, 1);
+  n += putRec(b + n, 0x61, 10, 1);
+  n += putNavRef(b + n, -90000000, 180000000);
+  n += putRec(b + n, 0x63, 720, 2);
+  n += putRec(b + n, 0x64, 5, 1);
+  n += putRec(b + n, 0x65, 40, 1);
+  n += putRec(b + n, 0x66, 200, 1);
+  n += putRec(b + n, 0x67, 1, 1);
+  n += putRec(b + n, 0x68, 50, 2);
+  n += putRec(b + n, 0x69, 2000, 2);
+  n += putRec(b + n, 0x6A, 1, 2);
+  GaiaConfig c;
+  TEST_ASSERT_TRUE(tlvApply(c, b, n));
+  TEST_ASSERT_EQUAL(400, c.co2TriggerPpm);
+  TEST_ASSERT_EQUAL(200, c.navStartDegS);
+  TEST_ASSERT_EQUAL_INT32(180000000, c.navRefLonE6);
+  n = 0;
+  n += putRec(b + n, 0x29, 10000, 2);
+  n += putRec(b + n, 0x2A, 2000, 2);
+  n += putRec(b + n, 0x60, 2, 1);
+  n += putRec(b + n, 0x61, 200, 1);
+  n += putNavRef(b + n, 90000000, -180000000);
+  n += putRec(b + n, 0x63, 1, 2);
+  n += putRec(b + n, 0x64, 90, 1);
+  n += putRec(b + n, 0x65, 10, 1);
+  n += putRec(b + n, 0x66, 100, 1);  // keeps stop(1) < start
+  n += putRec(b + n, 0x67, 99, 1);
+  n += putRec(b + n, 0x68, 5000, 2);
+  n += putRec(b + n, 0x69, 1000, 2);
+  n += putRec(b + n, 0x6A, 999, 2);
+  TEST_ASSERT_TRUE(tlvApply(c, b, n));
+  TEST_ASSERT_EQUAL(10000, c.co2TriggerPpm);
+  TEST_ASSERT_EQUAL_INT32(-180000000, c.navRefLonE6);
+  TEST_ASSERT_EQUAL(5000, c.navStopMs);
+}
+
+void test_nav_registers_reject_wrong_length() {
+  uint8_t b[16];
+  // NavRef must be exactly 8 bytes.
+  b[0] = 0x62;
+  b[1] = 4;
+  std::memset(b + 2, 0, 14);
+  assertRejected(b, 6);
+  b[1] = 9;
+  assertRejected(b, 11);
+  // u16 registers with 1 or 4 bytes; u8 registers with 2 bytes.
+  size_t n = putRec(b, 0x29, 1200, 1);
+  assertRejected(b, n);
+  n = putRec(b, 0x68, 420, 4);
+  assertRejected(b, n);
+  n = putRec(b, 0x60, 1, 2);
+  assertRejected(b, n);
+  n = putRec(b, 0x6A, 5, 1);
+  assertRejected(b, n);
+}
+
+void test_nav_cross_rule_start_stop() {
+  uint8_t b[16];
+  size_t n = putRec(b, 0x67, 20, 1);  // stop == default start (20)
+  assertRejected(b, n);
+  n = putRec(b, 0x66, 5, 1);  // start == default stop (5)
+  assertRejected(b, n);
+  n = putRec(b, 0x66, 4, 1);  // start below default stop
+  assertRejected(b, n);
+  n = putRec(b, 0x69, 5, 2);  // joyStart == default joyStop
+  assertRejected(b, n);
+  n = putRec(b, 0x6A, 10, 2);  // joyStop == default joyStart
+  assertRejected(b, n);
+  // Whole write rejected, including the otherwise valid first record.
+  uint8_t w[32];
+  n = 0;
+  n += putRec(w + n, 0x68, 999, 2);
+  n += putRec(w + n, 0x66, 3, 1);
+  assertRejected(w, n);
+}
+
+void test_nav_cross_rule_pair_changed_together() {
+  GaiaConfig c;  // default start 20 / stop 5
+  uint8_t b[32];
+  size_t n = 0;
+  // Raising stop above the old start is fine when start rises in the same write.
+  n += putRec(b + n, 0x67, 30, 1);
+  n += putRec(b + n, 0x66, 40, 1);
+  n += putRec(b + n, 0x6A, 15, 2);
+  n += putRec(b + n, 0x69, 25, 2);
+  TEST_ASSERT_TRUE(tlvApply(c, b, n));
+  TEST_ASSERT_EQUAL(30, c.navStopDegS);
+  TEST_ASSERT_EQUAL(40, c.navStartDegS);
+  TEST_ASSERT_EQUAL(15, c.joyStopDegSX10);
+  TEST_ASSERT_EQUAL(25, c.joyStartDegSX10);
+  // Lowering start below the old stop is fine when stop drops in the same write.
+  GaiaConfig d;
+  d.navStopDegS = 10;
+  d.navStartDegS = 20;
+  n = 0;
+  n += putRec(b + n, 0x66, 4, 1);
+  n += putRec(b + n, 0x67, 2, 1);
+  TEST_ASSERT_TRUE(tlvApply(d, b, n));
+  TEST_ASSERT_EQUAL(4, d.navStartDegS);
+  TEST_ASSERT_EQUAL(2, d.navStopDegS);
+  // Order of records does not matter: the rule is on the resulting state.
+  GaiaConfig e;
+  n = 0;
+  n += putRec(b + n, 0x66, 60, 1);
+  n += putRec(b + n, 0x67, 50, 1);
+  TEST_ASSERT_TRUE(tlvApply(e, b, n));
+  // Duplicates: only the last value of each id counts.
+  GaiaConfig f;
+  n = 0;
+  n += putRec(b + n, 0x67, 50, 1);  // transiently stop > start
+  n += putRec(b + n, 0x66, 60, 1);
+  n += putRec(b + n, 0x67, 5, 1);
+  TEST_ASSERT_TRUE(tlvApply(f, b, n));
+  TEST_ASSERT_EQUAL(5, f.navStopDegS);
+  TEST_ASSERT_EQUAL(60, f.navStartDegS);
+}
+
+void test_nav_lenient_restores_invariants() {
+  uint8_t b[32];
+  size_t n = 0;
+  n += putRec(b + n, 0x66, 5, 1);  // start 5
+  n += putRec(b + n, 0x67, 50, 1);  // stop 50 -> violates
+  n += putRec(b + n, 0x69, 7, 2);
+  n += putRec(b + n, 0x6A, 7, 2);  // equal -> violates
+  n += putRec(b + n, 0x68, 777, 2);  // unrelated, must survive
+  GaiaConfig c;
+  const size_t applied = tlvApplyLenient(c, b, n);
+  TEST_ASSERT_EQUAL(5, applied);
+  const GaiaConfig d;
+  TEST_ASSERT_EQUAL(d.navStartDegS, c.navStartDegS);
+  TEST_ASSERT_EQUAL(d.navStopDegS, c.navStopDegS);
+  TEST_ASSERT_EQUAL(d.joyStartDegSX10, c.joyStartDegSX10);
+  TEST_ASSERT_EQUAL(d.joyStopDegSX10, c.joyStopDegSX10);
+  TEST_ASSERT_EQUAL(777, c.navStopMs);
+  // A valid loaded pair is kept.
+  n = 0;
+  n += putRec(b + n, 0x66, 90, 1);
+  n += putRec(b + n, 0x67, 30, 1);
+  GaiaConfig g;
+  tlvApplyLenient(g, b, n);
+  TEST_ASSERT_EQUAL(90, g.navStartDegS);
+  TEST_ASSERT_EQUAL(30, g.navStopDegS);
+  // An old blob without any nav record loads with the defaults.
+  GaiaConfig h;
+  tlvApplyLenient(h, nullptr, 0);
+  TEST_ASSERT_EQUAL(20, h.navStartDegS);
+}
+
+void test_nav_lenient_skips_bad_navref() {
+  uint8_t b[16];
+  size_t n = putNavRef(b, 95000000, 0);  // out of range: skipped, defaults kept
+  GaiaConfig c;
+  TEST_ASSERT_EQUAL(0, tlvApplyLenient(c, b, n));
+  TEST_ASSERT_EQUAL_INT32(-22905556, c.navRefLatE6);
+  n = putNavRef(b, 10000000, 20000000);
+  TEST_ASSERT_EQUAL(1, tlvApplyLenient(c, b, n));
+  TEST_ASSERT_EQUAL_INT32(10000000, c.navRefLatE6);
+  TEST_ASSERT_EQUAL_INT32(20000000, c.navRefLonE6);
+}
+
+void test_default_serialized_length_fits_buffer() {
+  GaiaConfig c;
+  uint8_t buf[384];
+  const size_t n = tlvSerialize(c, buf, sizeof buf);
+  TEST_ASSERT_TRUE(n > 0);
+  TEST_ASSERT_TRUE(n <= 384);
+  TEST_ASSERT_TRUE(n + 3 <= 384);  // status record 0x35 is appended after it
+  printf("default serialized config: %u bytes\n", (unsigned)n);
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_status_byte_encodes_boot_selection_and_found);
@@ -601,5 +959,17 @@ int main(int, char **) {
   RUN_TEST(test_imu_fusion_registers_reject_out_of_range);
   RUN_TEST(test_mag_calibration_roundtrip);
   RUN_TEST(test_mag_calibration_rejects_bad_length_and_singular_matrix);
+  RUN_TEST(test_nav_defaults);
+  RUN_TEST(test_nav_registers_serialize_defaults);
+  RUN_TEST(test_nav_registers_roundtrip_every_id);
+  RUN_TEST(test_nav_ref_wire_bytes);
+  RUN_TEST(test_nav_registers_reject_out_of_range);
+  RUN_TEST(test_nav_registers_accept_boundaries);
+  RUN_TEST(test_nav_registers_reject_wrong_length);
+  RUN_TEST(test_nav_cross_rule_start_stop);
+  RUN_TEST(test_nav_cross_rule_pair_changed_together);
+  RUN_TEST(test_nav_lenient_restores_invariants);
+  RUN_TEST(test_nav_lenient_skips_bad_navref);
+  RUN_TEST(test_default_serialized_length_fits_buffer);
   return UNITY_END();
 }

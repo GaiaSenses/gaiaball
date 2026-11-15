@@ -82,4 +82,51 @@ MagChunkPacket makeMagChunkPacket(uint16_t seq, uint32_t tMs, const int16_t *sam
   return p;
 }
 
+NavPacket makeNavPacket(uint16_t seq, uint32_t tUs, uint8_t mode, uint8_t flags, int32_t latE7,
+                        int32_t lonE7, int16_t bearingX100, uint16_t speedDegSX10) {
+  NavPacket p{};
+  p.version = kProtocolVersion;
+  p.type = kTypeNav;
+  p.seq = seq;
+  p.timestampUs = tUs;
+  p.mode = mode;
+  p.flags = flags;
+  p.latE7 = latE7;
+  p.lonE7 = lonE7;
+  p.bearingX100 = bearingX100;
+  p.speedDegSX10 = speedDegSX10;
+  return p;
+}
+
+// Wraps degrees into (-180, 180]. Done in double: float deg x 1e7 would not survive.
+static double wrap180(double deg) {
+  double w = fmod(deg, 360.0);
+  if (w > 180.0) w -= 360.0;
+  if (w <= -180.0) w += 360.0;
+  return w;
+}
+
+int32_t navLatE7(float deg) {
+  if (!isfinite(deg)) return 0;
+  if (deg >= 90.0f) return 900000000;
+  if (deg <= -90.0f) return -900000000;
+  return static_cast<int32_t>(llround(static_cast<double>(deg) * 1e7));
+}
+
+int32_t navLonE7(float deg) {
+  if (!isfinite(deg)) return 0;
+  return static_cast<int32_t>(llround(wrap180(deg) * 1e7));
+}
+
+int16_t navBearingX100(float deg) {
+  if (!isfinite(deg)) return 0;
+  return static_cast<int16_t>(llround(wrap180(deg) * 100.0));
+}
+
+uint16_t navSpeedX10(float degS) {
+  if (isnan(degS)) return 0;
+  if (degS >= 6553.5f) return 0xFFFF;  // also +inf
+  return encodeU16(degS * 10.0f);
+}
+
 }  // namespace gaia

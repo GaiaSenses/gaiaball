@@ -97,7 +97,7 @@ cross-check lives in [docs/hardware-pinout.md](docs/hardware-pinout.md).
 
 | Function | GPIO | Notes |
 |---|---|---|
-| IMU I2C SDA | 21 | GY-91 module (MPU-9250 + AK8963 + BMP280), 400 kHz, AD0/SDO low (board header U1) |
+| IMU I2C SDA | 21 | IMU module: GY-ICM20948V2 (ICM-20948 + AK09916) or GY-91 (MPU-9250 + AK8963 + BMP280), 400 kHz, AD0/SDO low (board header U1) |
 | IMU I2C SCL | 22 | |
 | I2S WS (LRCLK) | 25 | two INMP441 (L/R), 16 kHz, 32-bit stereo (board M1/M2) |
 | I2S SCK (BCLK) | 26 | |
@@ -122,13 +122,22 @@ config write that lands both LED functions on the same GPIO is rejected atomical
 
 - Advertises as **`Globo_1`** (config TLV `0x40`, applied after reboot); accepts two
   simultaneous centrals.
-- IMU packets at `imuNotifyHz` (default 50 Hz, configurable 10–200 Hz — the MPU-9250
-  sample rate follows), **each one carrying the microphone envelope** (RMS and peak per
+- IMU packets at `imuNotifyHz` (default 50 Hz, configurable 10–200 Hz — the sample rate
+  of the selected IMU, ICM-20948 or MPU-9250, follows), **each one carrying the microphone envelope** (RMS and peak per
   channel, in dBFS); CO2 packets on every ppm/flag change plus a 1 Hz keepalive;
   diagnostics at 1 Hz; live sensor levels (SensorsPacket) at 5 Hz; and raw decimated
   audio (2 kHz int16, for the config-app's frontend FFT) at ~21 pkt/s on the diag
   characteristic **only while `audioRawStream` (TLV `0x1F`) is on — off by default**.
   Notifications are only sent to subscribers. See [BLE byte budget](#ble-byte-budget).
+- **Globe navigation** is computed on the ball (`src/logic/NavEngine.*`): mirror (the
+  globe is the orientation) or joystick (the tilt steers the globe), with a
+  moving/settled state machine, sent as a 22-byte NavPacket on its own characteristic
+  (`19b10006-…`, optional for clients) every N IMU samples,
+  N = max(1, round(`imuNotifyHz` / `navNotifyHz`)), plus a 1 Hz `valid = 0` keepalive
+  when navigation is off or the IMU is silent for more than 500 ms. Frames, laws and
+  resets: [`docs/protocol.md`](docs/protocol.md#navpacket-22-bytes-type-0x07-own-characteristic).
+  The zero (`0x10`) is not persisted across power cycles. The CO2 packet also carries a
+  `trigger` flag (TLV `0x29`/`0x2A`, level with hysteresis).
 - On every connect the firmware requests a **7.5–15 ms connection interval** (0 latency,
   4 s supervision timeout). This is what makes rates above ~60 Hz reachable at all: a
   notification can only leave inside a connection event, so the ceiling is (packets per
@@ -200,6 +209,19 @@ Default configuration (`imuNotifyHz` = 50, raw stream off):
 | 5 | `double` → `float` in the RMS accumulators | 0 | 0 | 0 | **−1.7 % of a core** (the LX6 FPU is single-precision; every double op was emulated) |
 | | **Total** | ImuPacket 23 → 31 B, DiagPacket 32 → 34 B | **−3931 B/s (−70 %)** | **−42.2 ms (−49 %)** | ≈ −1.8 % of one core |
 
+### Globe navigation (v9): the NavPacket
+
+The NavPacket is a packet of its own (own characteristic), so it pays the full per-slot
+cost: 22 B payload, `(22 + 17) x 8 + 80 + 300` = **692 µs** per notification. At the
+default `navNotifyHz` = 50 (N = 1 at `imuNotifyHz` = 50) that is
+50 x 22 = **1100 B/s** and 50 x 692 µs = **34.6 ms/s** of air time, +50 packets/s. It is
+sent only while a central subscribes to `…0006`, and the rate does not depend on
+`imuNotifyHz`: at 100 or 200 Hz the divisor is 2 or 4 and the nav stream stays at 50 Hz.
+The 1 Hz keepalive (navigation off or IMU silent) is 22 B/s and 0.7 ms/s. The Co2Packet
+trigger flag is one bit of an existing byte: 0 extra bytes.
+
+These figures are arithmetic from the formula above, **not measured on hardware**.
+
 Item 1 and item 2 together are the 8 bytes appended to the ImuPacket; they are listed
 apart because they answer different questions (energy over a window vs. the transient
 inside it), and because only the peak needed new per-sample work.
@@ -213,8 +235,13 @@ inside it), and because only the peak needed new per-sample work.
 | v8 at 100 Hz, stream off | 107 | 3261 B/s | 81.3 ms/s | 8.1 % |
 | v8 at 200 Hz, stream off | 207 | 6361 B/s | 157.7 ms/s | 15.8 % |
 | v8 at 100 Hz while tuning (stream on) | 128 | 7594 B/s | 126.7 ms/s | 12.7 % |
+| **v9 default (50 Hz, stream off, nav 50 Hz)** | **107** | **2811 B/s** | **77.7 ms/s** | **7.8 %** |
+| v9 at 100 Hz, stream off, nav 50 Hz | 157 | 4361 B/s | 115.9 ms/s | 11.6 % |
+| v9 at 200 Hz, stream off, nav 50 Hz | 257 | 7461 B/s | 192.3 ms/s | 19.2 % |
+| v9 at 100 Hz while tuning (stream on, nav 50 Hz) | 178 | 8694 B/s | 161.3 ms/s | 16.1 % |
 
-Breakdown of the v8 default, per packet type:
+The v9 rows are the v8 rows plus the NavPacket at 50 Hz (+50 packets/s, +1100 B/s,
++34.6 ms/s). Breakdown of the v9 default (v8 plus the NavPacket row), per packet type:
 
 | Packet | Payload | Rate | Payload/s | Air time/s |
 |---|---|---|---|---|
@@ -222,8 +249,9 @@ Breakdown of the v8 default, per packet type:
 | SensorsPacket (threshold, pot, health) | 23 B | 5 Hz | 115 B/s | 3.5 ms |
 | DiagPacket | 34 B | 1 Hz | 34 B/s | 0.8 ms |
 | Co2Packet | 12 B | 1 Hz | 12 B/s | 0.6 ms |
+| NavPacket (v9, own characteristic) | 22 B | 50 Hz | 1100 B/s | 34.6 ms |
 | AudioChunkPacket (opt-in) | 208 B | 0 (20.8 Hz when on) | 0 (4333 B/s) | 0 (45.4 ms) |
-| **Total** | | | **1711 B/s** | **43.1 ms** |
+| **Total (v8 was 1711 B/s, 43.1 ms)** | | | **2811 B/s** | **77.7 ms** |
 
 ### Why the spectrum is not computed here
 
@@ -419,7 +447,7 @@ persisted only by command `0x11`. Full table with types: [`docs/protocol.md`](do
 | id | field | default |
 |---|---|---|
 | `0x01` | orientationMode (0 Quat6 relative, 1 Quat9) | 0 |
-| `0x02` | imuNotifyHz (10–200; drives the MPU-9250 sample rate live) | 50 |
+| `0x02` | imuNotifyHz (10–200; drives the selected IMU's sample rate live) | 50 |
 | `0x03` | slerpAmount (0–100, 0 off; used when quatSmoothMode = 1) | 0 |
 | `0x04` | accelLpAlphaX1000 (0 off) | 0 |
 | `0x05` | imuDlpfMode (0 = auto from the rate; 1–7 force DLPF_CFG) | 0 |
@@ -436,10 +464,20 @@ persisted only by command `0x11`. Full table with types: [`docs/protocol.md`](do
 | `0x1B` | potEmaAlphaX1000 | 300 |
 | `0x20`, `0x22`–`0x26` | CO2: enabled, stale timeout, virtual peak/delay/hold, raw log | 1, 5000, 2100, 1000, 17000, 0 |
 | `0x28` | co2EmaAlphaX1000 (1000 = off) | 1000 |
+| `0x29`–`0x2A` | CO2 trigger flag: co2TriggerPpm (400–10000), co2TriggerHystPpm (0–2000) | 1200, 50 |
 | `0x30`–`0x32` | sound LED pin, CO2 LED pin (pins distinct), co2AlertPpm | 2, 4, 2000 |
+| `0x34` | imuChip (0 unconfigured / IMU off, 1 ICM-20948, 2 GY-91 / MPU-9250; reboot to apply) | 0 |
+| `0x35` | imuDetected — **read-only**, appended on config reads; never write it | — |
+| `0x36` | magAxisRemap (0–23, applied live; changing it invalidates a `0x1E` calibration) | 8 |
 | `0x40` | bleName (≤16 chars) | `Globo_1` |
 | `0x41` | PIN (4 ASCII digits, write-only) | `1234` |
 | `0x50` | serialLogEnabled | 0 |
+| `0x60` | navMode (0 off, 1 mirror, 2 joystick; a change resets the globe) | 1 |
+| `0x61` | navNotifyHz (10–200) | 50 |
+| `0x62` | navRef — 8 bytes: i32 lat ×1e6, i32 lon ×1e6 (a change resets the globe) | −22905556, −47060833 (Campinas) |
+| `0x63`–`0x65` | joystick: joyMaxSpeedDegS (1–720), joyFullAngleDeg (5–90), joyCurveX10 (10–40) | 90, 60, 30 |
+| `0x66`–`0x68` | mirror settle: navStartDegS (1–200), navStopDegS (1–100, < start), navStopMs (50–5000) | 20, 5, 420 |
+| `0x69`–`0x6A` | joystick settle: joyStartDegSX10 (1–2000), joyStopDegSX10 (1–2000, < start) | 10, 5 |
 
 Reserved ids (removed, never reused): `0x21` (ex co2ChecksumVariant), `0x27`
 (ex co2Protocol) — gone since the SC8-CO2-5K datasheet fixed the frame format —

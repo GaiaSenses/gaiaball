@@ -23,7 +23,8 @@ bool tlvApply(GaiaConfig &cfg, const uint8_t *data, size_t len);
 // Stops at a truncated record. The PIN record (0x41) is never applied — the PIN is
 // persisted under its own NVS key. After the pass the cross-field invariants are
 // re-established by restoring the affected fields' defaults (distinct LED pins,
-// lpHz > hpHz). Returns the number of records applied.
+// lpHz > hpHz, navStopDegS < navStartDegS, joyStopDegSX10 < joyStartDegSX10).
+// Returns the number of records applied.
 size_t tlvApplyLenient(GaiaConfig &cfg, const uint8_t *data, size_t len);
 
 }  // namespace gaia

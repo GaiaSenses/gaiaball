@@ -17,6 +17,9 @@ enum class PacketType : uint8_t {
   MagChunk = 0x06,    // raw magnetometer capture for calibration; diag characteristic
 };
 
+// Packet type of the navigation packet (own characteristic, see NavPacket).
+constexpr uint8_t kTypeNav = 0x07;
+
 // ImuPacket.flags
 constexpr uint8_t kImuQuatValid = 1u << 0;
 constexpr uint8_t kImuNineAxis = 1u << 1;
@@ -27,6 +30,12 @@ constexpr uint8_t kImuAudioValid = 1u << 3;  // the appended microphone levels a
 constexpr uint8_t kCo2Valid = 1u << 0;
 constexpr uint8_t kCo2Stale = 1u << 1;
 constexpr uint8_t kCo2VirtualActive = 1u << 2;
+constexpr uint8_t kCo2Trigger = 1u << 3;  // ppm crossed the configured trigger level (with hysteresis)
+
+// NavPacket.flags
+constexpr uint8_t kNavValid = 1u << 0;    // pose is live (orientation valid)
+constexpr uint8_t kNavSettled = 1u << 1;  // motion state machine says the globe is at rest
+constexpr uint8_t kNavMoving = 1u << 2;   // instantaneous: speed above the stop threshold
 
 // DiagPacket.flags
 constexpr uint8_t kDiagImuOk = 1u << 0;
@@ -144,7 +153,7 @@ struct __attribute__((packed)) SensorsPacket {
 // Decimated RAW audio for the config-app's spectrum analyzer (the FFT runs in the
 // frontend). Mono mix (L+R)/2, DC-removed, 16 kHz -> 2 kHz by average-of-8, int16
 // (top 16 bits of the 24-bit samples). 96 samples = 48 ms per packet (~21 pkt/s,
-// ~4.4 kB/s). hpHz/lpHz echo the configured band-pass so the UI can draw the
+// ~4.3 kB/s (208 B × 20.8/s)). hpHz/lpHz echo the configured band-pass so the UI can draw the
 // cutoffs without a config read. Needs MTU >= 211.
 struct __attribute__((packed)) AudioChunkPacket {
   uint8_t version, type;
@@ -157,11 +166,28 @@ struct __attribute__((packed)) AudioChunkPacket {
   int16_t samples[96];
 };
 
+// Globe-navigation pose, notified on its own characteristic (19b10006-...). mode: 0 off,
+// 1 mirror, 2 joystick. Position is degrees x 1e7 (lat -90..90, lon (-180,180]); bearing
+// is the Mapbox convention (degrees clockwise from north of the screen-up direction) x 100
+// in (-180,180]; speed is the globe angular speed in deg/s x 10. Needs MTU >= 25
+// (22-byte payload + 3-byte ATT header).
+struct __attribute__((packed)) NavPacket {
+  uint8_t version, type;
+  uint16_t seq;
+  uint32_t timestampUs;
+  uint8_t mode;
+  uint8_t flags;
+  int32_t latE7, lonE7;
+  int16_t bearingX100;
+  uint16_t speedDegSX10;
+};
+
 static_assert(sizeof(ImuPacket) == 31, "ImuPacket size");
 static_assert(sizeof(Co2Packet) == 12, "Co2Packet size");
 static_assert(sizeof(DiagPacket) == 34, "DiagPacket size");
 static_assert(sizeof(SensorsPacket) == 23, "SensorsPacket size");
 static_assert(sizeof(AudioChunkPacket) == 208, "AudioChunkPacket size");
 static_assert(sizeof(MagChunkPacket) == 106, "MagChunkPacket size");
+static_assert(sizeof(NavPacket) == 22, "NavPacket size");
 
 }  // namespace gaia

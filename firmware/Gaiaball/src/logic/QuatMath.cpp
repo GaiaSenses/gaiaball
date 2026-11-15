@@ -1,4 +1,5 @@
 #include "QuatMath.h"
+#include <math.h>
 #include <cmath>
 
 namespace gaia {
@@ -47,6 +48,48 @@ float quatAngleDeg(const Quat &a, const Quat &b) {
   float dot = std::fabs(a.w * b.w + a.x * b.x + a.y * b.y + a.z * b.z);
   dot = clampf(dot, 0.f, 1.f);
   return (float)(2.0 * std::acos((double)dot) * kRadToDeg);
+}
+
+Quat quatNormalize(const Quat &q) {
+  const float n = sqrtf(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
+  if (!(n > 1e-12f) || !std::isfinite(n)) return Quat{1.f, 0.f, 0.f, 0.f};
+  const float inv = 1.f / n;
+  return Quat{q.w * inv, q.x * inv, q.y * inv, q.z * inv};
+}
+
+void quatRotateVector(const Quat &q, const float v[3], float out[3]) {
+  // v' = v + w t + u x t, with u = (x, y, z) and t = 2 (u x v).
+  const float vx = v[0], vy = v[1], vz = v[2];
+  const float tx = 2.f * (q.y * vz - q.z * vy);
+  const float ty = 2.f * (q.z * vx - q.x * vz);
+  const float tz = 2.f * (q.x * vy - q.y * vx);
+  out[0] = vx + q.w * tx + (q.y * tz - q.z * ty);
+  out[1] = vy + q.w * ty + (q.z * tx - q.x * tz);
+  out[2] = vz + q.w * tz + (q.x * ty - q.y * tx);
+}
+
+Quat quatFromAxisAngle(const float axis[3], float angleRad) {
+  const float n = sqrtf(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+  if (!(n > 1e-12f)) return Quat{1.f, 0.f, 0.f, 0.f};
+  const float s = sinf(0.5f * angleRad) / n;
+  return Quat{cosf(0.5f * angleRad), axis[0] * s, axis[1] * s, axis[2] * s};
+}
+
+void quatToAxisAngle(const Quat &q, float axis[3], float &angleRad) {
+  const float sgn = q.w < 0.f ? -1.f : 1.f;  // shortest path: q and -q agree
+  const float w = sgn * q.w, x = sgn * q.x, y = sgn * q.y, z = sgn * q.z;
+  const float n = sqrtf(x * x + y * y + z * z);
+  if (!(n > 1e-12f)) {
+    axis[0] = 1.f;
+    axis[1] = 0.f;
+    axis[2] = 0.f;
+    angleRad = 0.f;
+    return;
+  }
+  axis[0] = x / n;
+  axis[1] = y / n;
+  axis[2] = z / n;
+  angleRad = 2.f * atan2f(n, w);
 }
 
 void quatToEulerLegacy(const Quat &q, float &rollDeg, float &pitchDeg, float &yawDeg) {
