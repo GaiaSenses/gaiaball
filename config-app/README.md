@@ -67,8 +67,12 @@ campo aparece (`GOVERNORS` em `src/panels/config-panel.ts`):
 O painel "Sensores em tempo real" mostra o valor atual de cada sensor com a unidade
 correta e, abaixo, gráficos de linha empilhados verticalmente que **compartilham o
 mesmo eixo X (tempo, em segundos)**, cada gráfico com uma cor própria. Cada cartão tem o
-fundo na cor da sua linha nos gráficos; orientação, potenciômetro e microfones aparecem
-em números inteiros.
+fundo na cor da sua linha nos gráficos. Os cartões dos **microfones** mostram o RMS e o
+pico lado a lado, em dBFS inteiros, sobre um medidor de −90 a 0 dBFS: a barra é o RMS
+(média de 20 ms) e o traço é o pico (a amostra mais alta), e o desenho ao lado de cada
+rótulo repete a parte do medidor que ele nomeia. O cartão do **potenciômetro** mostra a
+posição (%) e a sensibilidade correspondente (−60 a 0 dBFS) numa trilha de fader, e diz se
+o botão está em uso pelo detector. A orientação também aparece em números inteiros.
 
 - **Janela:** 5, 10, 30 ou 60 s (padrão 10), escolhida acima dos gráficos. Os últimos 60 s
   ficam sempre guardados, então trocar para uma janela maior já mostra o passado.
@@ -89,7 +93,7 @@ em números inteiros.
 | Aceleração (IMU) | mg | já chega em milli-g no pacote de movimento v2 (1000 mg = 1 g; fundo de escala ±4 g = ±4000 mg) |
 | Microfones esq./dir. (INMP441) | dBFS (AES17), em dB inteiros no cartão | **RMS e pico medidos no firmware** (janela de 20 ms; o pico amostrado no 16 kHz cheio) em passos de 0,5 dB (1 byte cada) e enviados em cada pacote de orientação — ou seja, na taxa de orientação, não a 5 Hz. 0 dBFS do RMS = seno de fundo de escala (AES17); 0 dBFS do pico = amostra de fundo de escala, 3,01 dB abaixo para a mesma senoide. |
 | CO₂ (SC8-CO2-5K) | ppm | o sensor emite 1 quadro/s sozinho por UART (9600 8N1); o firmware só escuta, nunca transmite (uma consulta pararia o fluxo do sensor). EMA opcional, TLV `0x28`. O pacote de CO₂ também traz o bit de **gatilho** (nível `0x29` com histerese `0x2A`) |
-| Potenciômetro | % do curso | ADC filtrado 0–4095 → 0–100 % (o limiar em dBFS aparece no cartão e como linha contínua nos gráficos da medida ativa: RMS nos dos microfones, pico no "Pico por canal") |
+| Potenciômetro | % do curso e dBFS | ADC filtrado 0–4095 → 0–100 % e −60…0 dBFS (a sensibilidade que o botão dá; o limiar efetivo aparece como linha contínua nos gráficos da medida ativa: RMS nos dos microfones, pico no "Pico por canal") |
 
 O nível efetivo de disparo do detector, o potenciômetro e as flags de saúde chegam num pacote
 próprio (`SensorsPacket`, 5 Hz, na característica de diagnóstico — ver

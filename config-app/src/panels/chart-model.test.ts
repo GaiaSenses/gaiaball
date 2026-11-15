@@ -4,6 +4,7 @@ import {
   HISTORY_S,
   MAX_DRAWN_POINTS,
   firstIndexAtOrAfter,
+  levelFraction,
   minMaxDecimate,
   SampleQueue,
   co2Range,
@@ -105,5 +106,19 @@ describe('chart history and decimation', () => {
     const r = minMaxDecimate(xs, [null, null, null, null, 3, null, 1, 2], 4);
     expect(r.y[0]).toBeNull();
     expect(r.y.slice(1)).toEqual([3, 1]);
+  });
+});
+
+describe('levelFraction', () => {
+  it('maps -90..0 dBFS onto 0..1 and clamps outside it', () => {
+    expect(levelFraction(-90)).toBe(0);
+    expect(levelFraction(0)).toBe(1);
+    expect(levelFraction(-45)).toBeCloseTo(0.5, 9);
+    expect(levelFraction(-120)).toBe(0);
+    expect(levelFraction(6)).toBe(1);
+    expect(levelFraction(Number.NaN)).toBe(0);
+  });
+  it('takes another floor for the potentiometer travel (-60..0)', () => {
+    expect(levelFraction(-30, -60)).toBeCloseTo(0.5, 9);
   });
 });

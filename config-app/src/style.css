@@ -362,6 +362,70 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
 .sensor-card h3 { margin: 0 0 6px; font-size: 0.8rem; color: var(--muted); }
 .sensor-card p { margin: 0 0 4px; font: 500 0.92rem/1.4 'IBM Plex Mono', monospace; overflow-wrap: break-word; }
 .sensor-card small { color: var(--muted); font-size: 0.72rem; line-height: 1.35; display: block; }
+
+/* Microphone and potentiometer cards: two readings over one meter. The swatch before
+   each label is drawn like the meter part it names (bar = RMS, tick = peak), which is
+   what tells the two numbers apart at a glance. */
+.card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.sensor-card .card-head h3 { margin: 0; }
+.card-state { font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+.card-state[data-tone='danger'] { color: var(--danger); font-weight: 600; }
+.readings { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; margin: 0 0 10px; }
+.reading { min-width: 0; }
+.reading dt { display: flex; align-items: center; gap: 6px; margin: 0 0 2px; font-size: 0.74rem; color: var(--muted); }
+.reading dd { display: flex; align-items: baseline; gap: 4px; margin: 0; }
+.reading-num { font: 500 1.35rem/1.1 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; color: var(--text); }
+.reading-unit { font-size: 0.74rem; color: var(--muted); }
+.reading-rms dt::before { content: ''; flex: none; width: 12px; height: 6px; border-radius: 3px; background: var(--card-tint, var(--accent)); }
+.reading-peak dt::before { content: ''; flex: none; width: 2px; height: 11px; background: var(--text); }
+.meter {
+  position: relative;
+  height: 8px;
+  margin: 0 0 8px;
+  border-radius: 4px;
+  /* Mixed with the line color, not the surface: the empty track must stay visible in the
+     dark theme too, or the peak tick floats in the air. */
+  background: color-mix(in srgb, var(--card-tint, var(--accent)) 30%, var(--line));
+}
+.meter-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 0;
+  border-radius: 4px;
+  background: var(--card-tint, var(--accent));
+  transition: width 0.1s linear;
+}
+.meter-peak {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  left: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+  transition: left 0.1s linear;
+}
+.meter-peak[hidden] { display: none; }
+/* The potentiometer reads as a fader: a cap rides on the end of the fill. */
+.meter-fader { margin-right: 6px; }
+.meter-fader .meter-fill::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: -6px;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: var(--surface);
+  border: 2px solid var(--card-tint, var(--accent));
+  box-sizing: border-box;
+}
+@media (prefers-reduced-motion: reduce) {
+  .meter-fill, .meter-peak { transition: none; }
+}
 .sensor-chart { width: 100%; }
 .sensor-spectrum { width: 100%; margin-bottom: 8px; }
 .spec-title { margin: 16px 0 4px; }

@@ -15,6 +15,7 @@ import { computeSpectrum } from '../metrics/fft.ts';
 import { onThemeChange, resolvedTheme } from '../theme.ts';
 import { quatToEulerLegacy } from '../protocol/euler.ts';
 import {
+  potRawToDbfs,
   rmsToDbfs,
   thresholdToDbfs,
   type AudioChunkSample,
@@ -31,6 +32,7 @@ import {
   SampleQueue,
   WINDOW_OPTIONS_S,
   firstIndexAtOrAfter,
+  levelFraction,
   minMaxDecimate,
   Y_RANGES,
   co2Range,
@@ -103,6 +105,27 @@ const fmt = (v: number, digits = 1): string =>
   v.toLocaleString('pt-BR', { minimumFractionDigits: digits, maximumFractionDigits: digits });
 /** Whole number, never "-0". */
 const fmtInt = (v: number): string => fmt(Math.round(v) + 0, 0);
+/** Whole dBFS with a typographic minus sign (U+2212), so the digits line up in the readouts. */
+const fmtDb = (v: number): string => fmtInt(v).replace('-', '\u2212');
+/** Travel of the potentiometer in dBFS (potRawToDbfs maps 0..4095 onto -60..0). */
+const POT_FLOOR_DBFS = -60;
+/**
+ * A card with two readings and a meter: microphones (RMS bar + peak tick, -90..0 dBFS)
+ * and the potentiometer (travel, as a fader). The swatch before each label is drawn like
+ * the part of the meter it names, so the bar reads as RMS and the tick as peak.
+ */
+const levelCard = (key: string, title: string, a: [string, string, string], b: [string, string, string],
+  note: string, fader = false): string => `
+      <div class="sensor-card level-card" data-el="card-${key}">
+        <div class="card-head"><h3>${title}</h3><span class="card-state" data-el="st-${key}"></span></div>
+        <dl class="readings">
+          <div class="reading reading-${a[0]}"><dt>${a[1]}</dt><dd><span class="reading-num" data-el="${a[0]}-${key}">—</span><span class="reading-unit">${a[2]}</span></dd></div>
+          <div class="reading reading-${b[0]}"><dt>${b[1]}</dt><dd><span class="reading-num" data-el="${b[0]}-${key}">—</span><span class="reading-unit">${b[2]}</span></dd></div>
+        </dl>
+        <div class="meter${fader ? ' meter-fader' : ''}" aria-hidden="true"><span class="meter-fill" data-el="bar-${key}"></span>${fader ? '' : `<span class="meter-peak" data-el="tick-${key}" hidden></span>`}</div>
+        <small>${note}</small>
+      </div>`;
+const MIC_NOTE = 'RMS é a média de 20 ms; pico é a amostra mais alta. Escala de −90 a 0 dBFS.';
 /** Light grey over the parts of the spectrum the band-pass removes. */
 const SHADE: Record<'dark' | 'light', string> = { dark: 'rgba(148, 163, 184, 0.16)', light: 'rgba(100, 116, 139, 0.14)' };
 /** Card tint per sensor: the color of its line in the charts below. */
@@ -124,10 +147,11 @@ export function mountSensorsPanel(
     <div class="sensor-cards">
       <div class="sensor-card" data-el="card-ori"><h3>Orientação (IMU)</h3><p data-el="v-euler">—</p><small>graus (°) · convenção legada roll/pitch/yaw</small></div>
       <div class="sensor-card" data-el="card-acc"><h3>Aceleração (IMU)</h3><p data-el="v-acc">—</p><small>mg · fundo de escala ±4000 mg</small></div>
-      <div class="sensor-card" data-el="card-micl"><h3>Microfone esquerdo</h3><p data-el="v-micl">—</p><small>dBFS (AES17) · RMS e pico</small></div>
-      <div class="sensor-card" data-el="card-micr"><h3>Microfone direito</h3><p data-el="v-micr">—</p><small>dBFS (AES17) · RMS e pico</small></div>
+      ${levelCard('micl', 'Microfone esquerdo', ['rms', 'RMS', 'dBFS'], ['peak', 'Pico', 'dBFS'], MIC_NOTE)}
+      ${levelCard('micr', 'Microfone direito', ['rms', 'RMS', 'dBFS'], ['peak', 'Pico', 'dBFS'], MIC_NOTE)}
       <div class="sensor-card" data-el="card-co2"><h3>CO₂ (SC8)</h3><p data-el="v-co2">—</p><small>ppm · partes por milhão</small></div>
-      <div class="sensor-card" data-el="card-pot"><h3>Potenciômetro</h3><p data-el="v-pot">—</p><small>% do curso (ADC 0–4095) · limiar de sopro em dBFS</small></div>
+      ${levelCard('pot', 'Potenciômetro', ['pos', 'Posição', '%'], ['sens', 'Sensibilidade', 'dBFS'],
+        'O curso inteiro vai de −60 a 0 dBFS de sensibilidade.', true)}
     </div>
     <div class="spec-head">
       <h3 class="spec-title">Espectro do áudio (cru) — ajuste do passa-banda</h3>
@@ -463,17 +487,34 @@ export function mountSensorsPanel(
       const live = imu !== null && imu.audioValid;
       const dbL = live ? imu.audioRmsDbfs[0] : rmsToDbfs(sensors.rmsL);
       const dbR = live ? imu.audioRmsDbfs[1] : rmsToDbfs(sensors.rmsR);
-      const audioNote =
-        (!sensors.audioOk ? ' · falha de I²S' : !sensors.audioEnabled ? ' · detector desativado' : '') +
-        (sensors.audioFiltered ? ' · filtrado (HP/LP)' : ' · cru');
-      const peakNote = (ch: 0 | 1) =>
-        live ? ` · pico ${fmtInt(imu.audioPeakDbfs[ch])} dBFS` : '';
-      q('[data-el=v-micl]').textContent = `${fmtInt(dbL)} dBFS${peakNote(0)}${audioNote}`;
-      q('[data-el=v-micr]').textContent = `${fmtInt(dbR)} dBFS${peakNote(1)}${audioNote}`;
-      const potPct = (sensors.potRaw / 4095) * 100;
-      const thrSrc = sensors.potControls ? 'potenciômetro' : 'fixo';
-      const metric = sensors.metricPeak ? 'pico' : 'RMS';
-      q('[data-el=v-pot]').textContent = `${fmtInt(potPct)} % (bruto ${sensors.potRaw}) · limiar ${fmtInt(thresholdToDbfs(sensors))} dBFS (${metric}, ${thrSrc})`;
+      // Without live levels (fallback sensors packet) there is no peak: "—" and no tick.
+      const setMic = (key: 'micl' | 'micr', rms: number, peak: number | null): void => {
+        q(`[data-el=rms-${key}]`).textContent = fmtDb(rms);
+        q(`[data-el=peak-${key}]`).textContent = peak === null ? '—' : fmtDb(peak);
+        q(`[data-el=bar-${key}]`).style.width = `${levelFraction(rms) * 100}%`;
+        const tick = q(`[data-el=tick-${key}]`);
+        tick.hidden = peak === null;
+        if (peak !== null) tick.style.left = `${levelFraction(peak) * 100}%`;
+      };
+      setMic('micl', dbL, live ? imu.audioPeakDbfs[0] : null);
+      setMic('micr', dbR, live ? imu.audioPeakDbfs[1] : null);
+      const [micState, micTone] = !sensors.audioOk
+        ? ['falha de I²S', 'danger']
+        : sensors.audioFiltered ? ['com passa-banda', ''] : ['sem filtro', ''];
+      for (const key of ['micl', 'micr']) {
+        const st = q(`[data-el=st-${key}]`);
+        st.textContent = micState;
+        st.dataset.tone = micTone;
+      }
+      const potDb = potRawToDbfs(sensors.potRaw);
+      q('[data-el=pos-pot]').textContent = fmtInt((sensors.potRaw / 4095) * 100);
+      q('[data-el=sens-pot]').textContent = fmtDb(potDb);
+      q('[data-el=bar-pot]').style.width = `${levelFraction(potDb, POT_FLOOR_DBFS) * 100}%`;
+      // Whether the knob matters right now: it only sets the sensitivity when it is the
+      // source and the detector is on.
+      q('[data-el=st-pot]').textContent = !sensors.audioEnabled
+        ? 'detector desligado'
+        : sensors.potControls ? 'em uso pelo detector' : 'fora de uso (valor fixo)';
     }
     if (co2) {
       const estado = co2.virtualActive ? 'virtual' : co2.stale ? 'sem leitura (stale)' : co2.valid ? 'real' : 'inválido';
