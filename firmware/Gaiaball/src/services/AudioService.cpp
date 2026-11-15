@@ -227,6 +227,7 @@ void AudioService::taskLoop() {
       breathDirty_ = true;
       detectorPhase_ = 0;
       detecting_ = enabled;
+      breathLatch_.store(false);  // enable/disable restarts the detector: no stale bit 4
     }
 
     // Threshold in dBFS (potentiometer or fixed), converted to counts of the active
@@ -241,6 +242,7 @@ void AudioService::taskLoop() {
 
     if (!enabled) {  // audioEnabled = 0: nothing fires and the state stays 0
       breathRecognized_.store(false);
+      breathLatch_.store(false);  // a packet must not carry bit 4 after audio is disabled
       triggerLevel_.store(detector_.triggerLevel());
       continue;
     }
