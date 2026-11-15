@@ -17,8 +17,9 @@ extern "C" {
 int gb_ws_accept_key(const char *client_key, char out[29]);
 
 typedef enum { GB_HS_NEED_MORE, GB_HS_OK, GB_HS_BAD } gb_hs_result;
-/* Does NOT report consumed bytes: anything after CRLFCRLF in buf is discarded, so the caller must
- * not pipeline frames before the 101 has been sent (clients do not). Needs GET, Upgrade: websocket, Connection: upgrade, Sec-WebSocket-Version: 13 and a key (<= 63 chars,
+/* Does NOT report or consume anything after CRLFCRLF in buf: those bytes are frames from a client
+ * that did not wait for the 101 (browsers do), and the caller may feed them to the frame parser
+ * (gaiaball.c does). Needs GET, Upgrade: websocket, Connection: upgrade, Sec-WebSocket-Version: 13 and a key (<= 63 chars,
  * copied NUL-terminated into key). Origin is ignored. buf need not be NUL-terminated. */
 gb_hs_result gb_ws_parse_request(const char *buf, size_t n, char key[64]);
 /* Return the length written (excluding NUL), or 0 if cap is too small. */

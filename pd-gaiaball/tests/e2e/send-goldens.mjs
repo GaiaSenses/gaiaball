@@ -10,7 +10,8 @@
 //   node pd-gaiaball/tests/e2e/send-goldens.mjs --spawn pd -nogui -stderr \
 //     -path pd-gaiaball -open pd-gaiaball/tests/e2e/listen.pd
 //
-// Options (before --spawn): --port N (default 9478).
+// Options (before --spawn): --port N (default 9478), --control N (default 9479: the
+// [netreceive] in listen.pd; the message "clear" deletes the first [gaiaball]).
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import net from 'node:net';
@@ -21,6 +22,8 @@ const own = spawnAt < 0 ? args : args.slice(0, spawnAt);
 const spawnCmd = spawnAt < 0 ? null : args.slice(spawnAt + 1);
 const portAt = own.indexOf('--port');
 const PORT = portAt < 0 ? 9478 : Number(own[portAt + 1]);
+const controlAt = own.indexOf('--control');
+const CONTROL = controlAt < 0 ? 9479 : Number(own[controlAt + 1]);
 
 const hex = (s) => Buffer.from(s.trim().split(/\s+/).map((b) => parseInt(b, 16)));
 // firmware/docs/protocol.md and config-app/src/protocol/packets.test.ts
@@ -196,7 +199,24 @@ d.sock.end();
 await waitFor(() => d.closed, 2000, 'D: closed');
 ok('D: works after the malformed client; closed without a close frame');
 
-// 7. Pd's side: the reset after closing.
+// 7. One listener per port: delete the first [gaiaball] (FUDI "clear;" to listen.pd's
+// [netreceive]); the second one, which found the port in use, must take it over within ~2 s.
+await new Promise((resolve) => {
+  const s = net.connect(CONTROL, '127.0.0.1', () => s.end('clear;\n'));
+  s.once('close', resolve);
+  s.once('error', (e) => fail(`cannot reach listen.pd's [netreceive ${CONTROL}] (${e.code})`));
+});
+const cleared = Date.now();
+const e = await (await new Client('E').connect({ retryMs: 4000 })).handshake();
+const takeover = Date.now() - cleared;
+if (takeover > 3000) fail(`the second [gaiaball] took ${takeover} ms to take the port over`);
+e.binary(IMU);
+await sleep(200);
+e.send(0x8, Buffer.from([0x03, 0xe8]));
+await waitFor(() => e.closed, 2000, 'E: server closes after the close frame');
+ok(`E: the first [gaiaball] deleted, the second took the port over in ${takeover} ms`);
+
+// 8. Pd's side: the reset after closing.
 await sleep(2200);
 
 if (!pd) {
@@ -211,7 +231,9 @@ WebSocket side OK. In Pd's console (stderr) you should now see, in this order:
   gaia.lat: -22.9056 / gaia.lon: -47.0608 / gaia.speed: 12.3 / gaia.bearing: 45 / gaia.settled: 1
   gaiaball: rate N / gaiaball: gap N (every second while connected)
   gaiaball: connected 0 + gaia.breath: 0 + gaia.co2.trigger: 0 (B's silence), connected 1 again,
-  and the same 0s after each close; no "connected 0" when B replaced A.`);
+  and the same 0s after each close; no "connected 0" when B replaced A.
+  After "clear": "gaiaball: a porta 9478 ficou livre..." then gaiaball2: connected 1,
+  gaia.acc.x: 1000, gaiaball2: connected 0, gaia.breath: 0. "porta 9478 em uso" only once.`);
   process.exit(0);
 }
 
@@ -233,6 +255,8 @@ const expect = [
   'gaiaball: connected 0', 'gaia.breath: 0', // B closed
   'gaiaball: connected 1', 'gaiaball: connected 0', 'gaia.breath: 0', // C refused
   'gaiaball: connected 1', 'gaia.acc.x: 1000', 'gaiaball: connected 0', 'gaia.breath: 0', // D
+  /gaiaball: a porta \d+ ficou livre/, // the second [gaiaball] took the port over
+  'gaiaball2: connected 1', 'gaia.acc.x: 1000', 'gaiaball2: connected 0', 'gaia.breath: 0', // E
 ];
 let i = 0;
 for (const l of lines) {
@@ -246,6 +270,7 @@ if (count('gaiaball: connected 1') !== 4 || count('gaiaball: connected 0') !== 4
   fail(`expected 4x connected 1 and 4x connected 0 (no blip when B replaced A), got ` +
     `${count('gaiaball: connected 1')} and ${count('gaiaball: connected 0')}`);
 ok('status: 4x connected 1 / 4x connected 0 (B replacing A did not disconnect)');
-if (!lines.some((l) => /gaiaball: porta \d+ em uso/.test(l))) fail('the second [gaiaball] did not report its port in use');
-ok('the second [gaiaball] on the same port reported "porta ... em uso"');
+const busy = lines.filter((l) => /gaiaball: porta \d+ em uso/.test(l)).length;
+if (busy !== 1) fail(`expected "porta ... em uso" exactly once (retries are quiet), got ${busy}`);
+ok('the second [gaiaball] reported "porta ... em uso" once, while retrying for the whole run');
 console.log('\nALL OK');

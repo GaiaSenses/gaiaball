@@ -8,6 +8,8 @@
  * - Listens on 127.0.0.1 only; [gaiaball] = port 9478, [gaiaball 9500] = port 9500.
  * - No threads: the sockets are non-blocking and polled by Pd's own loop (sys_addpollfn).
  * - One client at a time: a new connection closes the previous one.
+ * - One listener per port: a [gaiaball] that finds its port in use says so once, retries every
+ *   2 s and takes the port over as soon as the other object is gone (e.g. the help patch closed).
  * - No Origin check (the project's final domain is not known yet). The protection is the
  *   loopback-only bind and Chrome's "Apps neste dispositivo" permission.
  * - Status outlet: "connected 0|1" on change; every second while connected, "rate <packets/s>"
@@ -40,6 +42,7 @@
 #define GB_DEFAULT_PORT 9478
 #define GB_TIMEOUT_MS 2000.
 #define GB_STATS_MS 1000.
+#define GB_RETRY_MS 2000.
 
 #ifdef _WIN32
 typedef SOCKET gb_sock;
@@ -82,9 +85,11 @@ typedef struct _gaiaball {
     t_outlet *x_status;
     t_clock *x_statsclock;   /* every 1000 ms while connected: rate and gap */
     t_clock *x_watchdog;     /* 2000 ms without packets: disconnected */
+    t_clock *x_retryclock;   /* port in use: try the bind again every 2000 ms */
     t_symbol *x_ch[CH_COUNT];
     int x_port;
-    gb_sock x_listen;        /* GB_NOSOCK: the object is inert */
+    int x_busy;              /* the port was in use (already reported once) */
+    gb_sock x_listen;        /* GB_NOSOCK: not listening (bad port, or waiting for it) */
     gb_sock x_client;        /* the one client, GB_NOSOCK if none */
     int x_open;              /* the client got its 101 */
     int x_connected;         /* last state sent on the status outlet */
@@ -278,19 +283,21 @@ static void gaiaball_packet(t_gaiaball *x, const uint8_t *p, size_t n)
 
 /* ---- client ---- */
 
-static void gaiaball_sendframe(t_gaiaball *x, uint8_t opcode, const uint8_t *p, size_t n)
+/* Returns 0 if the frame did not go out whole: the stream to the client would be out of sync. */
+static int gaiaball_sendframe(t_gaiaball *x, uint8_t opcode, const uint8_t *p, size_t n)
 {
     uint8_t out[2 + 125]; /* control frames only: payload <= 125 */
     size_t m = gb_ws_frame(opcode, p, n, out, sizeof out);
-    if (m) gb_send(x->x_client, out, m);
+    return m && gb_send(x->x_client, out, m);
 }
 
+/* Always followed by dropping the client, so a short send needs no extra handling. */
 static void gaiaball_sendclose(t_gaiaball *x, uint16_t code)
 {
     uint8_t c[2];
     c[0] = (uint8_t)(code >> 8);
     c[1] = (uint8_t)code;
-    gaiaball_sendframe(x, 0x8, c, code == 1005 ? 0 : 2); /* 1005 = "no code": empty close */
+    (void)gaiaball_sendframe(x, 0x8, c, code == 1005 ? 0 : 2); /* 1005 = "no code": empty */
 }
 
 /* Close the client socket without touching the status. */
@@ -325,7 +332,11 @@ static int gaiaball_drain(t_gaiaball *x)
             gaiaball_packet(x, x->x_payload, len);
             break;
         case GB_WS_PING:
-            gaiaball_sendframe(x, 0xA, x->x_payload, len);
+            if (!gaiaball_sendframe(x, 0xA, x->x_payload, len))
+            {
+                gaiaball_lost(x); /* short send: drop rather than desynchronise the stream */
+                return 0;
+            }
             break;
         case GB_WS_CLOSE: /* echo the client's code */
         case GB_WS_ERROR: /* the code gb_ws chose: 1002, 1003 or 1009 */
@@ -374,7 +385,8 @@ static void gaiaball_handshake(t_gaiaball *x)
     memset(&x->x_ws, 0, sizeof x->x_ws);
     clock_delay(x->x_watchdog, GB_TIMEOUT_MS);
     gaiaball_setconnected(x, 1);
-        /* bytes after the request: a client that did not wait for the 101 */
+        /* bytes after CRLFCRLF in the same read come from a client that did not wait for
+        the 101: gb_ws_parse_request does not consume them, so they go to the frame parser */
     for (end = 0; end + 4 <= x->x_reqlen; end++)
         if (!memcmp(x->x_req + end, "\r\n\r\n", 4)) break;
     end += 4;
@@ -444,7 +456,9 @@ static void gaiaball_accept(void *z, int fd)
 
 /* ---- class ---- */
 
-static void gaiaball_listen(t_gaiaball *x)
+/* Returns 1 when listening, -1 if the port is in use (worth retrying), 0 on other errors
+ * (reported here). */
+static int gaiaball_trylisten(t_gaiaball *x)
 {
     struct sockaddr_in sa;
     gb_sock s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
@@ -452,7 +466,7 @@ static void gaiaball_listen(t_gaiaball *x)
     if (s == GB_NOSOCK)
     {
         pd_error(x, "gaiaball: não foi possível criar o socket (erro %d)", gb_lasterror());
-        return;
+        return 0;
     }
 #ifndef _WIN32
     {
@@ -471,23 +485,46 @@ static void gaiaball_listen(t_gaiaball *x)
     {
         err = gb_lasterror();
         gb_closesocket(s);
-        if (err == GB_EADDRINUSE)
-            pd_error(x, "gaiaball: porta %d em uso", x->x_port);
-        else pd_error(x, "gaiaball: não foi possível escutar na porta %d (erro %d)",
-            x->x_port, err);
-        return;
+        if (err == GB_EADDRINUSE) return -1;
+        pd_error(x, "gaiaball: não foi possível escutar na porta %d (erro %d)", x->x_port, err);
+        return 0;
     }
     if (listen(s, 4) != 0 || gb_nonblocking(s) != 0)
     {
         err = gb_lasterror();
         gb_closesocket(s);
         pd_error(x, "gaiaball: não foi possível escutar na porta %d (erro %d)", x->x_port, err);
-        return;
+        return 0;
     }
     x->x_listen = s;
     sys_addpollfn((int)s, gaiaball_accept, x);
-    logpost(x, 3 /* PD_DEBUG */, "gaiaball: aguardando a config-app em ws://127.0.0.1:%d",
-        x->x_port);
+    return 1;
+}
+
+/* At creation, and from the retry clock while the port is in use. */
+static void gaiaball_listen(t_gaiaball *x)
+{
+    int r = gaiaball_trylisten(x);
+    if (r < 0)
+    {
+        if (!x->x_busy) /* reported once; the retries are quiet */
+        {
+            pd_error(x, "gaiaball: porta %d em uso", x->x_port);
+            logpost(x, 2 /* PD_NORMAL */, "gaiaball: este objeto assume a porta sozinho quando "
+                "ela ficar livre (por exemplo, ao fechar o outro [gaiaball])");
+        }
+        x->x_busy = 1;
+        clock_delay(x->x_retryclock, GB_RETRY_MS);
+    }
+    else if (r > 0 && x->x_busy)
+    {
+        x->x_busy = 0;
+        logpost(x, 2 /* PD_NORMAL */,
+            "gaiaball: a porta %d ficou livre: este objeto passou a escutar", x->x_port);
+    }
+    else if (r > 0)
+        logpost(x, 3 /* PD_DEBUG */, "gaiaball: aguardando a config-app em ws://127.0.0.1:%d",
+            x->x_port);
 }
 
 static void *gaiaball_new(t_floatarg f)
@@ -497,6 +534,7 @@ static void *gaiaball_new(t_floatarg f)
     x->x_status = outlet_new(&x->x_obj, 0);
     x->x_statsclock = clock_new(x, (t_method)gaiaball_stats);
     x->x_watchdog = clock_new(x, (t_method)gaiaball_timeout);
+    x->x_retryclock = clock_new(x, (t_method)gaiaball_listen);
     for (i = 0; i < CH_COUNT; i++) x->x_ch[i] = gensym(gb_channel_names[i]);
     x->x_listen = x->x_client = GB_NOSOCK;
     if (f != 0 && (f < 1 || f > 65535 || f != (t_float)(int)f))
@@ -513,6 +551,12 @@ static void gaiaball_free(t_gaiaball *x)
 {
     if (x->x_client != GB_NOSOCK && x->x_open) gaiaball_sendclose(x, 1001); /* going away */
     gaiaball_drop(x);
+    if (x->x_connected)
+    {
+            /* deleted mid-breath: no 1 may stay stuck (no status output while freeing) */
+        gb_float(x->x_ch[CH_BREATH], 0);
+        gb_float(x->x_ch[CH_CO2TRIGGER], 0);
+    }
     if (x->x_listen != GB_NOSOCK)
     {
         sys_rmpollfn((int)x->x_listen);
@@ -520,6 +564,7 @@ static void gaiaball_free(t_gaiaball *x)
     }
     clock_free(x->x_statsclock);
     clock_free(x->x_watchdog);
+    clock_free(x->x_retryclock);
 }
 
 void gaiaball_setup(void)

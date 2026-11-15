@@ -47,6 +47,10 @@ funcionando e tem um botão que abre a config-app.
 - `[gaiaball]` escuta na porta 9478, a padrão da config-app.
 - `[gaiaball 9500]` escuta na porta 9500. Nesse caso, mude também a porta na config-app
   (painel Conexão → Pd → Porta).
+- Só um `[gaiaball]` por porta escuta de cada vez. Se já houver outro (por exemplo, o do
+  patch de ajuda), o novo avisa `gaiaball: porta 9478 em uso` uma vez no console e espera:
+  quando o primeiro for apagado ou o patch dele for fechado, o que esperava assume a porta
+  sozinho, em até 2 segundos.
 
 ### 4. Liberar o Chrome (uma vez)
 
@@ -74,7 +78,7 @@ por segundo. Não há zona morta: para ignorar valores repetidos, use `[change]`
 |---|---|---|---|
 | `gaia.lat` | latitude do ponto para onde o globo virtual aponta | −90 a 90 graus (sul negativo) | navegação ativa na bola |
 | `gaia.lon` | longitude desse ponto | −180 a 180 graus (oeste negativo) | navegação ativa |
-| `gaia.speed` | velocidade de giro do globo | 0 a 180 graus/s | navegação ativa |
+| `gaia.speed` | velocidade de giro do globo | graus/s, de 0 para cima: no modo joystick vai até a velocidade máxima configurada na bola (padrão 90, no máximo 720); no modo espelho é a velocidade medida do giro, sem teto fixo | navegação ativa |
 | `gaia.bearing` | rumo do mapa (padrão do Mapbox: sentido horário, a partir do norte) | −180 a 180 graus | navegação ativa |
 | `gaia.settled` | globo parado | 0 ou 1 | navegação ativa |
 | `gaia.acc.x`, `gaia.acc.y`, `gaia.acc.z` | aceleração em cada eixo | −4000 a 4000 mg (1000 mg = 1 g, a gravidade) | todo pacote de movimento |
@@ -113,7 +117,7 @@ mesmo tempo, vale a mais recente. Feche as outras.
 | Sintoma | Causa provável e o que fazer |
 |---|---|
 | O Pd diz `gaiaball ... couldn't create` | o objeto não está instalado ou a pasta não está no caminho do Pd. Instale pelo Deken (passo 1) e confira em Preferências → Caminho. |
-| O console diz `gaiaball: porta 9478 em uso` | outro `[gaiaball]` já escuta nessa porta (por exemplo, em outro patch aberto, ou no patch de ajuda). Use um só. Se for outro programa, escolha outra porta nos dois lados: `[gaiaball 9500]` e a mesma porta na config-app. |
+| O console diz `gaiaball: porta 9478 em uso` | outro `[gaiaball]` já escuta nessa porta (por exemplo, em outro patch aberto, ou no patch de ajuda). Não atrapalha: os `[r gaia.*]` recebem do que está escutando, e o outro assume a porta sozinho quando o primeiro for fechado. Se a porta estiver com outro programa, escolha outra porta nos dois lados: `[gaiaball 9500]` e a mesma porta na config-app. |
 | A config-app mostra "Pd: aguardando" | o Pd não está aberto, não há `[gaiaball]` em nenhum patch aberto, ou as portas são diferentes nos dois lados. |
 | A config-app mostra "Pd: bloqueado pelo Chrome" | a permissão "Apps neste dispositivo" foi negada. Libere como no passo 4 e recarregue a página. |
 | A config-app mostra "Pd: desligado" | a chave Enviar ao Pd está desligada, ou a bola não está conectada. |
@@ -129,6 +133,11 @@ nele pela rede. Ele aceita **qualquer página** que o Chrome autorizar em **Apps
 dispositivo**, porque o endereço definitivo da config-app ainda não foi definido. Por isso,
 **não dê essa permissão a sites que você não conhece**: um site autorizado poderia mandar
 dados falsos ao seu patch.
+
+Um navegador que não pede essa permissão deixa **qualquer página aberta** chegar ao
+objeto. Uma página assim pode mandar dados falsos ou cortar os dados de verdade (uma
+conexão nova substitui a anterior). Por isso, durante uma apresentação, feche as páginas
+que você não conhece.
 
 ## Para quem mantém o projeto
 
@@ -166,10 +175,11 @@ pd -nogui -stderr -path pd-gaiaball -open pd-gaiaball/tests/e2e/listen.pd &
 node pd-gaiaball/tests/e2e/send-goldens.mjs
 ```
 
-O script faz o aperto de mão como o Chrome, manda os pacotes de referência, testa a
-segunda conexão substituindo a primeira, o silêncio de 2 s, o fechamento e um quadro de
-texto (recusado). Com `--spawn`, ele mesmo abre o Pd e confere tudo o que o `listen.pd`
-imprime:
+O script faz o aperto de mão como o Chrome, manda os pacotes de referência e testa: a
+segunda conexão substituindo a primeira, o silêncio de 2 s, o fechamento, um quadro de
+texto (recusado) e, por fim, a troca de objeto: ele apaga o primeiro `[gaiaball]` do
+`listen.pd` (mensagem `clear` pela porta 9479) e confere que o segundo assume a porta.
+Com `--spawn`, ele mesmo abre o Pd e confere tudo o que o `listen.pd` imprime:
 
 ```sh
 node pd-gaiaball/tests/e2e/send-goldens.mjs --spawn pd -nogui -stderr \
