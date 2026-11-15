@@ -435,7 +435,14 @@ export function splitUnknownIds(
   return { send, skipped };
 }
 
-export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, store: PresetStore = new PresetStore()): void {
+/**
+ * Mounts the configuration panel. Returns the container at the end of the Avançado tab,
+ * below its fields, where main.ts places the magnetometer and metrics panels: they are
+ * bench tools, not something the person operating the globe needs to see.
+ */
+export function mountConfigPanel(
+  root: HTMLElement, client: GaiaballClient, store: PresetStore = new PresetStore(),
+): { advancedSections: HTMLElement } {
   root.innerHTML = `
     <h2>Configuração</h2>
     <div class="row">
@@ -447,13 +454,16 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
     <div class="tabs" role="tablist" aria-label="Parâmetros">
       <button type="button" class="tab" role="tab" id="tab-basico" aria-controls="pane-basico" aria-selected="true">Básico</button>
       <button type="button" class="tab" role="tab" id="tab-avancado" aria-controls="pane-avancado" aria-selected="false" tabindex="-1"
-        data-info="Ajustes da cadeia de sinais: faixa e filtro da IMU, ganho e rejeições da fusão, bias do giroscópio, parâmetros da suavização e dos filtros de áudio e CO₂. O número diz quantos parâmetros vivem aqui; o ponto acende quando algum está fora do padrão de fábrica.">Avançado
+        data-info="Ajustes da cadeia de sinais: faixa e filtro da IMU, ganho e rejeições da fusão, bias do giroscópio, parâmetros da suavização e dos filtros de áudio e CO₂. Abaixo deles ficam a calibração do magnetômetro e as métricas do fluxo e do firmware. O número diz quantos parâmetros vivem aqui; o ponto acende quando algum está fora do padrão de fábrica.">Avançado
         <span class="tab-count" data-el="advCount"></span></button>
     </div>
-    <form data-el="form" onsubmit="return false">
-      <div role="tabpanel" id="pane-basico" aria-labelledby="tab-basico" data-el="pane-basico"></div>
-      <div role="tabpanel" id="pane-avancado" aria-labelledby="tab-avancado" data-el="pane-avancado" hidden></div>
-    </form>
+    <div role="tabpanel" id="pane-basico" aria-labelledby="tab-basico" data-el="tab-basico">
+      <form data-el="pane-basico" onsubmit="return false"></form>
+    </div>
+    <div role="tabpanel" id="pane-avancado" aria-labelledby="tab-avancado" data-el="tab-avancado" hidden>
+      <form data-el="pane-avancado" onsubmit="return false"></form>
+      <div class="adv-sections" data-el="adv-sections"></div>
+    </div>
     <h3>Presets</h3>
     <div class="row"><input data-el="pname" type="text" placeholder="Nome do preset" aria-label="Nome do preset" />
       <button type="button" data-act="psave">Salvar preset</button></div>
@@ -489,9 +499,15 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   let potLabel!: HTMLElement;
   let lastSensors: SensorsSample | null = null;
 
+  /** Where each tier's fieldsets go. */
   const panes: Record<Tier, HTMLElement> = {
     basico: q('[data-el=pane-basico]'),
     avancado: q('[data-el=pane-avancado]'),
+  };
+  /** The tab panels themselves: the Avançado one also holds the panels in `adv-sections`. */
+  const tabPanels: Record<Tier, HTMLElement> = {
+    basico: q('[data-el=tab-basico]'),
+    avancado: q('[data-el=tab-avancado]'),
   };
 
   // A group with fields in both tiers appears in both tabs, carrying only the fields of
@@ -792,7 +808,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       const on = t === tier;
       tabs[t].setAttribute('aria-selected', String(on));
       tabs[t].tabIndex = on ? 0 : -1;
-      panes[t].hidden = !on;
+      tabPanels[t].hidden = !on;
     }
   };
   for (const t of ['basico', 'avancado'] as Tier[]) {
@@ -997,4 +1013,5 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   render({ connected: client.connected, name: null });
   // Descriptions under the switches must read right from the first paint, connected or not (also in demo mode).
   refreshDescribe();
+  return { advancedSections: q('[data-el=adv-sections]') };
 }

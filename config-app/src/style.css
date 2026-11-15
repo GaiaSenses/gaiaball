@@ -434,6 +434,16 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
   cursor: pointer;
 }
 .tab:hover { color: var(--text); }
+/* Magnetômetro e Métricas dentro da aba Avançado: blocos no mesmo traço dos fieldsets,
+   sem o cartão (fundo e sombra) que eles tinham quando eram painéis soltos. */
+.adv-sections > section {
+  background: none;
+  box-shadow: none;
+  border-radius: 8px;
+  padding: 10px 12px 12px;
+  margin: 0 0 14px;
+}
+.adv-sections > section > h2 { font-size: 0.92rem; color: var(--accent); }
 .tab[aria-selected='true'] {
   color: var(--text);
   border-bottom-color: var(--accent);

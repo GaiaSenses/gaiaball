@@ -65,8 +65,6 @@ app.innerHTML = `
     <aside id="panels">
       <section id="panel-conexao"></section>
       <section id="panel-config"></section>
-      <section id="panel-magcal"></section>
-      <section id="panel-metricas"></section>
     </aside>
     <section id="panel-sensores"></section>
   </main>`;
@@ -141,7 +139,10 @@ mountPdChip(app.querySelector<HTMLElement>('#pd-chip')!, bridge);
 mountConnectionPanel(app.querySelector<HTMLElement>('#panel-conexao')!, client);
 mountPdBlock(app.querySelector<HTMLElement>('#panel-conexao')!, bridge, pdPrefs, syncPd);
 syncPd();
-mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client);
+const { advancedSections } = mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client);
+// Magnetometer calibration and metrics are bench tools: they live in the Avançado tab,
+// below its fields, instead of under the configuration for everyone to scroll past.
+advancedSections.innerHTML = '<section id="panel-magcal"></section><section id="panel-metricas"></section>';
 const pausable = [
   mountMagCalPanel(app.querySelector<HTMLElement>('#panel-magcal')!, client),
   mountMetricsPanel(app.querySelector<HTMLElement>('#panel-metricas')!, client, stats),
