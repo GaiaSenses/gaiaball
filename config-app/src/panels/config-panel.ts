@@ -469,6 +469,9 @@ export function splitUnknownIds(
   return { send, skipped };
 }
 
+/** Tooltip of the Avançado tab. */
+const ADVANCED_TAB_INFO = 'Ajustes da cadeia de sinais: faixa e filtro da IMU, ganho e rejeições da fusão, bias do giroscópio, parâmetros da suavização e dos filtros de áudio e CO₂. Abaixo deles ficam a calibração do magnetômetro e as métricas do fluxo e do firmware. O número diz quantos parâmetros vivem aqui; o ponto acende quando algum está fora do padrão de fábrica.';
+
 /**
  * Mounts the configuration panel. Returns the container at the end of the Avançado tab,
  * below its fields, where main.ts places the magnetometer and metrics panels: they are
@@ -485,11 +488,13 @@ export function mountConfigPanel(
     </div>
     <p class="msg" data-el="hint">Os campos mostram os padrões de fábrica. Leia do dispositivo para ver o que está gravado — aplicar envia só o que mudou, confere a aceitação e grava de forma permanente.</p>
     <p class="msg" data-el="msg" role="status"></p>
+    <div class="tabs-row">
     <div class="tabs" role="tablist" aria-label="Parâmetros">
       <button type="button" class="tab" role="tab" id="tab-basico" aria-controls="pane-basico" aria-selected="true">Básico</button>
-      <button type="button" class="tab" role="tab" id="tab-avancado" aria-controls="pane-avancado" aria-selected="false" tabindex="-1"
-        data-info="Ajustes da cadeia de sinais: faixa e filtro da IMU, ganho e rejeições da fusão, bias do giroscópio, parâmetros da suavização e dos filtros de áudio e CO₂. Abaixo deles ficam a calibração do magnetômetro e as métricas do fluxo e do firmware. O número diz quantos parâmetros vivem aqui; o ponto acende quando algum está fora do padrão de fábrica.">Avançado
+      <button type="button" class="tab" role="tab" id="tab-avancado" aria-controls="pane-avancado" aria-selected="false" tabindex="-1">Avançado
         <span class="tab-count" data-el="advCount"></span></button>
+    </div>
+    <span class="tabs-info" data-el="adv-info"></span>
     </div>
     <div role="tabpanel" id="pane-basico" aria-labelledby="tab-basico" data-el="tab-basico">
       <form data-el="pane-basico" onsubmit="return false"></form>
@@ -513,6 +518,9 @@ export function mountConfigPanel(
   const msg = q('[data-el=msg]');
   const hint = q('[data-el=hint]');
   const advCount = q('[data-el=advCount]');
+  // The "i" of the Avançado tab sits next to it, not inside: the tab is itself a button, and
+  // a button inside a button is invalid HTML (the browser drops it).
+  q('[data-el=adv-info]').append(infoDot(ADVANCED_TAB_INFO));
   const tabs: Record<Tier, HTMLButtonElement> = {
     basico: q<HTMLButtonElement>('#tab-basico'),
     avancado: q<HTMLButtonElement>('#tab-avancado'),

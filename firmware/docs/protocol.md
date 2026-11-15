@@ -343,8 +343,7 @@ Units:
 - `audioRmsL/R` are RMS values in 24-bit sample counts. The
   INMP441 data arrives on a 32-bit I2S frame and is shifted (`sample >> 8`), so the
   full-scale amplitude is 2^23 = 8388608. dBFS (AES17, 0 dBFS = full-scale sine):
-  `dBFS = 20*log10(rms*sqrt(2)/2^23)`. Estimated sound pressure: `SPL ≈ dBFS + 120`
-  (INMP441 sensitivity −26 dBFS @ 94 dB SPL, 1 kHz). **This scale assumes the
+  `dBFS = 20*log10(rms*sqrt(2)/2^23)`. The project uses dBFS only. **This scale assumes the
   32-bit I2S configuration with `>>8`; a 16-bit I2S configuration would change it.**
 - `audioThreshold` is the breath detector's **effective trigger level**, in 24-bit
   counts of the **active metric** (bit 4). Absolute detector: the line itself.

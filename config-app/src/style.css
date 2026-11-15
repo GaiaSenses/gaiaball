@@ -424,12 +424,15 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
    diferentes, feitas por pessoas diferentes em momentos diferentes — a primeira não
    deve ter que ler 25 parâmetros de filtro para achar o limiar do sopro. A contagem na
    aba Avançado responde, sem abri-la, "tem algo fora do padrão aqui?". */
-.tabs {
+.tabs-row {
   display: flex;
-  gap: 2px;
+  align-items: flex-end;
+  gap: 6px;
   margin-bottom: 14px;
   border-bottom: 1px solid var(--line);
 }
+.tabs { display: flex; gap: 2px; }
+.tabs-info { align-self: center; }
 .tab {
   display: inline-flex;
   align-items: center;
