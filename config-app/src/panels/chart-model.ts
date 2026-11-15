@@ -109,3 +109,12 @@ export function minMaxDecimate(
   }
   return { x, y };
 }
+
+/** Bottom of the level meters on the microphone cards, in dBFS (same floor as the stage meter). */
+export const LEVEL_FLOOR_DBFS = -90;
+
+/** Position of a dBFS level on a meter from LEVEL_FLOOR_DBFS (0) to 0 dBFS (1), clamped. */
+export function levelFraction(dbfs: number, floor: number = LEVEL_FLOOR_DBFS): number {
+  if (!Number.isFinite(dbfs)) return 0;
+  return Math.min(1, Math.max(0, (dbfs - floor) / -floor));
+}

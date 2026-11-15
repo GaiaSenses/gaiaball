@@ -893,7 +893,7 @@ e [`GaiaConfig.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gai
 | `0x10` | `audioEnabled` | u8 | 0–255 | 1 | 0 = áudio desligado; outro valor = ligado |
 | `0x11` | `audioFastAlphaX1000` | u16 | 1–1000 | 250 | Média rápida do detector de sopro, × 1000; **só no detector adaptativo** (`0x2D` = 1) |
 | `0x12` | `audioSlowAlphaX1000` | u16 | 1–1000 | 995 | Média lenta (linha de base), × 1000; **só no detector adaptativo** |
-| `0x13` | `debounceMs` | u16 | 0–65535 | 300 | Tempo mínimo entre dois sopros, ms (nos dois detectores) |
+| `0x13` | `debounceMs` | u16 | 0–65535 | 3000 | Tempo mínimo entre dois sopros, ms (nos dois detectores; a config-app mostra em segundos) |
 | `0x14` | `potControlsThreshold` | u8 | 0–255 | 1 | ≠ 0: o potenciômetro define o limiar (ADC 0…4095 → −60…0 dBFS, linear, histerese de 0,5 dB); 0: usa `0x2B` |
 | `0x16` | `audioBpfEnabled` | u8 | 0–1 | 1 | Passa-banda do sopro antes do detector |
 | `0x17` | `audioHpHz` | u16 | 1–7000 | 10 | Corte do passa-altas, Hz |
@@ -905,7 +905,7 @@ e [`GaiaConfig.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gai
 | `0x2B` | `breathThresholdNegDbX100` | u16 | 0–9000 | 3550 | Limiar fixo do sopro, guardado **sem sinal** como −dBFS × 100 (3550 = −35,5 dBFS), na escala da medida `0x2C`. Vale com `0x14` = 0. Absoluto: a linha de disparo; adaptativo: quanto o som precisa subir acima da linha de base |
 | `0x2C` | `breathMetric` | u8 | 0–1 | 0 | O que o detector mede: 0 = RMS, 1 = pico |
 | `0x2D` | `breathDetector` | u8 | 0–1 | 0 | 0 = absoluto (a cada bloco de 5 ms, dispara se **qualquer** microfone passar da linha); 1 = adaptativo (a cada 3 blocos, envelope rápido menos linha de base, do microfone mais alto) |
-| `0x2E` | `breathRearmDb` | u8 | 0–20 | 3 | O detector rearma quando o nível cai abaixo de `limiar × 10^(−valor/20)`; dB inteiros |
+| `0x2E` | `breathRearmDb` | u8 | 0–20 | 6 | O detector rearma quando o nível cai abaixo de `limiar × 10^(−valor/20)`; dB inteiros |
 
 **CO₂**
 

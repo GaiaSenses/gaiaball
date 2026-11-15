@@ -297,10 +297,19 @@ describe('breath detector fields', () => {
     expect(FIELD_DEFAULTS.get(TLV.breathThresholdNegDbX100)).toBe(3550);
     expect(FIELD_DEFAULTS.get(TLV.breathMetric)).toBe(0);
     expect(FIELD_DEFAULTS.get(TLV.breathDetector)).toBe(0);
-    expect(FIELD_DEFAULTS.get(TLV.breathRearmDb)).toBe(3);
+    expect(FIELD_DEFAULTS.get(TLV.breathRearmDb)).toBe(6);
+    expect(FIELD_DEFAULTS.get(TLV.debounceMs)).toBe(3000);
     for (const id of [TLV.breathThresholdNegDbX100, TLV.breathMetric, TLV.breathDetector, TLV.breathRearmDb]) {
       expect(() => encodeTlv(toWireRegs([{ id, value: FIELD_DEFAULTS.get(id)! }]))).not.toThrow();
     }
+  });
+
+  it('debounce is shown in seconds and stays in ms on the wire', () => {
+    const d = f(TLV.debounceMs);
+    expect(toDisplay(d, 3000)).toBe(3);
+    expect(fromDisplay(d, 3)).toBe(3000);
+    expect(fromDisplay(d, 0.3)).toBe(300);
+    expect(fromDisplay(d, 2.5)).toBe(2500);
   });
 
   it('negate: 3550 <-> -35.5 and back', () => {

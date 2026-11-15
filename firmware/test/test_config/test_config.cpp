@@ -27,11 +27,11 @@ void test_defaults_match_legacy() {
   TEST_ASSERT_EQUAL(50, c.imuNotifyHz);
   TEST_ASSERT_EQUAL(250, c.audioFastAlphaX1000);
   TEST_ASSERT_EQUAL(995, c.audioSlowAlphaX1000);
-  TEST_ASSERT_EQUAL(300, c.debounceMs);
+  TEST_ASSERT_EQUAL(3000, c.debounceMs);
   TEST_ASSERT_EQUAL(3550, c.breathThresholdNegDbX100);
   TEST_ASSERT_EQUAL(0, c.breathMetric);
   TEST_ASSERT_EQUAL(0, c.breathDetector);
-  TEST_ASSERT_EQUAL(3, c.breathRearmDb);
+  TEST_ASSERT_EQUAL(6, c.breathRearmDb);
   TEST_ASSERT_EQUAL(17000, c.virtualHoldMs);
   TEST_ASSERT_EQUAL(2, c.soundLedPin);
   TEST_ASSERT_EQUAL(4, c.co2LedPin);
@@ -980,7 +980,7 @@ void test_breath_regs_serialized_and_0x15_absent() {
   TEST_ASSERT_NOT_NULL(findRec(buf, n, 0x2D));
   p = findRec(buf, n, 0x2E);
   TEST_ASSERT_NOT_NULL(p);
-  TEST_ASSERT_EQUAL(3, p[0]);
+  TEST_ASSERT_EQUAL(6, p[0]);
   TEST_ASSERT_NULL(findRec(buf, n, 0x15));
 }
 
