@@ -11,7 +11,7 @@ compositions (Pure Data).
  ┌─────────────────────────── Gaiaball (this repo) ───────────────────────────┐
  │                                                                            │
  │  IMU ────────┐                                                             │
- │  2× INMP441 ─┤   ESP32 firmware          BLE (binary protocol v1)          │
+ │  2× INMP441 ─┤   ESP32 firmware          BLE (binary protocol)             │
  │  SC8 CO2 ────┼─▶ FreeRTOS + NimBLE  ───────────────┬──────────────▶ GaiaSenses site
  │  Pot + LEDs ─┘   (firmware/)                       └──────────────▶ config-app
  │                                                             (bench tool, this repo)
@@ -38,9 +38,14 @@ The full netlist cross-check against the KiCAD board design lives in
   with the magnetometer as an option). A gyro-bias tracker adapts only while the
   ball rests, so a stationary globe stays stationary. Mounting calibration and a
   "zero orientation" command align the physical ball with the virtual one.
-- **Blow detection.** The mics are band-passed (configurable HP/LP biquads, default
-  10–200 Hz) before an RMS peak detector; a detected blow triggers a "virtual CO₂"
-  pulse that the site turns into a composition. The raw (unfiltered) audio is also
+- **Blow and breath detection.** The mics are band-passed (configurable HP/LP biquads,
+  default 10–200 Hz) before the detector. The **breath detector** is selectable:
+  *absolute* (a fixed line) or *adaptive* (the level must rise above a slow baseline),
+  measuring RMS or peak. Its sensitivity comes from the potentiometer (−60…0 dBFS) or
+  from a fixed dBFS value, and it re-arms once the level falls a whole number of dB
+  below the line (TLVs `0x2B`–`0x2E`). A recognized breath sets the **breath bit** (flags
+  bit 4) of the next orientation packet, and a detected blow also triggers a "virtual
+  CO₂" pulse that the site turns into a composition. The raw (unfiltered) audio is also
   available as an **opt-in** stream (TLV `0x1F`, off by default), decimated to 2 kHz,
   so the config-app can show a live spectrum for tuning the band. What the application
   uses arrives on every orientation packet instead: the measured RMS and peak per
@@ -57,8 +62,10 @@ The full netlist cross-check against the KiCAD board design lives in
   halts the active stream until the next power cycle — and resynchronizes on the
   frame header after any byte loss.
 - **Transport.** Everything leaves the ball as small, versioned, little-endian
-  binary packets with sequence numbers and timestamps (27 B orientation packets, version 2:
-  acceleration in milli-g and the microphone envelope in half-dB steps, at up to 200 Hz),
+  binary packets with sequence numbers and timestamps (27 B orientation packets, version 2,
+  the only packet at that version: `int16` acceleration in milli-g, the microphone
+  RMS and peak as `u8` half-dB steps — dBFS = v/2 − 120 — and the breath bit, at up to
+  200 Hz),
   over a NimBLE GATT server that accepts **two centrals at once** —
   the site and the config-app side by side. Sensitive commands and configuration
   writes require a 4-digit PIN unlock per connection.
@@ -80,13 +87,16 @@ vectors. The task/queue architecture, including a per-core execution diagram, is
 | Path | What it is |
 |---|---|
 | `firmware/` | **The v2 firmware** (ESP32, FreeRTOS, NimBLE, binary protocol). Dual toolchain: PlatformIO and Arduino IDE/CLI. See [`firmware/README.md`](firmware/README.md). |
-| `config-app/` | **Bench & configuration web app** (Vite + TypeScript, Web Bluetooth): 3D orientation view, per-sensor real-time charts with a shared time axis, audio spectrum analyzer, stream metrics, full parameter editor with presets. See [`config-app/README.md`](config-app/README.md). |
-| `pd-gaiaball/` | **Pure Data external `[gaiaball]`** (C, pd-lib-builder, installable from Deken): the config-app forwards the ball's packets over a local WebSocket (`127.0.0.1:9478`) and the object publishes them as `[r gaia.*]` channels, read-only, on Windows, Linux and macOS. Audio arrives as the treated envelope (per-channel RMS and peak, at the orientation rate), never as samples — the spectrum stays in the browser. See [`pd-gaiaball/README.md`](pd-gaiaball/README.md). |
+| `config-app/` | **Bench & configuration web app** (Vite + TypeScript, Web Bluetooth): 3D orientation view with CAD-style camera views, real-time charts of every packet (fixed Y ranges, 5/8/12 s window, breath pulse row), audio spectrum analyzer, stream metrics, full parameter editor (globe navigation, breath detector) with presets, forwarding to Pure Data, and a stage mode for performances. Provisional published address: <https://gaiasenses.github.io/gaiaball/>. See [`config-app/README.md`](config-app/README.md). |
+| `pd-gaiaball/` | **Pure Data external `[gaiaball]`** (C, pd-lib-builder, installable from Deken; maintainers publish it with [`PUBLICAR-NO-DEKEN.md`](pd-gaiaball/PUBLICAR-NO-DEKEN.md)): the config-app forwards the ball's packets over a local WebSocket (`ws://127.0.0.1:9478`) and the object publishes them as `[r gaia.*]` channels, read-only, on Windows, Linux and macOS. There is no Python bridge any more. Audio arrives as the treated envelope (per-channel RMS and peak, at the orientation rate), never as samples — the spectrum stays in the browser. See [`pd-gaiaball/README.md`](pd-gaiaball/README.md). |
+| `.github/workflows/` | CI: `pd-gaiaball.yml` (multi-OS build of the external + Deken package) and `config-app-pages.yml` (publishes the config-app to GitHub Pages). Both run **only by hand** (`workflow_dispatch`) for now; the automatic triggers are switched off. |
+| `LICENSE` | GNU GPL v3 (see [License](#license)). |
 | `docs/protocolo-ble.md` | **Didactic BLE protocol guide** (pt-BR): BLE basics, every packet and TLV register, navigation, runnable JavaScript/Python/C clients and golden vectors. An identical copy lives in `Gaiasenses-web` as `docs/gaiaball-protocolo-ble.md`; this one is the reference. See [`docs/protocolo-ble.md`](docs/protocolo-ble.md). |
 | `docs/bench-validation.md` | Step-by-step hardware validation script (flash, rates, loss, filters, CO₂, 24 h soak). |
 | `relatorio/index.html` | Interactive report (pt-BR): every defect found in the legacy firmware, the fix, the expected impact, and the bench checklist. Open it in a browser. |
 | `firmware-original.ino` | The legacy (v1) firmware, **preserved untouched as a historical reference**; no longer built. |
 | `relatorio.md` | The original third-party analysis report (reference). |
+| `docs/code-review-v2.md` | Code review of the v2 firmware and config-app (pt-BR), a snapshot from the time of the review. |
 | `docs/superpowers/` | Design spec and implementation plan the v2 was built from. |
 
 ## Quickstart
@@ -117,6 +127,7 @@ npm install
 npm run dev        # http://localhost:5173 — Chrome/Edge only (Web Bluetooth)
 npm test           # vitest
 npm run build      # static bundle in dist/
+node e2e-smoke.mjs # smoke test of the built app
 ```
 
 Add `?demo=1` to the URL to exercise every panel with synthetic data, no device
@@ -149,9 +160,10 @@ site shows an "update the firmware" warning).
 | New site (IMU v2 only) + old firmware (IMU v1) | ❌ the IMU is silently ignored |
 | New site + new firmware | ✅ yes |
 
-**Flash the balls and publish the site in the same window**, and only after the
-paraisoGaia43 patch author's mg edit is merged: it is the only patch that reads
-acceleration (`gaia.acc.*` and `gaia.sensors` are now in mg; the migration table is in
+**Flash the balls and publish the site in the same window.** The site's globe patch is
+being switched to `mapa15` ("TesteGlobo2.0"), which reads only `gaia.lat` and
+`gaia.lon`, so the deploy does not wait for any patch edit. Patches that read
+acceleration see `gaia.acc.*` and `gaia.sensors` in mg now (the migration table is in
 `Gaiasenses-web/docs/musico/README.md`).
 
 ## Testing
@@ -159,10 +171,16 @@ acceleration (`gaia.acc.*` and `gaia.sensors` are now in mg; the migration table
 | Suite | Where | Command |
 |---|---|---|
 | Firmware logic (packets, TLV, fusion, filters, SC8 framing, DSP) | `firmware/test/` | `pio test -d firmware -e native` |
-| Config-app (decoders, FFT, Euler convention, presets) | `config-app/src/**/*.test.ts` | `npm test` |
+| Config-app (decoders, FFT, Euler convention, presets) | `config-app/src/**/*.test.ts` | `cd config-app && npm test` |
+| Config-app build and smoke test | `config-app/e2e-smoke.mjs` | `cd config-app && npm run build && node e2e-smoke.mjs` |
+| Firmware build (no hardware) | `firmware/` | `pio run -d firmware -e esp32dev` |
 | Site decoder (same golden vectors) | `Gaiasenses-web/tests/` | `npm test` in that repo |
 | `[gaiaball]` decoder and WebSocket core (golden vectors, RFC 6455 handshake and frames) | `pd-gaiaball/tests/` | `make -C pd-gaiaball test` |
 
-The four test suites share verbatim golden byte vectors from
+The firmware, config-app, site and Pd-external suites share verbatim golden byte vectors from
 `firmware/docs/protocol.md`, so the wire contract is pinned across the firmware, the
 config-app, the site and the Pd external.
+
+## License
+
+Released under the **GNU General Public License v3.0**; see [`LICENSE`](LICENSE).
