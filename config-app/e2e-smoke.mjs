@@ -12,7 +12,7 @@ try {
   const html = await res.text();
   if (!res.ok || !html.includes('id="app"')) fail('index.html not served');
   const js = readdirSync('dist/assets').filter((f) => f.endsWith('.js')).map((f) => readFileSync(`dist/assets/${f}`, 'utf8')).join('');
-  for (const s of ['Ler do dispositivo', 'Aplicar', 'Salvar preset', 'gaiaball-presets', 'Exportar JSON']) {
+  for (const s of ['Ler do dispositivo', 'Aplicar', 'Salvar preset', 'gaiaball-presets', 'Exportar JSON', 'Vistas da câmera', 'Superior', 'Inferior']) {
     if (!js.includes(s)) fail(`bundle missing "${s}"`);
   }
   console.log('OK: index served, bundle contains panel strings');

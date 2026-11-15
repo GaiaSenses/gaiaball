@@ -1,20 +1,22 @@
 import * as THREE from 'three';
+import { VIEW_RADIUS, cameraPose, type ViewId } from './view-presets';
 
 export interface Quat { w: number; x: number; y: number; z: number }
 export type ModelKind = 'plane' | 'box';
 
 /** Dart-shaped paper plane, nose toward +X (sensor forward). Flat-shaded vertex colors. */
 function buildPlane(): THREE.Object3D {
+  // Sensor frame: +X nose, +Y the model's left, +Z up (so -Y is the right wing).
   const nose = [1, 0, 0], l = [-0.6, -0.8, 0], r = [-0.6, 0.8, 0], k = [-0.6, 0, -0.3], t = [-0.6, 0, 0.0];
   const tri = (a: number[], b: number[], c: number[], col: number[]) =>
     ({ v: [...a, ...b, ...c], c: [...col, ...col, ...col] });
   const faces = [
-    tri(nose, l, t, [0.9, 0.9, 0.95]), // left wing
-    tri(nose, t, r, [0.75, 0.78, 0.88]), // right wing
-    tri(nose, k, l, [0.35, 0.6, 0.95]), // left keel side
-    tri(nose, r, k, [0.95, 0.6, 0.3]), // right keel side
-    tri(k, t, l, [0.5, 0.5, 0.55]), // rear left
-    tri(k, r, t, [0.4, 0.4, 0.45]), // rear right
+    tri(nose, l, t, [0.9, 0.9, 0.95]), // right wing (-Y)
+    tri(nose, t, r, [0.75, 0.78, 0.88]), // left wing (+Y)
+    tri(nose, k, l, [0.35, 0.6, 0.95]), // right keel side (-Y)
+    tri(nose, r, k, [0.95, 0.6, 0.3]), // left keel side (+Y)
+    tri(k, t, l, [0.5, 0.5, 0.55]), // rear right (-Y)
+    tri(k, r, t, [0.4, 0.4, 0.45]), // rear left (+Y)
   ];
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(faces.flatMap((f) => f.v), 3));
@@ -35,6 +37,8 @@ function buildBox(): THREE.Object3D {
   return new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.8, 0.5), mats);
 }
 
+const VIEW_ANIM_MS = 450;
+
 /** Renders the treated quaternion exactly as received over BLE — no extra smoothing
  *  in the UI, so what you see is what the firmware sends (including its own slerp,
  *  when enabled in the device config). */
@@ -51,6 +55,8 @@ export class OrientationScene {
   private raf = 0;
   private disposed = false;
   private ro: ResizeObserver;
+  private anim: { from: THREE.Quaternion; to: THREE.Quaternion; t0: number } | null = null;
+  private view: ViewId | null = null;
   private onVis = () => { if (document.hidden) this.stop(); else this.start(); };
 
   private canvas: HTMLCanvasElement;
@@ -67,11 +73,17 @@ export class OrientationScene {
     this.container.add(holder);
     this.setDark(true);
     this.scene.add(new THREE.HemisphereLight(0xcfd8ff, 0x22252b, 1.1));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.4);
-    sun.position.set(3, 5, 4);
-    this.scene.add(sun);
     this.camera.position.set(0, 2.2, 5.2);
     this.camera.lookAt(0, 0, 0);
+    // Headlight: a child of the camera, offset so that in the initial view it sits at
+    // world (3, 5, 4) exactly as the old fixed light did; it then follows view changes.
+    this.scene.add(this.camera);
+    this.camera.updateMatrixWorld(true);
+    const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+    sun.position.copy(this.camera.worldToLocal(new THREE.Vector3(3, 5, 4)));
+    this.camera.add(sun);
+    sun.target.position.set(0, 0, 0);
+    this.scene.add(sun.target);
     this.setModel('plane');
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(canvas.parentElement ?? canvas);
@@ -91,6 +103,36 @@ export class OrientationScene {
     }
     this.model = kind === 'plane' ? buildPlane() : buildBox();
     this.body.add(this.model);
+  }
+
+  /** Snaps the camera to a CAD-style preset view (animated unless reduced motion). */
+  setView(id: ViewId): void {
+    const pose = cameraPose(id);
+    this.view = id;
+    const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) {
+      this.anim = null;
+      this.applyCamera(pose.quaternion);
+    } else {
+      this.anim = { from: this.camera.quaternion.clone(), to: pose.quaternion, t0: performance.now() };
+    }
+  }
+
+  /** The last preset chosen, or null while the initial view is untouched. */
+  currentView(): ViewId | null { return this.view; }
+
+  private applyCamera(q: THREE.Quaternion): void {
+    this.camera.quaternion.copy(q);
+    this.camera.position.set(0, 0, VIEW_RADIUS).applyQuaternion(q);
+  }
+
+  private stepAnim(now: number): void {
+    const a = this.anim;
+    if (!a) return;
+    const k = Math.min(1, (now - a.t0) / VIEW_ANIM_MS);
+    const e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; // ease-in-out quad
+    this.applyCamera(a.from.clone().slerp(a.to, e));
+    if (k >= 1) this.anim = null;
   }
 
   /** Matches the scene to the page theme (background + floor grid contrast). */
@@ -128,6 +170,7 @@ export class OrientationScene {
     if (this.raf || this.disposed) return;
     const loop = () => {
       this.raf = requestAnimationFrame(loop);
+      this.stepAnim(performance.now());
       this.renderer.render(this.scene, this.camera);
     };
     this.raf = requestAnimationFrame(loop);
