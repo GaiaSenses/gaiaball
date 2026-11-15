@@ -32,6 +32,8 @@ import {
   SampleQueue,
   WINDOW_OPTIONS_S,
   firstIndexAtOrAfter,
+  formatDb,
+  formatSigned,
   levelFraction,
   minMaxDecimate,
   Y_RANGES,
@@ -105,8 +107,6 @@ const fmt = (v: number, digits = 1): string =>
   v.toLocaleString('pt-BR', { minimumFractionDigits: digits, maximumFractionDigits: digits });
 /** Whole number, never "-0". */
 const fmtInt = (v: number): string => fmt(Math.round(v) + 0, 0);
-/** Whole dBFS with a typographic minus sign (U+2212), so the digits line up in the readouts. */
-const fmtDb = (v: number): string => fmtInt(v).replace('-', '\u2212');
 /** Travel of the potentiometer in dBFS (potRawToDbfs maps 0..4095 onto -60..0). */
 const POT_FLOOR_DBFS = -60;
 /**
@@ -115,8 +115,8 @@ const POT_FLOOR_DBFS = -60;
  * the part of the meter it names, so the bar reads as RMS and the tick as peak.
  */
 const levelCard = (key: string, title: string, a: [string, string, string], b: [string, string, string],
-  note: string, fader = false): string => `
-      <div class="sensor-card level-card" data-el="card-${key}">
+  note: string, numCh: number, fader = false): string => `
+      <div class="sensor-card level-card" data-el="card-${key}" style="--num-ch: ${numCh}">
         <div class="card-head"><h3>${title}</h3><span class="card-state" data-el="st-${key}"></span></div>
         <dl class="readings">
           <div class="reading reading-${a[0]}"><dt>${a[1]}</dt><dd><span class="reading-num" data-el="${a[0]}-${key}">—</span><span class="reading-unit">${a[2]}</span></dd></div>
@@ -126,6 +126,21 @@ const levelCard = (key: string, title: string, a: [string, string, string], b: [
         <small>${note}</small>
       </div>`;
 const MIC_NOTE = 'RMS é a média de 20 ms; pico é a amostra mais alta. Escala de −90 a 0 dBFS.';
+/**
+ * A card with three signed readings side by side (orientation, acceleration). Each value
+ * sits right-aligned in a box as wide as the widest value it can take (`numCh` characters
+ * of the monospace face), so the units digit stays put while the sign flips and the digit
+ * count changes. The line before each label is the color of that axis in the charts.
+ */
+const axesCard = (key: string, title: string, axes: [string, string][], unit: { sign?: string; head?: string },
+  note: string, numCh: number): string => `
+      <div class="sensor-card" data-el="card-${key}" style="--num-ch: ${numCh}">
+        <div class="card-head"><h3>${title}</h3><span class="card-state" data-el="st-${key}">${unit.head ?? ''}</span></div>
+        <dl class="readings readings-3">
+          ${axes.map(([id, label]) => `<div class="reading reading-line" data-el="rd-${id}"><dt>${label}</dt><dd><span class="reading-num" data-el="${id}">—</span>${unit.sign ? `<span class="reading-sign">${unit.sign}</span>` : ''}</dd></div>`).join('')}
+        </dl>
+        <small>${note}</small>
+      </div>`;
 /** Light grey over the parts of the spectrum the band-pass removes. */
 const SHADE: Record<'dark' | 'light', string> = { dark: 'rgba(148, 163, 184, 0.16)', light: 'rgba(100, 116, 139, 0.14)' };
 /** Card tint per sensor: the color of its line in the charts below. */
@@ -145,13 +160,23 @@ export function mountSensorsPanel(
   root.innerHTML = `
     <h2>Sensores em tempo real</h2>
     <div class="sensor-cards">
-      <div class="sensor-card" data-el="card-ori"><h3>Orientação (IMU)</h3><p data-el="v-euler">—</p><small>graus (°) · convenção legada roll/pitch/yaw</small></div>
-      <div class="sensor-card" data-el="card-acc"><h3>Aceleração (IMU)</h3><p data-el="v-acc">—</p><small>mg · fundo de escala ±4000 mg</small></div>
-      ${levelCard('micl', 'Microfone esquerdo', ['rms', 'RMS', 'dBFS'], ['peak', 'Pico', 'dBFS'], MIC_NOTE)}
-      ${levelCard('micr', 'Microfone direito', ['rms', 'RMS', 'dBFS'], ['peak', 'Pico', 'dBFS'], MIC_NOTE)}
-      <div class="sensor-card" data-el="card-co2"><h3>CO₂ (SC8)</h3><p data-el="v-co2">—</p><small>ppm · partes por milhão</small></div>
+      ${axesCard('ori', 'Orientação (IMU)', [['roll', 'Roll'], ['pitch', 'Pitch'], ['yaw', 'Yaw']], { sign: '°' },
+        'Graus, de −180 a 180, na convenção legada de roll, pitch e yaw.', 4)}
+      ${axesCard('acc', 'Aceleração (IMU)', [['ax', 'X'], ['ay', 'Y'], ['az', 'Z']], { head: 'em mg' },
+        '1000 mg = 1 g; o fundo de escala é ±4000 mg.', 5)}
+      ${levelCard('micl', 'Microfone esquerdo', ['rms', 'RMS', 'dBFS'], ['peak', 'Pico', 'dBFS'], MIC_NOTE, 4)}
+      ${levelCard('micr', 'Microfone direito', ['rms', 'RMS', 'dBFS'], ['peak', 'Pico', 'dBFS'], MIC_NOTE, 4)}
+      <div class="sensor-card level-card" data-el="card-co2" style="--num-ch: 5">
+        <div class="card-head"><h3>CO₂ (SC8)</h3><span class="card-state" data-el="st-co2"></span></div>
+        <dl class="readings">
+          <div class="reading reading-bar"><dt>Concentração</dt><dd><span class="reading-num" data-el="ppm-co2">—</span><span class="reading-unit">ppm</span></dd></div>
+          <div class="reading reading-tick"><dt>Gatilho</dt><dd><span class="reading-word" data-el="trig-co2">—</span></dd></div>
+        </dl>
+        <div class="meter" aria-hidden="true"><span class="meter-fill" data-el="bar-co2"></span><span class="meter-peak" data-el="tick-co2" hidden></span></div>
+        <small data-el="note-co2"></small>
+      </div>
       ${levelCard('pot', 'Potenciômetro', ['pos', 'Posição', '%'], ['sens', 'Sensibilidade', 'dBFS'],
-        'O curso inteiro vai de −60 a 0 dBFS de sensibilidade.', true)}
+        'O curso inteiro vai de −60 a 0 dBFS de sensibilidade.', 3, true)}
     </div>
     <div class="spec-head">
       <h3 class="spec-title">Espectro do áudio (cru) — ajuste do passa-banda</h3>
@@ -418,6 +443,12 @@ export function mountSensorsPanel(
     for (const [el, color] of Object.entries(cardTints(p))) {
       q<HTMLElement>(`[data-el=${el}]`).style.setProperty('--card-tint', color);
     }
+    // The line before each axis label: that axis's color in the charts.
+    const axisColors: [string, string][] = [
+      ['rd-roll', p.euler[0]], ['rd-pitch', p.euler[1]], ['rd-yaw', p.euler[2]],
+      ['rd-ax', p.acc[0]], ['rd-ay', p.acc[1]], ['rd-az', p.acc[2]],
+    ];
+    for (const [el, color] of axisColors) q<HTMLElement>(`[data-el=${el}]`).style.setProperty('--swatch', color);
   };
   applyCardTints(pal());
 
@@ -463,22 +494,47 @@ export function mountSensorsPanel(
     latest.co2 = (ev as CustomEvent<Co2Sample>).detail;
     co2Q.push(now(), latest.co2);
   });
+  // The CO2 meter shares the chart's scale (0..max(5000, virtual peak)) and marks the
+  // trigger level; both come from the configuration read from the ball. Until it is
+  // read (or in the demo) the scale is 0..5000 and there is no trigger mark.
+  let co2Max = co2Range(0)[1];
+  let co2TriggerPpm: number | null = null;
+  const syncCo2Scale = (): void => {
+    const tick = q('[data-el=tick-co2]');
+    tick.hidden = co2TriggerPpm === null;
+    if (co2TriggerPpm !== null) tick.style.left = `${Math.min(1, co2TriggerPpm / co2Max) * 100}%`;
+    q('[data-el=note-co2]').textContent = co2TriggerPpm === null
+      ? `Escala de 0 a ${co2Max} ppm. O nível do gatilho aparece depois de ler a configuração da bola.`
+      : `Escala de 0 a ${co2Max} ppm. O traço é o nível do gatilho (${co2TriggerPpm} ppm).`;
+  };
+  syncCo2Scale();
   // CO2 axis follows the configured virtual peak (0x23, u16 little-endian).
   client.addEventListener('config', (ev) => {
-    const v = (ev as CustomEvent<Map<number, DataView>>).detail.get(TLV.virtualPeakPpm);
-    if (!v || v.byteLength !== 2) return;
-    void Plotly.relayout(chartEl, { 'yaxis7.range': co2Range(v.getUint16(0, true)) });
+    const cfg = (ev as CustomEvent<Map<number, DataView>>).detail;
+    const v = cfg.get(TLV.virtualPeakPpm);
+    if (v && v.byteLength === 2) {
+      const range = co2Range(v.getUint16(0, true));
+      co2Max = range[1];
+      void Plotly.relayout(chartEl, { 'yaxis7.range': range });
+    }
+    const t = cfg.get(TLV.co2TriggerPpm);
+    if (t && t.byteLength === 2) co2TriggerPpm = t.getUint16(0, true);
+    syncCo2Scale();
   });
 
   const renderCards = (): void => {
     const { imu, sensors, co2 } = latest;
     if (imu) {
-      const e = quatToEulerLegacy(imu.quat);
-      q('[data-el=v-euler]').textContent = imu.quatValid
-        ? `roll ${fmtInt(e.rollDeg)}° · pitch ${fmtInt(e.pitchDeg)}° · yaw ${fmtInt(e.yawDeg)}°`
-        : 'quaternion inválido';
-      q('[data-el=v-acc]').textContent = `X ${fmt(imu.acc[0], 0)} mg · Y ${fmt(
-        imu.acc[1], 0)} mg · Z ${fmt(imu.acc[2], 0)} mg`;
+      const e = imu.quatValid ? quatToEulerLegacy(imu.quat) : null;
+      q('[data-el=roll]').textContent = e ? formatSigned(e.rollDeg) : '—';
+      q('[data-el=pitch]').textContent = e ? formatSigned(e.pitchDeg) : '—';
+      q('[data-el=yaw]').textContent = e ? formatSigned(e.yawDeg) : '—';
+      const stOri = q('[data-el=st-ori]'); // empty while valid: the degrees are on the numbers
+      stOri.textContent = e ? '' : 'quaternion inválido';
+      stOri.dataset.tone = e ? '' : 'danger';
+      q('[data-el=ax]').textContent = formatSigned(imu.acc[0]);
+      q('[data-el=ay]').textContent = formatSigned(imu.acc[1]);
+      q('[data-el=az]').textContent = formatSigned(imu.acc[2]);
     }
     if (sensors) {
       // RMS and peak come from the orientation packet (firmware, 20 ms window at the
@@ -489,8 +545,8 @@ export function mountSensorsPanel(
       const dbR = live ? imu.audioRmsDbfs[1] : rmsToDbfs(sensors.rmsR);
       // Without live levels (fallback sensors packet) there is no peak: "—" and no tick.
       const setMic = (key: 'micl' | 'micr', rms: number, peak: number | null): void => {
-        q(`[data-el=rms-${key}]`).textContent = fmtDb(rms);
-        q(`[data-el=peak-${key}]`).textContent = peak === null ? '—' : fmtDb(peak);
+        q(`[data-el=rms-${key}]`).textContent = formatDb(rms);
+        q(`[data-el=peak-${key}]`).textContent = peak === null ? '—' : formatDb(peak);
         q(`[data-el=bar-${key}]`).style.width = `${levelFraction(rms) * 100}%`;
         const tick = q(`[data-el=tick-${key}]`);
         tick.hidden = peak === null;
@@ -508,7 +564,7 @@ export function mountSensorsPanel(
       }
       const potDb = potRawToDbfs(sensors.potRaw);
       q('[data-el=pos-pot]').textContent = fmtInt((sensors.potRaw / 4095) * 100);
-      q('[data-el=sens-pot]').textContent = fmtDb(potDb);
+      q('[data-el=sens-pot]').textContent = formatDb(potDb);
       q('[data-el=bar-pot]').style.width = `${levelFraction(potDb, POT_FLOOR_DBFS) * 100}%`;
       // Whether the knob matters right now: it only sets the sensitivity when it is the
       // source and the detector is on.
@@ -517,8 +573,18 @@ export function mountSensorsPanel(
         : sensors.potControls ? 'em uso pelo detector' : 'fora de uso (valor fixo)';
     }
     if (co2) {
-      const estado = co2.virtualActive ? 'virtual' : co2.stale ? 'sem leitura (stale)' : co2.valid ? 'real' : 'inválido';
-      q('[data-el=v-co2]').textContent = `${co2.ppm} ppm · ${estado}`;
+      // Where the number comes from: the virtual pulse wins, then a stale or invalid sensor.
+      const [src, tone] = co2.virtualActive ? ['pulso virtual', 'accent']
+        : co2.stale ? ['sem leitura', 'warn']
+        : co2.valid ? ['leitura real', ''] : ['inválido', 'danger'];
+      const st = q('[data-el=st-co2]');
+      st.textContent = src;
+      st.dataset.tone = tone;
+      q('[data-el=ppm-co2]').textContent = String(Math.round(co2.ppm));
+      q('[data-el=bar-co2]').style.width = `${Math.min(1, Math.max(0, co2.ppm / co2Max)) * 100}%`;
+      const trig = q('[data-el=trig-co2]');
+      trig.textContent = co2.trigger ? 'ligado' : 'desligado';
+      trig.dataset.on = String(co2.trigger);
     }
   };
 

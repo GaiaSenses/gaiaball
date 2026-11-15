@@ -4,6 +4,8 @@ import {
   HISTORY_S,
   MAX_DRAWN_POINTS,
   firstIndexAtOrAfter,
+  formatDb,
+  formatSigned,
   levelFraction,
   minMaxDecimate,
   SampleQueue,
@@ -120,5 +122,26 @@ describe('levelFraction', () => {
   });
   it('takes another floor for the potentiometer travel (-60..0)', () => {
     expect(levelFraction(-30, -60)).toBeCloseTo(0.5, 9);
+  });
+});
+
+describe('reading formatters', () => {
+  it('signed readings carry an explicit sign and no thousands separator', () => {
+    expect(formatSigned(93.4)).toBe('+93');
+    expect(formatSigned(-180)).toBe('\u2212180');
+    expect(formatSigned(1009)).toBe('+1009');
+    expect(formatSigned(-4000)).toBe('\u22124000');
+    expect(formatSigned(0.4)).toBe('0');
+    expect(formatSigned(-0.4)).toBe('0');
+    expect(formatSigned(Number.NaN)).toBe('—');
+  });
+  it('the widest values fit the boxes the cards reserve (4 and 5 characters)', () => {
+    expect(formatSigned(-180).length).toBe(4);
+    expect(formatSigned(-4000).length).toBe(5);
+    expect(formatDb(-120).length).toBe(4);
+  });
+  it('dBFS uses the typographic minus and never shows -0', () => {
+    expect(formatDb(-57.4)).toBe('\u221257');
+    expect(formatDb(-0.3)).toBe('0');
   });
 });

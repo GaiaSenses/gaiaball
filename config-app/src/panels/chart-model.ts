@@ -118,3 +118,24 @@ export function levelFraction(dbfs: number, floor: number = LEVEL_FLOOR_DBFS): n
   if (!Number.isFinite(dbfs)) return 0;
   return Math.min(1, Math.max(0, (dbfs - floor) / -floor));
 }
+
+const MINUS = '−';
+
+/**
+ * Whole number with an explicit sign, for signed readings (angles, acceleration): "+93",
+ * "−180", "0". No thousands separator: "1009", not "1.009" (which reads as a decimal in
+ * pt-BR and changes the width). Shown right-aligned in a fixed-width box, the units digit
+ * never moves.
+ */
+export function formatSigned(v: number): string {
+  if (!Number.isFinite(v)) return '—';
+  const n = Math.round(v) + 0; // + 0 turns -0 into 0
+  return (n > 0 ? '+' : n < 0 ? MINUS : '') + String(Math.abs(n));
+}
+
+/** Whole dBFS (never positive in practice) with the typographic minus: "−57", "0". */
+export function formatDb(v: number): string {
+  if (!Number.isFinite(v)) return '—';
+  const n = Math.round(v) + 0;
+  return (n < 0 ? MINUS : '') + String(Math.abs(n));
+}
