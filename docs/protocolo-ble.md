@@ -1776,8 +1776,9 @@ está na **versão 2**. Uma versão só muda quando a mudança deixa de ser **ad
 6. **Registradores TLV novos** ganham ids novos. Ao **ler**, pule ids desconhecidos pelo `len`.
    Ao **escrever**, mande só ids que a bola conhece (confira numa leitura antes): um id
    desconhecido derruba a escrita inteira.
-7. **Ids aposentados não voltam:** registradores `0x21`, `0x27` e `0x33`, opcodes `0x00` e
-   `0x01`.
+7. **Ids aposentados não voltam:** registradores `0x15`, `0x21`, `0x27` e `0x33`, opcodes
+   `0x00` e `0x01`. (O registrador `0x15` é o antigo `thresholdFixed`; não confunda com o
+   comando `0x15`, que continua valendo.)
 8. **Mudança incompatível = versão nova, só do tipo afetado.** Se for preciso mudar o
    significado de algo que já existe, o byte de versão daquele tipo muda, e os decodificadores
    antigos descartam esses pacotes em vez de lê-los errado. **O primeiro caso real é o IMU:**
@@ -1786,6 +1787,17 @@ está na **versão 2**. Uma versão só muda quando a mudança deixa de ser **ad
    existiam mudou (e o pacote encolheu de 31 para 27 bytes), o IMU virou **versão 2**; todos
    os outros tipos continuam na versão 1. Por isso um decodificador valida a versão **por
    tipo**, e um site antigo, que só conhece o IMU v1, não lê a bola nova.
+
+Combinações do IMU v2 com o site e o firmware:
+
+| Combinação | Resultado |
+|---|---|
+| Site antigo (só IMU v1) + firmware novo (IMU v2) | ❌ o site recusa o pacote (exige versão 1 e ≥ 31 B): sem movimento |
+| Site novo (só IMU v2) + firmware antigo (IMU v1) | ❌ o IMU some em silêncio (o site avisa para atualizar o firmware); o pacote v1 é descartado |
+| Site novo + firmware novo | ✅ funciona |
+
+Por isso as bolas e o site precisam trocar de versão **na mesma janela** (veja o README do
+repositório da Gaiaball, "Deploying with GaiaSenses").
 
 ---
 

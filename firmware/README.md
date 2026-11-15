@@ -78,9 +78,6 @@ arduino-cli upload  --fqbn esp32:esp32:esp32 -p /dev/ttyUSB0 firmware/Gaiaball
 | PlatformIO `esp32dev` | 829 993 B (63.3 %) | 52 324 B (16.0 %) |
 | arduino-cli `esp32:esp32:esp32` | 819 337 B (62 %) | 52 220 B (15 %) |
 
-Static RAM went *down* with the v8 audio changes: the I2S block shrank from 256 to 80
-frames, so both the DMA buffers and the task's sample buffer are smaller.
-
 Known build warnings (pre-existing, harmless, from the legacy IDF drivers kept on
 purpose for core 2.0.17): `'I2S_COMM_FORMAT_I2S' is deprecated` (AudioService) and
 `'ADC_ATTEN_DB_11' is deprecated` (PotService).

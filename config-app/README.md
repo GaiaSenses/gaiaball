@@ -2,7 +2,7 @@
 
 App web (Vite + TypeScript) para configurar e testar o Gaiaball v2 via Web Bluetooth: visualização 3D da orientação (o quaternion tratado, exatamente como chega por BLE), métricas do fluxo (taxa, perda, jitter), parâmetros do firmware, presets e um painel de **sensores em tempo real** com gráficos de linha (Plotly.js). Ele também repassa os dados da bola ao Pure Data (veja [Enviar ao Pd](#enviar-ao-pd)).
 
-Endereço publicado, provisório: <https://gaiasenses.github.io/gaiaball/> (o workflow do GitHub Pages publica a cada atualização assim que as Pages forem ligadas no repositório; quando o domínio final existir, o endereço troca).
+Endereço publicado, provisório: <https://gaiasenses.github.io/gaiaball/> (é o que o workflow do GitHub Pages publica, depois que as Pages forem habilitadas no repositório; quando o domínio final existir, o endereço troca).
 
 Interface: **tema claro/escuro** (botão no topo; sem escolha salva, segue o tema do sistema), **tooltips didáticos ⓘ** em cada parâmetro — passe o mouse, foque com Tab ou toque para ver o que o parâmetro faz e sua unidade (em telas estreitas o texto aparece como folha no rodapé) — e **layout responsivo** (desktop com o 3D fixo ao rolar, tablet e celular em uma coluna). Fontes IBM Plex embutidas via `@fontsource`: o app continua funcionando offline na bancada.
 

@@ -244,8 +244,8 @@ debounce 300 ms.
 
 1. Mude o detector para **Adaptativo**. Os campos Alfa rápido e Alfa lento aparecem no
    Avançado (só valem para o adaptativo).
-2. Deixe a bola quieta por uns 3 s: a linha de limiar fica um pouco acima do ruído da sala
-   (ruído mais a sensibilidade) e sobe e desce com ele.
+2. Deixe a bola quieta por uns 3 s: numa sala silenciosa, a linha de limiar fica perto do
+   valor da sensibilidade e só sobe junto com o ruído quando o ruído se aproxima dele.
 3. Sopre: dispara quando o som sobe acima do ruído pelo valor da sensibilidade. O disparo pode
    vir um instante depois de a curva cruzar a linha (o detector compara o envelope
    suavizado).

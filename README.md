@@ -138,9 +138,21 @@ open compositions.
 | Current site + legacy firmware (`firmware-original.ino`, JSON) | ❌ **no** — the site drops the JSON notifications |
 | A site that still parses only JSON + any v2 firmware | ❌ **no** — that site cannot read the binary packets |
 
-**Flash every ball with the navigation firmware first, then publish the site.** Keep the
-gap between the two short: a site that still parses only JSON cannot read a reflashed
-ball.
+The motion packet is now IMU **v2** (acceleration in mg, audio in half-dB, breath bit),
+and it breaks both orders: the site published before the balls rejects v2 (it requires
+version 1 and at least 31 bytes), and the new site rejects v1 (the IMU goes silent; the
+site shows an "update the firmware" warning).
+
+| Combination | Works? |
+|---|---|
+| Old site (IMU v1 only) + new firmware (IMU v2) | ❌ the site drops every IMU packet |
+| New site (IMU v2 only) + old firmware (IMU v1) | ❌ the IMU is silently ignored |
+| New site + new firmware | ✅ yes |
+
+**Flash the balls and publish the site in the same window**, and only after the
+paraisoGaia43 patch author's mg edit is merged: it is the only patch that reads
+acceleration (`gaia.acc.*` and `gaia.sensors` are now in mg; the migration table is in
+`Gaiasenses-web/docs/musico/README.md`).
 
 ## Testing
 
