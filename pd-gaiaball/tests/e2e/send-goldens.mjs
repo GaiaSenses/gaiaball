@@ -166,7 +166,21 @@ await waitFor(() => a.frames.some((f) => f.op === 0xa), 2000, 'A: pong');
 if (a.frames.find((f) => f.op === 0xa).payload.toString() !== 'gaia') fail('A: pong payload differs');
 ok('A: IMU, CO2, IMU, Nav A sent; ping answered with pong');
 
-// 3. Second client replaces the first.
+// 2b. A bare TCP connection (no handshake) must not cut the live client; it is closed after ~3 s.
+{
+  const t0 = Date.now();
+  const bare = await new Client('bare').connect();
+  a.binary(IMU);
+  await sleep(500);
+  if (a.closed) fail('A: a bare TCP connect disconnected the live client');
+  await waitFor(() => { a.binary(IMU); return bare.closed; }, 4500, 'bare: closed by the server');
+  const took = Date.now() - t0;
+  if (took < 2500 || took > 4000) fail(`bare: closed after ${took} ms, expected about 3000`);
+  if (a.closed) fail('A: disconnected while the bare socket timed out');
+  ok(`a bare TCP connect left A connected and was closed after ${took} ms`);
+}
+
+// 3. Second client replaces the first (only once its handshake is complete).
 const b = await (await new Client('B').connect()).handshake();
 await waitFor(() => a.closed, 2000, 'A: closed by the server after B connected');
 ok(`B: connected; A was closed by the server (close code ${a.closeCode()})`);

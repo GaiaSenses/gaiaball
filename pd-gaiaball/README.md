@@ -109,7 +109,8 @@ por segundo. Não há zona morta: para ignorar valores repetidos, use `[change]`
 | `rate N` | uma vez por segundo, enquanto conectado: pacotes recebidos no último segundo (movimento + navegação + CO₂; com a bola no padrão, cerca de 100) |
 | `gap N` | junto com o `rate`: o maior intervalo sem pacotes no último segundo, em milissegundos |
 
-Uma conexão nova substitui a anterior: se duas abas da config-app tentarem enviar ao
+Uma conexão nova só substitui a anterior depois de completar o aperto de mão do
+WebSocket: se duas abas da config-app tentarem enviar ao
 mesmo tempo, vale a mais recente. Feche as outras.
 
 ## Solução de problemas
@@ -122,6 +123,7 @@ mesmo tempo, vale a mais recente. Feche as outras.
 | A config-app mostra "Pd: bloqueado pelo Chrome" | a permissão "Apps neste dispositivo" foi negada. Libere como no passo 4 e recarregue a página. |
 | A config-app mostra "Pd: desligado" | a chave Enviar ao Pd está desligada, ou a bola não está conectada. |
 | `connected 1`, mas `gaia.lat` e `gaia.lon` não chegam | a navegação está desligada na bola. Na config-app, desbloqueie com o PIN e escolha a navegação Espelho ou Joystick. |
+| `connected 1`, `rate` normal, mas nenhum valor `gaia.*` | a bola está com firmware antigo (o pacote de movimento v1 é ignorado). Grave o firmware novo; a config-app mostra o aviso "firmware desatualizado". |
 | `gaia.mic.*` não chega | o áudio está desligado na bola. Na config-app, desbloqueie com o PIN e ligue o áudio. |
 | `rate` baixo ou `gap` alto | a página ficou lenta. Feche outras abas pesadas e deixe só uma aba da config-app enviando. |
 | Ângulos "diferentes do site" | não são: é a mesma convenção. O zero e a montagem são ajustados **na bola**: use "Zerar orientação" na config-app (exige o PIN). |
@@ -135,8 +137,10 @@ dispositivo**, porque o endereço definitivo da config-app ainda não foi defini
 dados falsos ao seu patch.
 
 Um navegador que não pede essa permissão deixa **qualquer página aberta** chegar ao
-objeto. Uma página assim pode mandar dados falsos ou cortar os dados de verdade (uma
-conexão nova substitui a anterior). Por isso, durante uma apresentação, feche as páginas
+objeto. Uma página assim pode mandar dados falsos ou cortar os dados de verdade: ao
+completar o aperto de mão do WebSocket, ela substitui a conexão anterior. Uma conexão
+que não completa o aperto de mão (um `fetch`, uma imagem, uma varredura de portas) não
+corta mais os dados: ela é descartada em 3 s e só uma fica esperando por vez. Por isso, durante uma apresentação, feche as páginas
 que você não conhece.
 
 ## Para quem mantém o projeto
@@ -176,7 +180,8 @@ node pd-gaiaball/tests/e2e/send-goldens.mjs
 ```
 
 O script faz o aperto de mão como o Chrome, manda os pacotes de referência e testa: a
-segunda conexão substituindo a primeira, o silêncio de 2 s, o fechamento, um quadro de
+segunda conexão substituindo a primeira, uma conexão TCP sem aperto de mão que não
+derruba o cliente e é fechada em cerca de 3 s, o silêncio de 2 s, o fechamento, um quadro de
 texto (recusado) e, por fim, a troca de objeto: ele apaga o primeiro `[gaiaball]` do
 `listen.pd` (mensagem `clear` pela porta 9479) e confere que o segundo assume a porta.
 Com `--spawn`, ele mesmo abre o Pd e confere tudo o que o `listen.pd` imprime:

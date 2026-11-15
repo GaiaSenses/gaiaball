@@ -41,6 +41,7 @@
 
 #define GB_DEFAULT_PORT 9478
 #define GB_TIMEOUT_MS 2000.
+#define GB_HANDSHAKE_MS 3000. /* a new connection must finish its handshake within this */
 #define GB_STATS_MS 1000.
 #define GB_RETRY_MS 2000.
 
@@ -85,15 +86,17 @@ typedef struct _gaiaball {
     t_outlet *x_status;
     t_clock *x_statsclock;   /* every 1000 ms while connected: rate and gap */
     t_clock *x_watchdog;     /* 2000 ms without packets: disconnected */
+    t_clock *x_pendclock;    /* 3000 ms to finish the handshake: the pending socket is closed */
     t_clock *x_retryclock;   /* port in use: try the bind again every 2000 ms */
     t_symbol *x_ch[CH_COUNT];
     int x_port;
     int x_busy;              /* the port was in use (already reported once) */
     gb_sock x_listen;        /* GB_NOSOCK: not listening (bad port, or waiting for it) */
-    gb_sock x_client;        /* the one client, GB_NOSOCK if none */
-    int x_open;              /* the client got its 101 */
+    gb_sock x_client;        /* the one client (handshake done), GB_NOSOCK if none */
+    gb_sock x_pend;          /* at most one new connection still handshaking, else GB_NOSOCK */
+    int x_open;              /* the client got its 101 (always 1 while x_client is set) */
     int x_connected;         /* last state sent on the status outlet */
-    size_t x_reqlen;
+    size_t x_reqlen;         /* bytes of the pending socket's request */
     char x_req[GB_WS_MAX_REQUEST + 1];
     gb_ws_parser x_ws;
     uint8_t x_payload[GB_WS_MAX_PAYLOAD];
@@ -308,7 +311,22 @@ static void gaiaball_drop(t_gaiaball *x)
     gb_closesocket(x->x_client);
     x->x_client = GB_NOSOCK;
     x->x_open = 0;
+}
+
+/* Close the handshaking socket (if any); the established client is not touched. */
+static void gaiaball_droppending(t_gaiaball *x)
+{
+    if (x->x_pend == GB_NOSOCK) return;
+    sys_rmpollfn((int)x->x_pend);
+    gb_closesocket(x->x_pend);
+    x->x_pend = GB_NOSOCK;
     x->x_reqlen = 0;
+    clock_unset(x->x_pendclock);
+}
+
+static void gaiaball_pendtimeout(t_gaiaball *x)
+{
+    gaiaball_droppending(x);
 }
 
 static void gaiaball_lost(t_gaiaball *x)
@@ -360,6 +378,8 @@ static void gaiaball_feed(t_gaiaball *x, const uint8_t *p, size_t n)
     }
 }
 
+/* The pending socket's request is complete (or not yet): on a valid one, answer 101 and
+ * only then replace the established client, if any (status unchanged, no blip). */
 static void gaiaball_handshake(t_gaiaball *x)
 {
     char key[64], acceptkey[29], resp[256];
@@ -371,16 +391,25 @@ static void gaiaball_handshake(t_gaiaball *x)
     if (!n)
     {
         n = gb_ws_response_400(resp, sizeof resp);
-        if (n) gb_send(x->x_client, resp, n);
+        if (n) gb_send(x->x_pend, resp, n);
         logpost(x, 3 /* PD_DEBUG */, "gaiaball: pedido recusado (não é um WebSocket)");
-        gaiaball_lost(x);
+        gaiaball_droppending(x);
         return;
     }
-    if (!gb_send(x->x_client, resp, n))
+    if (!gb_send(x->x_pend, resp, n))
     {
-        gaiaball_lost(x);
+        gaiaball_droppending(x);
         return;
     }
+        /* handshake done: the new socket replaces the old client */
+    if (x->x_client != GB_NOSOCK)
+    {
+        gaiaball_sendclose(x, 1000);
+        gaiaball_drop(x);
+    }
+    x->x_client = x->x_pend; /* its poll function is already registered */
+    x->x_pend = GB_NOSOCK;
+    clock_unset(x->x_pendclock);
     x->x_open = 1;
     memset(&x->x_ws, 0, sizeof x->x_ws);
     clock_delay(x->x_watchdog, GB_TIMEOUT_MS);
@@ -392,37 +421,41 @@ static void gaiaball_handshake(t_gaiaball *x)
     end += 4;
     n = x->x_reqlen > end ? x->x_reqlen - end : 0;
     x->x_reqlen = 0;
-    if (n && x->x_open) gaiaball_feed(x, (const uint8_t *)x->x_req + end, n);
+    if (n) gaiaball_feed(x, (const uint8_t *)x->x_req + end, n);
+}
+
+static void gaiaball_readpending(t_gaiaball *x)
+{
+    long r = gb_recv(x->x_pend, x->x_req + x->x_reqlen, sizeof x->x_req - x->x_reqlen);
+    if (r < 0 && gb_retry()) return;
+    if (r <= 0)
+    {
+        gaiaball_droppending(x); /* closed or failed before the handshake: the client stays */
+        return;
+    }
+    x->x_reqlen += (size_t)r;
+    gaiaball_handshake(x);
 }
 
 static void gaiaball_read(void *z, int fd)
 {
     t_gaiaball *x = (t_gaiaball *)z;
     uint8_t buf[4096];
-    void *dst = buf;
-    size_t cap = sizeof buf;
     long r;
-    (void)fd;
-    if (x->x_client == GB_NOSOCK) return;
-    if (!x->x_open)
+    if (x->x_pend != GB_NOSOCK && (gb_sock)fd == x->x_pend)
     {
-        dst = x->x_req + x->x_reqlen;
-        cap = sizeof x->x_req - x->x_reqlen; /* > 0: an overlong request is refused first */
+        gaiaball_readpending(x);
+        return;
     }
-    r = gb_recv(x->x_client, dst, cap);
+    if (x->x_client == GB_NOSOCK) return;
+    r = gb_recv(x->x_client, buf, sizeof buf);
     if (r < 0 && gb_retry()) return;
     if (r <= 0)
     {
         gaiaball_lost(x); /* closed by the other side, or a socket error */
         return;
     }
-    if (x->x_open)
-        gaiaball_feed(x, buf, (size_t)r);
-    else
-    {
-        x->x_reqlen += (size_t)r;
-        gaiaball_handshake(x);
-    }
+    gaiaball_feed(x, buf, (size_t)r);
 }
 
 static void gaiaball_accept(void *z, int fd)
@@ -442,15 +475,12 @@ static void gaiaball_accept(void *z, int fd)
 #ifdef SO_NOSIGPIPE
     (void)setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, (const char *)&one, sizeof one);
 #endif
-        /* one client at a time: the new one replaces the old (status unchanged) */
-    if (x->x_client != GB_NOSOCK)
-    {
-        if (x->x_open) gaiaball_sendclose(x, 1000);
-        gaiaball_drop(x);
-    }
-    x->x_client = s;
-    x->x_open = 0;
+        /* the established client stays until this socket completes a valid handshake;
+        only one socket may be handshaking: a newer one replaces an older pending one */
+    gaiaball_droppending(x);
+    x->x_pend = s;
     x->x_reqlen = 0;
+    clock_delay(x->x_pendclock, GB_HANDSHAKE_MS);
     sys_addpollfn((int)s, gaiaball_read, x);
 }
 
@@ -535,8 +565,9 @@ static void *gaiaball_new(t_floatarg f)
     x->x_statsclock = clock_new(x, (t_method)gaiaball_stats);
     x->x_watchdog = clock_new(x, (t_method)gaiaball_timeout);
     x->x_retryclock = clock_new(x, (t_method)gaiaball_listen);
+    x->x_pendclock = clock_new(x, (t_method)gaiaball_pendtimeout);
     for (i = 0; i < CH_COUNT; i++) x->x_ch[i] = gensym(gb_channel_names[i]);
-    x->x_listen = x->x_client = GB_NOSOCK;
+    x->x_listen = x->x_client = x->x_pend = GB_NOSOCK;
     if (f != 0 && (f < 1 || f > 65535 || f != (t_float)(int)f))
     {
         pd_error(x, "gaiaball: porta inválida: %g (use um número de 1 a 65535)", f);
@@ -551,6 +582,7 @@ static void gaiaball_free(t_gaiaball *x)
 {
     if (x->x_client != GB_NOSOCK && x->x_open) gaiaball_sendclose(x, 1001); /* going away */
     gaiaball_drop(x);
+    gaiaball_droppending(x);
     if (x->x_connected)
     {
             /* deleted mid-breath: no 1 may stay stuck (no status output while freeing) */
@@ -565,6 +597,7 @@ static void gaiaball_free(t_gaiaball *x)
     clock_free(x->x_statsclock);
     clock_free(x->x_watchdog);
     clock_free(x->x_retryclock);
+    clock_free(x->x_pendclock);
 }
 
 void gaiaball_setup(void)
