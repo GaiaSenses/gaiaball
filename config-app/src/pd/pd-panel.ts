@@ -26,7 +26,7 @@ function save(key: string, value: string): void {
 
 export function pdStatusText(s: PdStatus): string {
   switch (s.state) {
-    case 'off': return 'Pd: desligado';
+    case 'off': return s.wanted ? 'Pd: aguardando a bola' : 'Pd: desligado';
     case 'waiting': return 'Pd: aguardando';
     case 'connected': return `Pd: conectado · ${s.rate} pacotes/s`;
     case 'blocked': return 'Pd: bloqueado pelo Chrome';

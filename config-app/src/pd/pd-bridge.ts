@@ -10,7 +10,8 @@ export const PD_PORT_KEY = 'gaiaball-pd-port';
 export const PD_ENABLED_KEY = 'gaiaball-pd-enabled';
 
 export type PdState = 'off' | 'waiting' | 'connected' | 'blocked';
-export interface PdStatus { state: PdState; rate: number; dropped: number }
+/** `wanted`: the user's "Enviar ao Pd" switch is on (the state is 'off' while BLE is down). */
+export interface PdStatus { state: PdState; rate: number; dropped: number; wanted: boolean }
 
 export interface WsLike {
   readonly readyState: number;
@@ -37,6 +38,7 @@ const WS_OPEN = 1;
 
 export class PdBridge extends EventTarget {
   private enabled = false;
+  private wanted = false;
   private port = PD_DEFAULT_PORT;
   private socket: WsLike | null = null;
   private state: PdState = 'off';
@@ -54,7 +56,14 @@ export class PdBridge extends EventTarget {
   }
 
   get status(): PdStatus {
-    return { state: this.state, rate: this.rate, dropped: this.dropped };
+    return { state: this.state, rate: this.rate, dropped: this.dropped, wanted: this.wanted };
+  }
+
+  /** The user's switch, independent of the BLE link (only changes the status text). */
+  setWanted(on: boolean): void {
+    if (on === this.wanted) return;
+    this.wanted = on;
+    this.emit();
   }
 
   setEnabled(on: boolean): void {

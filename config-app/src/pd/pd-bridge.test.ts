@@ -151,4 +151,15 @@ describe('PdBridge', () => {
     expect(() => bridge.forward(pkt(1))).not.toThrow();
     expect(bridge.status.dropped).toBe(1);
   });
+
+  it('reports whether the user wants Pd, independent of the BLE link', () => {
+    const seen: boolean[] = [];
+    bridge.addEventListener('status', (e) => seen.push((e as CustomEvent<PdStatus>).detail.wanted));
+    expect(bridge.status.wanted).toBe(false);
+    bridge.setWanted(true);
+    expect(bridge.status).toMatchObject({ state: 'off', wanted: true });
+    bridge.setWanted(true);
+    bridge.setWanted(false);
+    expect(seen).toEqual([true, false]);
+  });
 });

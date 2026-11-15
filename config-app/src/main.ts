@@ -78,10 +78,18 @@ if (!(navigator as Navigator & { bluetooth?: unknown }).bluetooth) {
 }
 
 const client = new GaiaballClient();
+// The "firmware desatualizado" warning lives in its own element so it can be cleared without
+// touching the no-Web-Bluetooth banner: on the next connect, or on the first IMU v2 sample.
+const clearOutdatedBanner = (): void => { app.querySelector('#banner .fw-outdated')?.remove(); };
 client.addEventListener('firmware-outdated', () => {
-  app.querySelector('#banner')!.innerHTML =
-    '<div class="banner">Firmware da bola desatualizado: grave o firmware novo (o pacote de movimento agora é a versão 2).</div>';
+  clearOutdatedBanner();
+  app.querySelector('#banner')!.insertAdjacentHTML('beforeend',
+    '<div class="banner fw-outdated">Firmware da bola desatualizado: grave o firmware novo (o pacote de movimento agora é a versão 2).</div>');
 });
+client.addEventListener('status', (ev) => {
+  if ((ev as CustomEvent<{ connected: boolean }>).detail.connected) clearOutdatedBanner();
+});
+client.addEventListener('imu', clearOutdatedBanner); // a decoded sample is v2: the firmware is current
 export const stats = new StreamStats();
 // Reset on every (re)connect, otherwise a device reboot freezes the stats.
 client.addEventListener('status', (ev) => {
@@ -124,6 +132,7 @@ const pdPrefs = loadPdPrefs();
 // The bridge only runs while the ball is connected (or in demo) and the user left it on.
 const syncPd = (): void => {
   bridge.setPort(pdPrefs.port);
+  bridge.setWanted(pdPrefs.enabled);
   bridge.setEnabled(pdPrefs.enabled && (client.connected || isDemo));
 };
 client.addEventListener('status', syncPd);
