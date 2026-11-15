@@ -374,7 +374,24 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
 .reading { min-width: 0; }
 .reading dt { display: flex; align-items: center; gap: 6px; margin: 0 0 2px; font-size: 0.74rem; color: var(--muted); }
 .reading dd { display: flex; align-items: baseline; gap: 4px; margin: 0; }
-.reading-num { font: 500 1.35rem/1.1 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; color: var(--text); }
+/* The value sits right-aligned in a box as wide as the widest value the reading can take
+   (--num-ch characters of the monospace face, set per card): the units digit never moves
+   when the sign flips or a digit comes or goes. */
+.reading-num {
+  display: inline-block;
+  min-width: calc(var(--num-ch, 4) * 1ch);
+  text-align: right;
+  font: 500 1.35rem/1.1 'IBM Plex Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.readings-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 8px; }
+.readings-3 .reading-num { font-size: 1.15rem; }
+/* A symbol that belongs to the number (the degree sign): set tight against it, in the
+   number's own face and size, muted. */
+.reading-sign { font: 500 1.15rem/1.1 'IBM Plex Mono', monospace; color: var(--muted); margin-left: -4px; }
+/* Orientation and acceleration: the line before the label is that axis's line color. */
+.reading-line dt::before { content: ''; flex: none; width: 12px; height: 2px; border-radius: 1px; background: var(--swatch, var(--muted)); }
 .reading-unit { font-size: 0.74rem; color: var(--muted); }
 .reading-rms dt::before { content: ''; flex: none; width: 12px; height: 6px; border-radius: 3px; background: var(--card-tint, var(--accent)); }
 .reading-peak dt::before { content: ''; flex: none; width: 2px; height: 11px; background: var(--text); }
