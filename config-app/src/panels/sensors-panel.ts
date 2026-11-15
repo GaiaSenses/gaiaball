@@ -5,8 +5,7 @@
 //  - Orientation: degrees, legacy Euler convention (same output the site feeds to Pd).
 //  - Acceleration: mg (converted by the firmware) — MPU-9250 full scale is ±4 g = ±4000 mg.
 //  - Microphones (INMP441): dBFS per AES17 (0 dBFS = full-scale sine, FS = 2^23 for
-//    the 32-bit I2S config with >>8). Estimated dB SPL = dBFS + 120, from the
-//    INMP441 sensitivity spec (-26 dBFS @ 94 dB SPL, 1 kHz).
+//    the 32-bit I2S config with >>8), shown in whole dB.
 //  - CO2 (SC8-CO2-5K): ppm.
 //  - Potentiometer: % of full travel (raw 0..4095).
 import Plotly from 'plotly.js-dist-min';
@@ -38,10 +37,13 @@ import {
 const TICK_MS = 100; // chart sampling period (10 Hz)
 const FFT_SIZE = 512; // 256 ms window at 2 kHz -> 3.9 Hz bins
 const FFT_MS = 250; // spectrum refresh period
+// Spectrum frequency axis: log scale from 10 Hz to Nyquist of the 2 kHz stream, as audio
+// analysers draw it, so the low band where breath lives is not squeezed into the left edge.
+const SPEC_MIN_HZ = 10;
+const SPEC_MAX_HZ = 1000;
+const SPEC_TICKS_HZ = [10, 20, 50, 100, 200, 500, 1000];
 /** Largest window (12 s) at the highest notify rate (200 Hz). */
 const MAX_POINTS = 12 * 200;
-/** INMP441 sensitivity: -26 dBFS @ 94 dB SPL -> SPL ~= dBFS + 120 (1 kHz, estimate). */
-const DBFS_TO_SPL = 120;
 
 // One color family per chart (each chart visually distinct), picked per theme so
 // every line keeps contrast on both backgrounds.
@@ -95,6 +97,8 @@ function safeStorage(): Storage | null {
 
 const fmt = (v: number, digits = 1): string =>
   v.toLocaleString('pt-BR', { minimumFractionDigits: digits, maximumFractionDigits: digits });
+/** Whole dB, never "-0". */
+const fmtDb = (v: number): string => fmt(Math.round(v) + 0, 0);
 
 export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): { setPaused(p: boolean): void } {
   root.innerHTML = `
@@ -102,13 +106,13 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): { 
     <div class="sensor-cards">
       <div class="sensor-card" data-el="card-ori"><h3>Orientação (IMU)</h3><p data-el="v-euler">—</p><small>graus (°) · convenção legada roll/pitch/yaw</small></div>
       <div class="sensor-card" data-el="card-acc"><h3>Aceleração (IMU)</h3><p data-el="v-acc">—</p><small>mg · fundo de escala ±4000 mg</small></div>
-      <div class="sensor-card" data-el="card-micl"><h3>Microfone esquerdo</h3><p data-el="v-micl">—</p><small>dBFS (AES17) · dB SPL estimado (INMP441: −26 dBFS @ 94 dB SPL)</small></div>
-      <div class="sensor-card" data-el="card-micr"><h3>Microfone direito</h3><p data-el="v-micr">—</p><small>dBFS (AES17) · dB SPL estimado</small></div>
+      <div class="sensor-card" data-el="card-micl"><h3>Microfone esquerdo</h3><p data-el="v-micl">—</p><small>dBFS (AES17) · RMS e pico</small></div>
+      <div class="sensor-card" data-el="card-micr"><h3>Microfone direito</h3><p data-el="v-micr">—</p><small>dBFS (AES17) · RMS e pico</small></div>
       <div class="sensor-card" data-el="card-co2"><h3>CO₂ (SC8)</h3><p data-el="v-co2">—</p><small>ppm · partes por milhão</small></div>
       <div class="sensor-card" data-el="card-pot"><h3>Potenciômetro</h3><p data-el="v-pot">—</p><small>% do curso (ADC 0–4095) · limiar de sopro em dBFS</small></div>
     </div>
     <h3 class="spec-title">Espectro do áudio (cru) — ajuste do passa-banda</h3>
-    <p class="msg">FFT de 512 pontos calculado aqui no navegador sobre o fluxo bruto de 2 kHz vindo da bola (janela de 256 ms, bins de ~3,9 Hz). Sopre na bola e observe quais frequências sobem; as linhas tracejadas marcam os cortes HP/LP configurados.</p>
+    <p class="msg">FFT de 512 pontos calculado aqui no navegador sobre o fluxo bruto de 2 kHz vindo da bola (janela de 256 ms, bins de ~3,9 Hz). A frequência está em escala log, de 10 a 1000 Hz. Sopre na bola e observe quais frequências sobem; as linhas tracejadas marcam os cortes HP/LP configurados.</p>
     <div data-el="spectrum" class="sensor-chart sensor-spectrum" role="img" aria-label="Espectro de frequências do áudio"></div>
     <div class="chart-window" role="group" aria-label="Janela de tempo dos gráficos">
       <span>Últimos</span>
@@ -170,12 +174,19 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): { 
     }],
     {
       height: 260,
-      margin: { l: 56, r: 8, t: 8, b: 40 },
+      // r: room for the "1000" label at the right end of the frequency axis.
+      margin: { l: 56, r: 24, t: 8, b: 40 },
       paper_bgcolor: 'rgba(0,0,0,0)',
       plot_bgcolor: 'rgba(0,0,0,0)',
       font: { color: p0.font, size: 11 },
       showlegend: false,
-      xaxis: { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font, title: { text: 'frequência (Hz)' }, range: [0, 1000] },
+      // On a log axis Plotly takes the range in log10 units.
+      xaxis: {
+        type: 'log', gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font,
+        title: { text: 'frequência (Hz, escala log)' },
+        range: [Math.log10(SPEC_MIN_HZ), Math.log10(SPEC_MAX_HZ)],
+        tickvals: SPEC_TICKS_HZ, ticktext: SPEC_TICKS_HZ.map(String),
+      },
       yaxis: { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font, title: { text: 'nível (dBFS)' }, range: [-120, 0] },
     },
     { responsive: true, displaylogo: false },
@@ -205,23 +216,29 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): { 
     }
     if (idle || !lastChunk || audioRing.length < FFT_SIZE) return;
     const sp = computeSpectrum(audioRing.slice(-FFT_SIZE), FFT_SIZE, lastChunk.sampleRateHz || 2000);
-    void Plotly.restyle(specEl, { x: [Array.from(sp.freqsHz)], y: [Array.from(sp.dbfs)] }, [0]);
+    // Bin 0 (0 Hz) has no place on a log axis.
+    const freqs = Array.from(sp.freqsHz).slice(1);
+    const levels = Array.from(sp.dbfs).slice(1);
+    void Plotly.restyle(specEl, { x: [freqs], y: [levels] }, [0]);
     // Dashed cutoff markers follow the configured band (echoed in every chunk).
     const key = `${lastChunk.hpHz}|${lastChunk.lpHz}|${lastChunk.bpfEnabled}`;
     if (key !== specShapesKey) {
       specShapesKey = key;
-      const mark = (hz: number) => ({
-        type: 'line', x0: hz, x1: hz, y0: -120, y1: 0,
-        line: { color: pal().threshold, width: 1, dash: 'dot' },
-      });
+      // Shapes take data values (Hz) even on a log axis; annotations take log10(Hz).
+      // A cutoff outside the plotted 10-1000 Hz gets no marker.
+      const inView = (hz: number): boolean => hz >= SPEC_MIN_HZ && hz <= SPEC_MAX_HZ;
+      const cuts = lastChunk.bpfEnabled
+        ? [{ hz: lastChunk.hpHz, label: 'HP', y: -4 }, { hz: lastChunk.lpHz, label: 'LP', y: -12 }].filter((c) => inView(c.hz))
+        : [];
       void Plotly.relayout(specEl, {
-        shapes: lastChunk.bpfEnabled ? [mark(lastChunk.hpHz), mark(lastChunk.lpHz)] : [],
-        annotations: lastChunk.bpfEnabled
-          ? [
-              { x: lastChunk.hpHz, y: -4, text: `HP ${lastChunk.hpHz} Hz`, showarrow: false, font: { size: 10, color: pal().font }, xanchor: 'left' },
-              { x: lastChunk.lpHz, y: -12, text: `LP ${lastChunk.lpHz} Hz`, showarrow: false, font: { size: 10, color: pal().font }, xanchor: 'left' },
-            ]
-          : [],
+        shapes: cuts.map((c) => ({
+          type: 'line', x0: c.hz, x1: c.hz, y0: -120, y1: 0,
+          line: { color: pal().threshold, width: 1, dash: 'dot' },
+        })),
+        annotations: cuts.map((c) => ({
+          x: Math.log10(c.hz), y: c.y, text: `${c.label} ${c.hz} Hz`, showarrow: false,
+          font: { size: 10, color: pal().font }, xanchor: 'left',
+        })),
       });
     }
   };
@@ -371,11 +388,9 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): { 
         (!sensors.audioOk ? ' · falha de I²S' : !sensors.audioEnabled ? ' · detector desativado' : '') +
         (sensors.audioFiltered ? ' · filtrado (HP/LP)' : ' · cru');
       const peakNote = (ch: 0 | 1) =>
-        live ? ` · pico ${fmt(imu.audioPeakDbfs[ch])} dBFS` : '';
-      q('[data-el=v-micl]').textContent =
-        `${fmt(dbL)} dBFS ≈ ${fmt(dbL + DBFS_TO_SPL, 0)} dB SPL${peakNote(0)}${audioNote}`;
-      q('[data-el=v-micr]').textContent =
-        `${fmt(dbR)} dBFS ≈ ${fmt(dbR + DBFS_TO_SPL, 0)} dB SPL${peakNote(1)}${audioNote}`;
+        live ? ` · pico ${fmtDb(imu.audioPeakDbfs[ch])} dBFS` : '';
+      q('[data-el=v-micl]').textContent = `${fmtDb(dbL)} dBFS${peakNote(0)}${audioNote}`;
+      q('[data-el=v-micr]').textContent = `${fmtDb(dbR)} dBFS${peakNote(1)}${audioNote}`;
       const potPct = (sensors.potRaw / 4095) * 100;
       const thrSrc = sensors.potControls ? 'potenciômetro' : 'fixo';
       const metric = sensors.metricPeak ? 'pico' : 'RMS';
