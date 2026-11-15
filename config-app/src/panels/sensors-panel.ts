@@ -25,7 +25,7 @@ import {
 } from '../protocol/packets.ts';
 import { TLV } from '../protocol/tlv.ts';
 import { renderSwitch } from '../ui/switch.ts';
-import type { BandSource, FormBand } from './config-panel.ts';
+import type { BandSource, Co2Source, FormBand } from './config-panel.ts';
 import {
   HISTORY_S,
   MAX_DRAWN_POINTS,
@@ -37,10 +37,12 @@ import {
   levelFraction,
   minMaxDecimate,
   Y_RANGES,
+  co2Meter,
   co2Range,
   loadWindowS,
   saveWindowS,
   thresholdRows,
+  type Co2Levels,
   type WindowS,
 } from './chart-model.ts';
 import { bandShading, loadSpectrumScale, saveSpectrumScale, specXRange, type SpectrumScale } from './spectrum-model.ts';
@@ -152,6 +154,8 @@ const cardTints = (p: ChartPalette): Record<string, string> => ({
 export interface SensorsPanelOptions {
   /** Band-pass as the configuration form shows it; without it the spectrum follows the firmware's echo. */
   band?: BandSource;
+  /** CO2 trigger and virtual peak as the form shows them; without it the meter uses what the ball reports. */
+  co2?: Co2Source;
 }
 
 export function mountSensorsPanel(
@@ -494,33 +498,45 @@ export function mountSensorsPanel(
     latest.co2 = (ev as CustomEvent<Co2Sample>).detail;
     co2Q.push(now(), latest.co2);
   });
-  // The CO2 meter shares the chart's scale (0..max(5000, virtual peak)) and marks the
-  // trigger level; both come from the configuration read from the ball. Until it is
-  // read (or in the demo) the scale is 0..5000 and there is no trigger mark.
+  // The CO2 meter shares the chart's scale (0..max(5000, virtual peak)) and marks the trigger
+  // level. Both follow the Configuração form, like the spectrum's band: the mark moves while
+  // the person edits the trigger, and shows in the demo too. The values read from the ball
+  // fill in an empty field and tell whether the form's trigger is applied yet.
+  let formCo2: Co2Levels | null = null;
+  let deviceCo2: Co2Levels | null = null;
   let co2Max = co2Range(0)[1];
-  let co2TriggerPpm: number | null = null;
   const syncCo2Scale = (): void => {
+    const m = co2Meter(formCo2, deviceCo2);
+    if (m.max !== co2Max) {
+      co2Max = m.max;
+      void Plotly.relayout(chartEl, { 'yaxis7.range': [0, m.max] });
+    }
     const tick = q('[data-el=tick-co2]');
-    tick.hidden = co2TriggerPpm === null;
-    if (co2TriggerPpm !== null) tick.style.left = `${Math.min(1, co2TriggerPpm / co2Max) * 100}%`;
-    q('[data-el=note-co2]').textContent = co2TriggerPpm === null
-      ? `Escala de 0 a ${co2Max} ppm. O nível do gatilho aparece depois de ler a configuração da bola.`
-      : `Escala de 0 a ${co2Max} ppm. O traço é o nível do gatilho (${co2TriggerPpm} ppm).`;
+    tick.hidden = m.triggerPpm === null;
+    if (m.triggerPpm !== null) tick.style.left = `${Math.min(1, Math.max(0, m.triggerPpm / m.max)) * 100}%`;
+    q('[data-el=note-co2]').textContent = `Escala de 0 a ${m.max} ppm. ` + (m.triggerPpm === null
+      ? 'Sem gatilho: o campo “Gatilho de CO₂” da Configuração está vazio.'
+      : m.pending
+        ? `O traço é o gatilho da Configuração (${m.triggerPpm} ppm), ainda não aplicado à bola.`
+        : `O traço é o nível do gatilho (${m.triggerPpm} ppm).`);
   };
-  syncCo2Scale();
-  // CO2 axis follows the configured virtual peak (0x23, u16 little-endian).
+  // Registers 0x23 (virtual peak) and 0x29 (trigger) are u16 little-endian.
   client.addEventListener('config', (ev) => {
     const cfg = (ev as CustomEvent<Map<number, DataView>>).detail;
-    const v = cfg.get(TLV.virtualPeakPpm);
-    if (v && v.byteLength === 2) {
-      const range = co2Range(v.getUint16(0, true));
-      co2Max = range[1];
-      void Plotly.relayout(chartEl, { 'yaxis7.range': range });
-    }
-    const t = cfg.get(TLV.co2TriggerPpm);
-    if (t && t.byteLength === 2) co2TriggerPpm = t.getUint16(0, true);
+    const u16 = (id: number): number | null => {
+      const dv = cfg.get(id);
+      return dv && dv.byteLength === 2 ? dv.getUint16(0, true) : null;
+    };
+    deviceCo2 = { triggerPpm: u16(TLV.co2TriggerPpm), virtualPeakPpm: u16(TLV.virtualPeakPpm) };
     syncCo2Scale();
   });
+  client.addEventListener('status', (ev) => {
+    if ((ev as CustomEvent<{ connected: boolean }>).detail.connected) return;
+    deviceCo2 = null; // another ball may connect next: nothing is "applied" until it is read
+    syncCo2Scale();
+  });
+  syncCo2Scale();
+  opts.co2?.subscribe((c) => { formCo2 = c; syncCo2Scale(); });
 
   const renderCards = (): void => {
     const { imu, sensors, co2 } = latest;
