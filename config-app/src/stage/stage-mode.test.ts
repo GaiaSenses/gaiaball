@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { parseSensitivity } from './stage-bar.ts';
 import { StageController, UI_MODE_KEY, loadUiMode, type StageDeps } from './stage-mode.ts';
 
 function mk(connected = true, stored: string | null = null) {
@@ -99,5 +100,18 @@ describe('StageController', () => {
     await ctl.setMode('palco');
     await ctl.setMode('ajuste');
     expect(client.resumeDiag).not.toHaveBeenCalled();
+  });
+});
+
+describe('parseSensitivity', () => {
+  it('rejects empty and non-numeric input', () => {
+    for (const raw of ['', '  ', 'abc', '-', '1e999']) expect(parseSensitivity(raw)).toBeNull();
+  });
+  it('rejects out of range and accepts the limits', () => {
+    expect(parseSensitivity('-91')).toBeNull();
+    expect(parseSensitivity('0.5')).toBeNull();
+    expect(parseSensitivity('-90')).toBe(-90);
+    expect(parseSensitivity('0')).toBe(0);
+    expect(parseSensitivity('-35.5')).toBe(-35.5);
   });
 });

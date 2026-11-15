@@ -150,7 +150,7 @@ export class OrientationScene {
     this.scene.add(this.grid);
   }
 
-  /** Stage mode: stop the draw loop (the quaternion keeps being stored for the resume). */
+  /** Stage mode: stop the draw loop (the caller stops feeding quaternions; the next one after resume snaps the model). */
   pause(): void {
     this.paused = true;
     this.stop();

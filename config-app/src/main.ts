@@ -231,7 +231,10 @@ async function changeMode(m: UiMode): Promise<void> {
   setSwitchValue(modeSwitch, m === 'palco' ? 1 : 0);
   modeTextEl.textContent = MODE_TEXT[m];
   await stage.setMode(m);
-  if (m === 'ajuste') stats.reset(); // the pause left a gap in the sequence numbers
+  if (m === 'ajuste') {
+    stats.reset(); // the pause left a gap in the sequence numbers
+    modeSwitch.focus(); // the stage bar (and its focused button) just got hidden
+  }
 }
 client.addEventListener('status', (ev) => {
   if ((ev as CustomEvent<{ connected: boolean }>).detail.connected) void stage.onConnected();

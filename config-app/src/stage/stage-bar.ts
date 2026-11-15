@@ -12,7 +12,7 @@ const METER_MIN_DBFS = -90;
 const PULSE_HOLD_MS = 250;
 const MIN_DBFS = -90;
 const MAX_DBFS = 0;
-const LOCK_HINT = 'Desbloqueie com o PIN no painel Conexão';
+const LOCK_HINT = 'Desbloqueie com o PIN no painel Conexão (saia do modo palco, desbloqueie e volte).';
 
 export type StageSource = 'pot' | 'fixed' | null;
 export type StageMetric = 'rms' | 'peak';
@@ -32,6 +32,13 @@ export function meterFraction(dbfs: number | null): number {
 /** Register value (-dBFS x 100, clamped to the u16 0..9000 the firmware accepts). */
 export function sensitivityReg(dbfs: number): number {
   return Math.min(9000, Math.max(0, Math.round(-dbfs * 100)));
+}
+
+/** Parses the sensitivity field; null for empty, non-numeric or out-of-range input (Number('') would be 0). */
+export function parseSensitivity(raw: string): number | null {
+  if (raw.trim() === '') return null;
+  const v = Number(raw);
+  return Number.isFinite(v) && v >= MIN_DBFS && v <= MAX_DBFS ? v : null;
 }
 
 export interface StageBarHandle {
@@ -72,6 +79,7 @@ export function mountStageBar(
   let metric: StageMetric = 'rms';
   let lastBreathAt = -Infinity;
   let timer = 0;
+  let lastGood = sensEl.value;
 
   const renderPd = (): void => {
     const s = bridge.status;
@@ -107,6 +115,7 @@ export function mountStageBar(
     const thr = regs.get(TLV.breathThresholdNegDbX100);
     if (thr && thr.byteLength === 2 && document.activeElement !== sensEl) {
       sensEl.value = (-thr.getUint16(0, true) / 100).toFixed(1);
+      lastGood = sensEl.value;
     }
     renderSource();
   });
@@ -118,9 +127,10 @@ export function mountStageBar(
   bridge.addEventListener('status', renderPd);
 
   sensEl.addEventListener('change', async () => {
-    const v = Number(sensEl.value);
-    if (!Number.isFinite(v) || v < MIN_DBFS || v > MAX_DBFS) {
+    const v = sensEl.validity.badInput ? null : parseSensitivity(sensEl.value);
+    if (v === null) {
       msgEl.textContent = `Use um valor entre ${MIN_DBFS} e ${MAX_DBFS} dBFS.`;
+      sensEl.value = lastGood;
       return;
     }
     const reg = sensitivityReg(v);
@@ -134,6 +144,7 @@ export function mountStageBar(
         return;
       }
       client.dispatchEvent(new CustomEvent('config', { detail: regs }));
+      lastGood = sensEl.value;
       msgEl.textContent = 'Gravado.';
     } catch {
       msgEl.textContent = client.connected ? LOCK_HINT : 'Sem conexão com a bola.';
