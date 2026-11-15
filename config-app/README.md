@@ -1,30 +1,71 @@
 # Gaiaball Config
 
-App web (Vite + TypeScript) para configurar e testar o Gaiaball v2 via Web Bluetooth: visualização 3D da orientação (o quaternion tratado, exatamente como chega por BLE), métricas do fluxo (taxa, perda, jitter), parâmetros do firmware, presets e um painel de **sensores em tempo real** com gráficos de linha (Plotly.js).
+App web (Vite + TypeScript) para configurar e testar o Gaiaball v2 via Web Bluetooth: visualização 3D da orientação (o quaternion tratado, exatamente como chega por BLE), métricas do fluxo (taxa, perda, jitter), parâmetros do firmware, presets e um painel de **sensores em tempo real** com gráficos de linha (Plotly.js). Ele também repassa os dados da bola ao Pure Data (veja [Enviar ao Pd](#enviar-ao-pd)).
+
+Endereço publicado, provisório: <https://gaiasenses.github.io/gaiaball/> (o workflow do GitHub Pages publica a cada atualização assim que as Pages forem ligadas no repositório; quando o domínio final existir, o endereço troca).
 
 Interface: **tema claro/escuro** (botão no topo; sem escolha salva, segue o tema do sistema), **tooltips didáticos ⓘ** em cada parâmetro — passe o mouse, foque com Tab ou toque para ver o que o parâmetro faz e sua unidade (em telas estreitas o texto aparece como folha no rodapé) — e **layout responsivo** (desktop com o 3D fixo ao rolar, tablet e celular em uma coluna). Fontes IBM Plex embutidas via `@fontsource`: o app continua funcionando offline na bancada.
 
 No canto superior direito do 3D, o botão de cubo (**Vistas da câmera**) leva a câmera às vistas Frente, Trás, Direita, Esquerda, Superior, Inferior e ISO, como num programa de CAD; a vista inicial continua a mesma.
 
+## Enviar ao Pd
+
+O Pure Data não tem Bluetooth; quem fala com a bola é a config-app, no Chrome ou no Edge, e ela
+repassa os pacotes ao external `[gaiaball]` por um **WebSocket local** (`127.0.0.1`, porta
+**9478** por padrão; a porta se muda no painel Conexão, bloco Pd, e precisa ser a mesma do
+`[gaiaball 9500]`, por exemplo).
+
+- A chave **Enviar ao Pd** (painel Conexão) já vem ligada. Com a bola conectada, o app procura
+  o Pd sozinho a cada 2 s. Para enviar não é preciso PIN.
+- Seguem ao Pd só os pacotes de movimento (`0x01`), CO₂ (`0x02`) e navegação (`0x07`). Se o Pd
+  não acompanha, o app descarta o excesso em vez de acumular atraso.
+- **Permissão do Chrome (uma vez):** na primeira conexão o Chrome pergunta se o site pode
+  acessar **Apps neste dispositivo**; clique em **Permitir**. Sem ela, o indicador no alto da
+  tela mostra "Pd: bloqueado pelo Chrome". Para corrigir: ícone à esquerda do endereço →
+  Configurações do site → Apps neste dispositivo → Permitir, e recarregue.
+- **Uma aba por vez:** mantenha só uma aba da config-app aberta com o envio ao Pd ligado.
+- Com `?demo=1` o app gera dados sintéticos e os envia ao Pd pelo mesmo caminho dos pacotes
+  reais. O `[gaiaball]` e os canais `gaia.*` estão descritos em
+  [`pd-gaiaball/README.md`](../pd-gaiaball/README.md).
+
+## Modo ajuste e modo palco
+
+A chave **Modo ajuste ⟷ Modo palco** fica no topo.
+
+- **Modo ajuste:** a tela inteira funciona (3D, gráficos, configuração).
+- **Modo palco:** para apresentar. Os dados vão ao Pd com o menor atraso possível; o 3D, os
+  gráficos e os ajustes ficam pausados. Só ficam ativos o estado do Pd, o medidor do sopro e a
+  barra de sensibilidade do sopro (escreve o limiar `0x2B` e relê para conferir; se o valor
+  não pegou, diz para desbloquear com o PIN no painel Conexão). O modo escolhido fica
+  guardado no navegador.
+
 ## Sensores em tempo real
 
 O painel "Sensores em tempo real" mostra o valor atual de cada sensor com a unidade
 correta e, abaixo, gráficos de linha empilhados verticalmente que **compartilham o
-mesmo eixo X (tempo, em segundos)** — janela de 120 s amostrada a 10 Hz, cada gráfico
-com uma cor própria. Arraste para dar zoom; duplo clique restaura.
+mesmo eixo X (tempo, em segundos)**, cada gráfico com uma cor própria.
+
+- **Janela:** 5, 8 ou 12 s (padrão 12), escolhida acima dos gráficos.
+- **Todos os pacotes:** os gráficos mostram cada pacote recebido, sem decimar. O rodapé diz
+  "Últimos N s, com todos os pacotes recebidos. Os gráficos são redesenhados 10 vezes por
+  segundo; isso não atrasa o envio ao Pd nem o site."
+- **Faixas fixas do eixo Y** (a escala não pula com o dado): orientação −180…180°; aceleração
+  −4000…4000 mg; RMS e pico −120…0 dBFS; detecção de sopro −0,1…1,1; CO₂ 0…máx(5000,
+  `virtualPeakPpm`) ppm; potenciômetro 0…100 %; minilinha Taxa 0…1,2 × `imuNotifyHz`;
+  minilinha Perda 0…100 %.
 
 | Sensor | Unidade | Derivação |
 |---|---|---|
 | Orientação (IMU ICM-20948 ou GY-91/MPU-9250) | graus (°) | fusão Madgwick no firmware → quaternion → Euler na convenção legada (mesma saída que o site entrega ao patch Pd) |
-| Aceleração (IMU) | g | contagens do IMU (ICM-20948 ou MPU-9250) ÷ 8192 (fundo de escala ±4 g) |
-| Microfones esq./dir. (INMP441) | dBFS (AES17) + dB SPL estimado | **RMS e pico medidos no firmware** (janela de 20 ms; o pico amostrado no 16 kHz cheio) e enviados em cada pacote de orientação — ou seja, na taxa de orientação, não a 5 Hz. 0 dBFS do RMS = seno de fundo de escala (AES17); 0 dBFS do pico = amostra de fundo de escala, 3,01 dB abaixo para a mesma senoide. SPL ≈ dBFS + 120 (sensibilidade do INMP441: −26 dBFS @ 94 dB SPL, 1 kHz) |
+| Aceleração (IMU) | mg | já chega em milli-g no pacote de movimento v2 (1000 mg = 1 g; fundo de escala ±4 g = ±4000 mg) |
+| Microfones esq./dir. (INMP441) | dBFS (AES17) + dB SPL estimado | **RMS e pico medidos no firmware** (janela de 20 ms; o pico amostrado no 16 kHz cheio) em passos de 0,5 dB (1 byte cada) e enviados em cada pacote de orientação — ou seja, na taxa de orientação, não a 5 Hz. 0 dBFS do RMS = seno de fundo de escala (AES17); 0 dBFS do pico = amostra de fundo de escala, 3,01 dB abaixo para a mesma senoide. SPL ≈ dBFS + 120 (sensibilidade do INMP441: −26 dBFS @ 94 dB SPL, 1 kHz) |
 | CO₂ (SC8-CO2-5K) | ppm | o sensor emite 1 quadro/s sozinho por UART (9600 8N1); o firmware só escuta, nunca transmite (uma consulta pararia o fluxo do sensor). EMA opcional, TLV `0x28`. O pacote de CO₂ também traz o bit de **gatilho** (nível `0x29` com histerese `0x2A`) |
 | Potenciômetro | % do curso | ADC filtrado 0–4095 → 0–100 % (o limiar mapeado aparece no cartão e como linha pontilhada nos gráficos dos microfones) |
 
-O limiar do detector, o potenciômetro e as flags de saúde chegam num pacote próprio
-(`SensorsPacket`, 5 Hz, na característica de diagnóstico — ver
-`firmware/docs/protocol.md`); o envelope dos microfones (RMS e pico por canal) viaja
-junto com a orientação no `ImuPacket`, com o mesmo carimbo de tempo. No modo demo o
+O nível efetivo de disparo do detector, o potenciômetro e as flags de saúde chegam num pacote
+próprio (`SensorsPacket`, 5 Hz, na característica de diagnóstico — ver
+`firmware/docs/protocol.md`); o envelope dos microfones (RMS e pico por canal) e o bit de
+sopro viajam junto com a orientação no `ImuPacket` v2, com o mesmo carimbo de tempo. No modo demo o
 painel roda com dados sintéticos.
 
 ### Analisador de espectro (ajuste do passa-banda do sopro)

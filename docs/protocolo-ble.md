@@ -46,8 +46,9 @@ detectar sopro) e o **CO₂** do ambiente. Tudo isso sai da bola por **Bluetooth
 (BLE)**, em pacotes binários pequenos. A própria bola também calcula para onde o globo virtual
 deve apontar (a **navegação**) e manda o resultado pronto.
 
-Do outro lado podem estar três programas, até **dois ao mesmo tempo** (o firmware aceita duas
-conexões simultâneas e recusa a terceira):
+Do outro lado podem estar o site, a config-app ou o seu programa, até **dois ao mesmo tempo**
+(o firmware aceita duas conexões simultâneas e recusa a terceira). O Pure Data não fala
+Bluetooth: ele recebe os dados da config-app, por um WebSocket local, no external `[gaiaball]`:
 
 ```mermaid
 flowchart LR
@@ -63,15 +64,15 @@ flowchart LR
   FW -- "notify: IMU, CO₂, navegação" --> SITE["Site GaiaSenses<br/>Web Bluetooth"]
   FW -- "notify: tudo" --> APP["config-app<br/>bancada e ajustes"]
   APP -- "comandos e configuração" --> FW
-  FW -- "notify: IMU, CO₂, diagnóstico" --> PONTE["Ponte Pd<br/>Python + bleak"]
-  PONTE -- "UDP / FUDI" --> PD["Pure Data"]
+  APP -- "WebSocket local<br/>127.0.0.1:9478" --> EXT["external [gaiaball]"]
+  EXT -- "[r gaia.*]" --> PD["Pure Data"]
 ```
 
 | Programa | O que faz com a bola | Escreve na bola? |
 |---|---|---|
 | **Site GaiaSenses** | Move o globo do Mapbox com a navegação, abre composições quando o CO₂ dispara, repassa orientação, aceleração e CO₂ aos patches de Pure Data | Não |
 | **config-app** | Bancada: mostra tudo em gráficos, edita e salva a configuração, calibra | Sim (com PIN) |
-| **Ponte Pd** (`pd-gaiaball/`) | Repassa orientação, aceleração, envelope dos microfones, CO₂, níveis e diagnóstico ao Pure Data | Não |
+| **External `[gaiaball]`** (`pd-gaiaball/`) | Recebe da config-app, por WebSocket local, os pacotes de movimento, CO₂ e navegação e os publica no Pure Data (`[r gaia.*]`). Não conecta na bola | Não |
 | **O seu programa** | O que você quiser: este guia mostra como | Opcional |
 
 Ninguém precisa **parear** a bola: o firmware não usa pareamento nem criptografia de enlace.
@@ -153,14 +154,14 @@ A primeira tem **197 bytes**; a segunda, **20 bytes**.
 > variou de **185 a 205 bytes, com média de 199**; o de CO₂ tem 19 ou 20 bytes (ppm com 3 ou
 > 4 dígitos).
 
-O pacote binário equivalente da versão atual tem **31 bytes** e ainda carrega quatro números
-a mais (o envelope dos microfones). Em detalhe:
+O pacote binário equivalente da versão atual tem **27 bytes** e ainda carrega quatro números
+a mais (o envelope dos microfones, em passos de meio dB). Em detalhe:
 
-| | JSON (firmware original) | Binário v1 (firmware atual) |
+| | JSON (firmware original) | Binário (firmware atual) |
 |---|---|---|
-| Bytes por amostra de orientação | ≈ 199 (185–205) **+** 20 do CO₂ a cada leitura | **31**, com som incluído; o CO₂ (12 B) só sai quando muda ou 1 vez por segundo |
+| Bytes por amostra de orientação | ≈ 199 (185–205) **+** 20 do CO₂ a cada leitura | **27**, com som incluído; o CO₂ (12 B) só sai quando muda ou 1 vez por segundo |
 | A 50 amostras por segundo | ≈ 11 kB/s | ≈ 1,6 kB/s |
-| MTU mínimo para chegar inteiro | ≈ 208 | **34** |
+| MTU mínimo para chegar inteiro | ≈ 208 | **30** |
 | Pedaços de rádio por amostra, sem *Data Length Extension* (27 B por pedaço) | 8 (orientação) + 1 (CO₂) | **2** |
 | Como o receptor lê | Varre texto, converte texto em número, cria objetos | Lê números em posições fixas |
 | Valor inválido (NaN) | Vira `null` no meio do JSON | Flag `quatValid = 0`, explícita |
@@ -170,10 +171,10 @@ Os motivos, um por um:
 
 1. **Tamanho e MTU.** Com o MTU padrão (20 bytes úteis), o JSON de orientação chegaria
    cortado em `{"quat":{"quat_w":0.` — os primeiros 20 caracteres, inúteis. Ele só funciona
-   quando a central negocia um MTU de uns 208 bytes ou mais. O binário precisa de 34.
+   quando a central negocia um MTU de uns 208 bytes ou mais. O binário precisa de 30.
 2. **Rádio.** Sem *Data Length Extension*, o enlace leva no máximo 27 bytes por pedaço.
-   197 bytes de JSON + 7 de cabeçalhos (ATT e L2CAP) = 204 bytes = 8 pedaços; os 31 bytes do
-   binário + 7 = 38 bytes = 2 pedaços. Menos pedaços por amostra deixam espaço para taxas
+   197 bytes de JSON + 7 de cabeçalhos (ATT e L2CAP) = 204 bytes = 8 pedaços; os 27 bytes do
+   binário + 7 = 34 bytes = 2 pedaços. Menos pedaços por amostra deixam espaço para taxas
    maiores (até 200 amostras por segundo) e para a navegação no mesmo enlace.
 3. **Custo de leitura.** Ler JSON exige percorrer cada caractere, converter texto decimal em
    número e alocar objetos novos a cada amostra, dezenas de vezes por segundo. No ESP32,
@@ -345,7 +346,7 @@ Os 8 primeiros bytes de **todos** os pacotes têm a mesma forma:
 
 | Offset | Tam. | Tipo | Campo | Significado |
 |---|---|---|---|---|
-| 0 | 1 | u8 | `version` | Versão do protocolo: sempre **1** |
+| 0 | 1 | u8 | `version` | Versão do pacote: **1** em todos os tipos, menos o IMU (`0x01`), que é **2** |
 | 1 | 1 | u8 | `type` | Tipo do pacote: `0x01` a `0x07` |
 | 2 | 2 | u16 | `seq` | Contador deste tipo de pacote |
 | 4 | 4 | u32 | tempo | `timestampUs`, `timestampMs` ou `uptimeS`, conforme o tipo |
@@ -354,7 +355,7 @@ Resumo dos tipos (o "MTU mínimo" é o tamanho + 3 bytes do cabeçalho ATT):
 
 | Tipo | Nome | Tamanho | MTU mínimo | Característica |
 |---|---|---|---|---|
-| `0x01` | IMU (orientação + aceleração + som) | 31 B | 34 | 1 |
+| `0x01` | IMU (orientação + aceleração + som + sopro), **versão 2** | 27 B | 30 | 1 |
 | `0x02` | CO₂ | 12 B | 15 | 3 |
 | `0x03` | Diagnóstico | 34 B | 37 | 5 |
 | `0x04` | Sensores (níveis de áudio e potenciômetro) | 23 B | 26 | 5 |
@@ -364,13 +365,14 @@ Resumo dos tipos (o "MTU mínimo" é o tamanho + 3 bytes do cabeçalho ATT):
 
 <a id="pkt-imu"></a>
 
-### IMU — tipo `0x01`, 31 bytes
+### IMU — tipo `0x01`, 27 bytes, versão 2
 
-A orientação da bola, a aceleração e o som dos microfones, todos do mesmo instante.
+A orientação da bola, a aceleração, o som dos microfones e o sopro, todos do mesmo instante.
+É o **único** pacote na versão 2; os demais continuam na versão 1.
 
 | Offset | Tam. | Tipo | Campo | Unidade / escala | Significado |
 |---|---|---|---|---|---|
-| 0 | 1 | u8 | `version` | — | 1 |
+| 0 | 1 | u8 | `version` | — | **2** |
 | 1 | 1 | u8 | `type` | — | `0x01` |
 | 2 | 2 | u16 | `seq` | — | Contador de pacotes IMU |
 | 4 | 4 | u32 | `timestampUs` | µs | Instante da amostra |
@@ -378,14 +380,14 @@ A orientação da bola, a aceleração e o som dos microfones, todos do mesmo in
 | 10 | 2 | i16 | `quatX` | Q14 | Quaternião, x |
 | 12 | 2 | i16 | `quatY` | Q14 | Quaternião, y |
 | 14 | 2 | i16 | `quatZ` | Q14 | Quaternião, z |
-| 16 | 2 | i16 | `accX` | contagens (÷ 8192 = g) | Aceleração x |
-| 18 | 2 | i16 | `accY` | contagens | Aceleração y |
-| 20 | 2 | i16 | `accZ` | contagens | Aceleração z |
+| 16 | 2 | i16 | `accX` | mg (÷ 1000 = g) | Aceleração x |
+| 18 | 2 | i16 | `accY` | mg | Aceleração y |
+| 20 | 2 | i16 | `accZ` | mg | Aceleração z |
 | 22 | 1 | u8 | `flags` | bits | Veja abaixo |
-| 23 | 2 | i16 | `audioRmsDbX100[0]` | dBFS × 100 | RMS do microfone esquerdo |
-| 25 | 2 | i16 | `audioRmsDbX100[1]` | dBFS × 100 | RMS do microfone direito |
-| 27 | 2 | i16 | `audioPeakDbX100[0]` | dBFS × 100 | Pico do microfone esquerdo |
-| 29 | 2 | i16 | `audioPeakDbX100[1]` | dBFS × 100 | Pico do microfone direito |
+| 23 | 1 | u8 | `audioRmsHalfDb[0]` | meio-dB: `dBFS = valor / 2 − 120` | RMS do microfone esquerdo |
+| 24 | 1 | u8 | `audioRmsHalfDb[1]` | meio-dB | RMS do microfone direito |
+| 25 | 1 | u8 | `audioPeakHalfDb[0]` | meio-dB | Pico do microfone esquerdo |
+| 26 | 1 | u8 | `audioPeakHalfDb[1]` | meio-dB | Pico do microfone direito |
 
 **Flags:**
 
@@ -394,17 +396,25 @@ A orientação da bola, a aceleração e o som dos microfones, todos do mesmo in
 | 0 | `0x01` | `quatValid` | O quaternião é válido. Desligado (falha numérica na fusão), o quaternião é a última orientação boa ou a identidade e não deve ser usado. |
 | 1 | `0x02` | `nineAxis` | O modo Quat9 está ativo (fusão com magnetômetro). |
 | 2 | `0x04` | `moving` | A orientação mudou mais de 0,25° desde a amostra anterior. |
-| 3 | `0x08` | `audioValid` | Os quatro níveis de som valem. Desligado, todos leem −120,00 dBFS. |
+| 3 | `0x08` | `audioValid` | Os quatro níveis de som valem. Desligado, todos leem −120 dBFS (byte 0). |
+| 4 | `0x10` | `breath` | A bola reconheceu um sopro. Fica ligado desde o disparo do detector até ele rearmar, e é **travado até ser enviado**: se o estado esteve ligado em qualquer instante desde o pacote anterior, o próximo leva 1. Assim um sopro curto nunca cai entre dois pacotes. |
 
 - **Orientação.** É a orientação **tratada**: já com a calibração de montagem, o zero e os
   filtros configurados. A fusão (filtro de Madgwick) roda no ESP32.
-- **Aceleração.** Contagens cruas do IMU em ±4 g: divida por 8192 para ter g. Os filtros de
-  aceleração (registradores `0x04` e `0x1D`) agem antes do envio, na mesma escala.
+- **Aceleração.** Em **milli-g** (1 g = 1000 mg): o firmware converte as contagens do IMU
+  (±4 g, 8192 por g, nos dois chips) com `round(contagens × 1000 / 8192)`, então ±4 g
+  lê ±4000. Os filtros de aceleração (registradores `0x04` e `0x1D`) agem antes do envio,
+  na mesma escala.
 - **Som.** Medido no firmware numa janela de 20 ms que termina nesta amostra (o pico é
   acompanhado nos 16 kHz completos). RMS em dBFS AES17 (0 dBFS = senoide de fundo de escala);
   pico em dBFS de amplitude (0 dBFS = amostra de fundo de escala). A mesma senoide aparece
-  3,01 dB mais baixa no pico. Faixa no fio: −12000 (−120,00 dBFS) a 6000 (+60,00).
-- **Taxa:** `imuNotifyHz` (registrador `0x02`, 10–200, padrão 50). **MTU mínimo:** 34.
+  3,01 dB mais baixa no pico. Cada nível é um byte em passos de **0,5 dB**:
+  `valor = clamp(round((dBFS + 120) × 2), 0, 255)` e, na leitura, `dBFS = valor / 2 − 120`.
+  O byte 0 é o piso (−120 dBFS) e o 255 é +7,5 dBFS.
+- **Sopro.** O detector e a sua configuração (limiar, medida RMS ou pico, absoluto ou
+  adaptativo, rearme) estão nos registradores `0x2B`–`0x2E`, veja a
+  [tabela](#tabela-tlv). Com o áudio desligado (`0x10` = 0) o bit fica sempre em 0.
+- **Taxa:** `imuNotifyHz` (registrador `0x02`, 10–200, padrão 50). **MTU mínimo:** 30.
 
 <a id="pkt-co2"></a>
 
@@ -494,12 +504,18 @@ Níveis de áudio e do potenciômetro, 5 vezes por segundo, para os gráficos da
 | 4 | 4 | u32 | `timestampMs` | ms | Instante do envio |
 | 8 | 4 | u32 | `audioRmsL` | contagens de 24 bits | RMS do microfone esquerdo |
 | 12 | 4 | u32 | `audioRmsR` | contagens de 24 bits | RMS do microfone direito |
-| 16 | 4 | u32 | `audioThreshold` | contagens de 24 bits | Limiar do detector de sopro |
+| 16 | 4 | u32 | `audioThreshold` | contagens de 24 bits | Nível efetivo de disparo do detector de sopro, na medida ativa (veja abaixo) |
 | 20 | 2 | u16 | `potRaw` | 0–4095 | Potenciômetro (ADC de 12 bits, filtrado) |
-| 22 | 1 | u8 | `flags` | bits | bit0 `audioOk`, bit1 `audioEnabled`, bit2 `potControlsThreshold`, bit3 `audioFiltered` (RMS medido depois do passa-banda) |
+| 22 | 1 | u8 | `flags` | bits | bit0 `audioOk`, bit1 `audioEnabled`, bit2 `potControlsThreshold`, bit3 `audioFiltered` (RMS medido depois do passa-banda), bit4 `metricPeak` (o detector mede o pico; 0 = RMS, registrador `0x2C`), bit5 `adaptive` (detector adaptativo; 0 = absoluto, registrador `0x2D`) |
 
-Conversões: `dBFS = 20·log10(rms·√2 / 2²³)` (2²³ = 8388608 é o fundo de escala); percurso do
-potenciômetro em % = `potRaw / 4095 × 100`. **MTU mínimo:** 26.
+`audioThreshold` é o **nível efetivo de disparo**, em contagens de 24 bits da medida que o
+bit 4 indica. No detector absoluto é o próprio limiar; no adaptativo (bit 5) é a linha de
+base lenta mais o limiar, então acompanha o ruído da sala. O limiar em si é configurado em
+dBFS (potenciômetro, ou o registrador `0x2B` quando `0x14` = 0) e o firmware o converte.
+
+Conversões: RMS, `dBFS = 20·log10(rms·√2 / 2²³)`; pico, `dBFS = 20·log10(valor / 2²³)`
+(2²³ = 8388608 é o fundo de escala); percurso do potenciômetro em % = `potRaw / 4095 × 100`.
+**MTU mínimo:** 26.
 
 <a id="pkt-audio"></a>
 
@@ -875,11 +891,10 @@ e [`GaiaConfig.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gai
 | id | Nome | Tipo | Faixa aceita | Padrão | O que faz |
 |---|---|---|---|---|---|
 | `0x10` | `audioEnabled` | u8 | 0–255 | 1 | 0 = áudio desligado; outro valor = ligado |
-| `0x11` | `audioFastAlphaX1000` | u16 | 1–1000 | 250 | Média rápida do detector de sopro, × 1000 |
-| `0x12` | `audioSlowAlphaX1000` | u16 | 1–1000 | 995 | Média lenta do detector de sopro, × 1000 |
-| `0x13` | `debounceMs` | u16 | 0–65535 | 300 | Tempo mínimo entre dois sopros, ms |
-| `0x14` | `potControlsThreshold` | u8 | 0–255 | 1 | ≠ 0: o potenciômetro define o limiar; 0: usa `0x15` |
-| `0x15` | `thresholdFixed` | u32 | 0–4294967295 | 100000 | Limiar fixo (contagens de 24 bits) |
+| `0x11` | `audioFastAlphaX1000` | u16 | 1–1000 | 250 | Média rápida do detector de sopro, × 1000; **só no detector adaptativo** (`0x2D` = 1) |
+| `0x12` | `audioSlowAlphaX1000` | u16 | 1–1000 | 995 | Média lenta (linha de base), × 1000; **só no detector adaptativo** |
+| `0x13` | `debounceMs` | u16 | 0–65535 | 300 | Tempo mínimo entre dois sopros, ms (nos dois detectores) |
+| `0x14` | `potControlsThreshold` | u8 | 0–255 | 1 | ≠ 0: o potenciômetro define o limiar (ADC 0…4095 → −60…0 dBFS, linear, histerese de 0,5 dB); 0: usa `0x2B` |
 | `0x16` | `audioBpfEnabled` | u8 | 0–1 | 1 | Passa-banda do sopro antes do detector |
 | `0x17` | `audioHpHz` | u16 | 1–7000 | 10 | Corte do passa-altas, Hz |
 | `0x18` | `audioHpQX100` | u16 | 10–2000 | 500 | Q do passa-altas × 100 |
@@ -887,6 +902,10 @@ e [`GaiaConfig.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gai
 | `0x1A` | `audioLpQX100` | u16 | 10–2000 | 500 | Q do passa-baixas × 100 |
 | `0x1B` | `potEmaAlphaX1000` | u16 | 1–1000 | 300 | Suavização do potenciômetro, × 1000 |
 | `0x1F` | `audioRawStream` | u8 | 0–1 | 0 | Liga o pacote de áudio cru (`0x05`) |
+| `0x2B` | `breathThresholdNegDbX100` | u16 | 0–9000 | 3550 | Limiar fixo do sopro, guardado **sem sinal** como −dBFS × 100 (3550 = −35,5 dBFS), na escala da medida `0x2C`. Vale com `0x14` = 0. Absoluto: a linha de disparo; adaptativo: quanto o som precisa subir acima da linha de base |
+| `0x2C` | `breathMetric` | u8 | 0–1 | 0 | O que o detector mede: 0 = RMS, 1 = pico |
+| `0x2D` | `breathDetector` | u8 | 0–1 | 0 | 0 = absoluto (a cada bloco de 5 ms, dispara se **qualquer** microfone passar da linha); 1 = adaptativo (a cada 3 blocos, envelope rápido menos linha de base, do microfone mais alto) |
+| `0x2E` | `breathRearmDb` | u8 | 0–20 | 3 | O detector rearma quando o nível cai abaixo de `limiar × 10^(−valor/20)`; dB inteiros |
 
 **CO₂**
 
@@ -930,7 +949,11 @@ e [`GaiaConfig.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gai
 | `0x6A` | `joyStopDegSX10` | u16 | 1–2000 | 5 | Joystick: velocidade comandada de parada, °/s × 10; precisa ser < `0x69` |
 
 **Ids reservados, nunca reutilizar:** `0x21` e `0x27` (configurações antigas do sensor de
-CO₂) e `0x33` (pino do LED de status, removido com o comando de LED antigo).
+CO₂), `0x33` (pino do LED de status, removido com o comando de LED antigo) e `0x15` (era o
+`thresholdFixed`, em contagens de RMS; foi trocado pelo limiar em dBFS `0x2B`). Este é o id
+do **registrador**, não o do comando `0x15` (captura do magnetômetro), que continua valendo.
+Uma escrita que contenha um id reservado é rejeitada inteira. Um valor de `0x15` salvo por
+firmware antigo **não** é convertido: o `0x2B` começa no padrão.
 
 O comando `0x11` grava essa mesma serialização TLV na memória. Ao ligar, a bola a carrega
 **com tolerância**: ids desconhecidos e valores inválidos são pulados, e um par cruzado
@@ -971,11 +994,12 @@ sequenceDiagram
 3. **MTU.** Peça **247** onde a plataforma permitir (Android: `requestMtu(247)`; ESP32 e
    NimBLE como central: `setMTU`). No Web Bluetooth e no bleak a troca é feita pelo sistema
    e não se escolhe o valor; no bleak dá para ver o resultado em `client.mtu_size`. O mínimo
-   que importa: 34 para o IMU, 25 para a navegação, 211 para o áudio cru.
+   que importa: 30 para o IMU, 25 para a navegação, 211 para o áudio cru.
 4. **Descubra** o serviço e as características. Se a `…0006` não existir, o firmware é
    anterior à navegação: siga sem ela.
 5. **Assine** as características que interessam. Para o site, `…0001`, `…0003` e `…0006`.
-6. **Valide cada notificação** antes de ler qualquer campo: `version == 1`, `type` igual ao
+6. **Valide cada notificação** antes de ler qualquer campo: `version` igual à esperada para o
+   tipo (2 para o IMU, 1 para os demais), `type` igual ao
    esperado e tamanho **maior ou igual** ao mínimo. **Aceite pacotes maiores** e ignore os
    bytes extras: é assim que o protocolo cresce sem quebrar ninguém.
 7. Na `…0005`, **despache pelo byte de tipo** (`0x03`, `0x04`, `0x05`, `0x06`) e ignore os
@@ -1010,39 +1034,43 @@ testar no Node), e o programa que conecta.
 
 ```js
 // arquivo: gaiaball-decode.js
-// Decodificadores puros do protocolo BLE v1 da Gaiaball (sem Bluetooth: testáveis no Node).
+// Decodificadores puros do protocolo BLE da Gaiaball (IMU v2, demais pacotes v1); sem Bluetooth, testáveis no Node.
 // Todo número de vários bytes é little-endian: por isso o `true` em cada getXxx(o, true).
 
-export const PROTOCOL_VERSION = 1;
+// Versão esperada por tipo: só o IMU está na versão 2.
+export const VERSION_OF = (type) => (type === 0x01 ? 2 : 1);
 export const TYPE = { IMU: 0x01, CO2: 0x02, DIAG: 0x03, SENSORS: 0x04, AUDIO: 0x05, MAG: 0x06, NAV: 0x07 };
 // Tamanhos MÍNIMOS: um firmware futuro pode acrescentar bytes no fim do pacote.
-export const MIN_SIZE = { 0x01: 31, 0x02: 12, 0x03: 34, 0x04: 23, 0x05: 208, 0x06: 106, 0x07: 22 };
+export const MIN_SIZE = { 0x01: 27, 0x02: 12, 0x03: 34, 0x04: 23, 0x05: 208, 0x06: 106, 0x07: 22 };
 
-/** Tipo do pacote (byte 1), ou -1 se não for um pacote v1. Use na …0005, que mistura tipos. */
+/** Tipo do pacote (byte 1), ou -1 se a versão não é a esperada para o tipo. Use na …0005, que mistura tipos. */
 export function packetType(dv) {
-  return dv.byteLength >= 2 && dv.getUint8(0) === PROTOCOL_VERSION ? dv.getUint8(1) : -1;
+  if (dv.byteLength < 2) return -1;
+  const type = dv.getUint8(1);
+  return dv.getUint8(0) === VERSION_OF(type) ? type : -1;
 }
 
 function headerOk(dv, type) {
-  return dv.byteLength >= MIN_SIZE[type] && dv.getUint8(0) === PROTOCOL_VERSION && dv.getUint8(1) === type;
+  return dv.byteLength >= MIN_SIZE[type] && dv.getUint8(0) === VERSION_OF(type) && dv.getUint8(1) === type;
 }
 
 export function decodeImu(dv) {
   if (!headerOk(dv, TYPE.IMU)) return null;
   const q14 = (o) => dv.getInt16(o, true) / 16384;
-  const db = (o) => dv.getInt16(o, true) / 100;
+  const db = (o) => dv.getUint8(o) / 2 - 120; // meio-dB: 0 = piso (−120 dBFS)
   const flags = dv.getUint8(22);
   return {
     seq: dv.getUint16(2, true),
     tUs: dv.getUint32(4, true),
     quat: { w: q14(8), x: q14(10), y: q14(12), z: q14(14) },
-    acc: [dv.getInt16(16, true), dv.getInt16(18, true), dv.getInt16(20, true)], // g = contagens / 8192
+    acc: [dv.getInt16(16, true), dv.getInt16(18, true), dv.getInt16(20, true)], // mg (1000 mg = 1 g)
     quatValid: (flags & 0x01) !== 0,
     nineAxis: (flags & 0x02) !== 0,
     moving: (flags & 0x04) !== 0,
     audioValid: (flags & 0x08) !== 0,
-    rmsDb: [db(23), db(25)], // [esquerdo, direito], dBFS
-    peakDb: [db(27), db(29)],
+    breath: (flags & 0x10) !== 0, // sopro reconhecido (travado até ser enviado)
+    rmsDb: [db(23), db(24)], // [esquerdo, direito], dBFS
+    peakDb: [db(25), db(26)],
   };
 }
 
@@ -1232,41 +1260,47 @@ decodificação, só com a biblioteca padrão, e o programa que conecta. Rode co
 
 ```python
 # arquivo: gaiaball_decode.py
-# Decodificadores puros do protocolo BLE v1 da Gaiaball: só biblioteca padrão, testáveis sem Bluetooth.
+# Decodificadores puros do protocolo BLE da Gaiaball (IMU v2, demais v1): só biblioteca padrão, testáveis sem Bluetooth.
 # No struct, '<' quer dizer little-endian sem preenchimento; B=u8, H=u16, h=i16, I=u32, i=i32.
 import math
 import struct
 
-PROTOCOL_VERSION = 1
+def version_of(ptype: int) -> int:
+    """Versão esperada por tipo: só o IMU (0x01) está na versão 2."""
+    return 2 if ptype == 0x01 else 1
+
+
 # Tamanhos MÍNIMOS por tipo: um firmware futuro pode acrescentar bytes no fim do pacote.
-MIN_SIZE = {0x01: 31, 0x02: 12, 0x03: 34, 0x04: 23, 0x05: 208, 0x06: 106, 0x07: 22}
+MIN_SIZE = {0x01: 27, 0x02: 12, 0x03: 34, 0x04: 23, 0x05: 208, 0x06: 106, 0x07: 22}
 
 
 def packet_type(data: bytes) -> int:
-    """Tipo do pacote (byte 1), ou -1 se não for um pacote v1. Use na …0005, que mistura tipos."""
-    return data[1] if len(data) >= 2 and data[0] == PROTOCOL_VERSION else -1
+    """Tipo do pacote (byte 1), ou -1 se a versão não é a esperada para o tipo. Use na …0005, que mistura tipos."""
+    return data[1] if len(data) >= 2 and data[0] == version_of(data[1]) else -1
 
 
 def _header_ok(data: bytes, ptype: int) -> bool:
-    return len(data) >= MIN_SIZE[ptype] and data[0] == PROTOCOL_VERSION and data[1] == ptype
+    return len(data) >= MIN_SIZE[ptype] and data[0] == version_of(ptype) and data[1] == ptype
 
 
 def decode_imu(data: bytes):
     if not _header_ok(data, 0x01):
         return None
     (seq, t_us, qw, qx, qy, qz, ax, ay, az, flags,
-     rms_l, rms_r, pk_l, pk_r) = struct.unpack_from("<HI7hB4h", data, 2)
+     rms_l, rms_r, pk_l, pk_r) = struct.unpack_from("<HI7hB4B", data, 2)
     return {
         "seq": seq,
         "t_us": t_us,
         "quat": (qw / 16384, qx / 16384, qy / 16384, qz / 16384),  # (w, x, y, z)
-        "acc": (ax, ay, az),  # g = contagens / 8192
+        "acc": (ax, ay, az),  # mg (1000 mg = 1 g)
         "quat_valid": bool(flags & 0x01),
         "nine_axis": bool(flags & 0x02),
         "moving": bool(flags & 0x04),
         "audio_valid": bool(flags & 0x08),
-        "rms_db": (rms_l / 100, rms_r / 100),  # (esquerdo, direito), dBFS
-        "peak_db": (pk_l / 100, pk_r / 100),
+        "breath": bool(flags & 0x10),  # sopro reconhecido (travado até ser enviado)
+        # meio-dB: dBFS = valor / 2 - 120; (esquerdo, direito)
+        "rms_db": (rms_l / 2 - 120, rms_r / 2 - 120),
+        "peak_db": (pk_l / 2 - 120, pk_r / 2 - 120),
     }
 
 
@@ -1446,7 +1480,7 @@ confere os vetores de ouro.
 
 ```c
 /* arquivo: gaiaball_decode.c
- * Decodificação portátil do protocolo BLE v1 da Gaiaball: byte a byte, sem cast de struct,
+ * Decodificação portátil do protocolo BLE da Gaiaball (IMU v2, demais v1): byte a byte, sem cast de struct,
  * independente de endianness e alinhamento.
  * Compile e rode:  gcc -Wall -Wextra -std=c99 -o gaiaball_decode gaiaball_decode.c -lm && ./gaiaball_decode
  */
@@ -1477,9 +1511,9 @@ typedef struct {
   uint16_t seq;
   uint32_t t_us;
   double qw, qx, qy, qz;  /* Q14 / 16384 */
-  int16_t acc[3];         /* contagens; g = contagens / 8192 */
-  uint8_t flags;          /* bit0 quatValid, bit1 nineAxis, bit2 moving, bit3 audioValid */
-  double rms_db[2];       /* esquerdo, direito */
+  int16_t acc[3];         /* mg (1000 mg = 1 g) */
+  uint8_t flags;          /* bit0 quatValid, bit1 nineAxis, bit2 moving, bit3 audioValid, bit4 breath */
+  double rms_db[2];       /* esquerdo, direito; dBFS = byte / 2 - 120 */
   double peak_db[2];
 } gb_imu;
 
@@ -1503,7 +1537,7 @@ typedef struct {
  * O tamanho é MÍNIMO: bytes a mais (de um firmware futuro) são ignorados. */
 int gb_decode_imu(const uint8_t *b, size_t n, gb_imu *o) {
   int i;
-  if (n < 31 || b[0] != 1 || b[1] != 0x01) return 0;
+  if (n < 27 || b[0] != 2 || b[1] != 0x01) return 0;
   o->seq = rd_u16(b + 2);
   o->t_us = rd_u32(b + 4);
   o->qw = rd_i16(b + 8) / 16384.0;
@@ -1513,8 +1547,8 @@ int gb_decode_imu(const uint8_t *b, size_t n, gb_imu *o) {
   for (i = 0; i < 3; i++) o->acc[i] = rd_i16(b + 16 + 2 * i);
   o->flags = b[22];
   for (i = 0; i < 2; i++) {
-    o->rms_db[i] = rd_i16(b + 23 + 2 * i) / 100.0;
-    o->peak_db[i] = rd_i16(b + 27 + 2 * i) / 100.0;
+    o->rms_db[i] = b[23 + i] / 2.0 - 120.0;
+    o->peak_db[i] = b[25 + i] / 2.0 - 120.0;
   }
   return 1;
 }
@@ -1562,15 +1596,18 @@ static void check(int ok, const char *what) {
 static int same(double a, double b) { return fabs(a - b) < 1e-9; }
 
 int main(void) {
-  static const uint8_t imu[31] = {0x01, 0x01, 0x02, 0x01, 0x0D, 0x0C, 0x0B, 0x0A, 0x00, 0x40, 0x00,
-                                  0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0xFE, 0xFF, 0x03, 0x00,
-                                  0x0B, 0x00, 0x00, 0x30, 0xF8, 0x00, 0x00, 0xA6, 0xFD};
+  static const uint8_t imu[27] = {0x02, 0x01, 0x02, 0x01, 0x0D, 0x0C, 0x0B, 0x0A, 0x00, 0x40, 0x00,
+                                  0x00, 0x00, 0x00, 0x00, 0x00, 0xE8, 0x03, 0x0C, 0xFE, 0x97, 0x00,
+                                  0x0B, 0xF0, 0xC8, 0xF0, 0xE4};
+  static const uint8_t imu_breath[27] = {0x02, 0x01, 0x02, 0x01, 0x0D, 0x0C, 0x0B, 0x0A, 0x00, 0x40, 0x00,
+                                         0x00, 0x00, 0x00, 0x00, 0x00, 0xE8, 0x03, 0x0C, 0xFE, 0x97, 0x00,
+                                         0x1B, 0xF0, 0xC8, 0xF0, 0xE4};
   static const uint8_t co2[12] = {0x01, 0x02, 0x02, 0x01, 0x0D, 0x0C, 0x0B, 0x0A, 0xE8, 0x03, 0x05, 0x07};
   static const uint8_t nav_a[22] = {0x01, 0x07, 0x02, 0x01, 0x4E, 0x61, 0xBC, 0x00, 0x01, 0x03, 0xB8,
                                     0xE3, 0x58, 0xF2, 0x36, 0x16, 0xF3, 0xE3, 0x94, 0x11, 0x7B, 0x00};
   static const uint8_t nav_b[22] = {0x01, 0x07, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02, 0x06, 0x00,
                                     0xE9, 0xA4, 0x35, 0x00, 0x2E, 0xB6, 0x94, 0xB0, 0xB9, 0xFF, 0xFF};
-  gb_imu i;
+  gb_imu i, ib;
   gb_co2 c;
   gb_nav a, b;
   double roll, pitch, yaw;
@@ -1578,10 +1615,12 @@ int main(void) {
   check(gb_decode_imu(imu, sizeof imu, &i), "IMU decodifica");
   check(i.seq == 258 && i.t_us == 0x0A0B0C0Du, "IMU seq 258, tUs 168496141");
   check(same(i.qw, 1.0) && same(i.qx, 0.0) && same(i.qy, 0.0) && same(i.qz, 0.0), "IMU quat (1, 0, 0, 0)");
-  check(i.acc[0] == 1 && i.acc[1] == -2 && i.acc[2] == 3, "IMU acc (1, -2, 3)");
+  check(i.acc[0] == 1000 && i.acc[1] == -500 && i.acc[2] == 151, "IMU acc (1000, -500, 151) mg");
   check(i.flags == 0x0B, "IMU flags 0x0B");
-  check(same(i.rms_db[0], 0.0) && same(i.rms_db[1], -20.0), "IMU rms (0.00, -20.00) dBFS");
-  check(same(i.peak_db[0], 0.0) && same(i.peak_db[1], -6.02), "IMU pico (0.00, -6.02) dBFS");
+  check(same(i.rms_db[0], 0.0) && same(i.rms_db[1], -20.0), "IMU rms (0, -20) dBFS");
+  check(same(i.peak_db[0], 0.0) && same(i.peak_db[1], -6.0), "IMU pico (0, -6) dBFS");
+  check(!(i.flags & 0x10), "IMU sem sopro");
+  check(gb_decode_imu(imu_breath, sizeof imu_breath, &ib) && ib.flags == 0x1B && (ib.flags & 0x10), "IMU com sopro (flags 0x1B)");
   gb_euler_legacy(i.qw, i.qx, i.qy, i.qz, &roll, &pitch, &yaw);
   check(same(roll, 0.0) && same(pitch, 0.0) && same(yaw, 0.0), "Euler da identidade (0, 0, 0)");
   gb_euler_legacy(sqrt(0.5), 0.0, 0.0, sqrt(0.5), &roll, &pitch, &yaw);
@@ -1622,21 +1661,31 @@ e os decodificadores da config-app, do site e dos exemplos acima são conferidos
 mesmos bytes. Se o seu decodificador der outra coisa, ele está errado. Bytes em hexadecimal,
 na ordem em que chegam.
 
-**IMU (`0x01`, 31 bytes)**
+**IMU v2 (`0x01`, 27 bytes)**
 
 ```
-01 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 01 00 FE FF 03 00 0B 00 00 30 F8 00 00 A6 FD
+02 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 E8 03 0C FE 97 00 0B F0 C8 F0 E4
 ```
 
 | Campo | Bytes | Valor |
 |---|---|---|
+| `version` | `02` | 2 |
 | `seq` | `02 01` | 258 |
 | `timestampUs` | `0D 0C 0B 0A` | 0x0A0B0C0D = 168496141 |
 | quaternião (w, x, y, z) | `00 40`, `00 00` ×3 | (16384, 0, 0, 0) → (1, 0, 0, 0) |
-| aceleração (x, y, z) | `01 00`, `FE FF`, `03 00` | (1, −2, 3) |
-| `flags` | `0B` | `quatValid` + `nineAxis` + `audioValid` (`moving` desligado) |
-| RMS (esq., dir.) | `00 00`, `30 F8` | (0, −2000) → (0,00, −20,00) dBFS |
-| pico (esq., dir.) | `00 00`, `A6 FD` | (0, −602) → (0,00, −6,02) dBFS |
+| aceleração (x, y, z) | `E8 03`, `0C FE`, `97 00` | (1000, −500, 151) mg (vindos de 8192, −4096 e 1234 contagens) |
+| `flags` | `0B` | `quatValid` + `nineAxis` + `audioValid` (`moving` e `breath` desligados) |
+| RMS (esq., dir.) | `F0`, `C8` | (240, 200) → (0, −20) dBFS |
+| pico (esq., dir.) | `F0`, `E4` | (240, 228) → (0, −6) dBFS (−6,02 arredondado ao passo de 0,5 dB) |
+
+**IMU v2 com sopro (`0x01`, 27 bytes)**
+
+```
+02 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 E8 03 0C FE 97 00 1B F0 C8 F0 E4
+```
+
+O mesmo pacote com `flags` = `1B` = `quatValid` + `nineAxis` + `audioValid` + `breath`. O
+decodificador deve devolver `breath` verdadeiro e o resto igual.
 
 **CO₂ (`0x02`, 12 bytes)**
 
@@ -1646,6 +1695,17 @@ na ordem em que chegam.
 
 `seq` 258 · `timestampMs` 168496141 · `ppm` 1000 (`E8 03`) · `flags` 0x05 = `valid` +
 `virtualActive` (`stale` e `trigger` desligados) · `ageS` 7.
+
+**Sensores com os bits do detector (`0x04`, 23 bytes)**
+
+```
+01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 37
+```
+
+`seq` 7 · `timestampMs` 123456 · `audioRmsL` 12345 · `audioRmsR` 23456 · `audioThreshold`
+100000 · `potRaw` 2048 · `flags` 0x37 = `audioOk` + `audioEnabled` + `potControlsThreshold` +
+`metricPeak` + `adaptive` (`audioFiltered` desligado): o limiar de 100000 é então em contagens
+de **pico**, e o nível efetivo do detector adaptativo.
 
 **Navegação A (`0x07`, 22 bytes)**
 
@@ -1674,7 +1734,7 @@ arredondamento para centésimos pode fazer um rumo de −179,996° chegar como �
 
 ### Convenção de Euler legada
 
-Os ângulos de Euler **não** vão no fio. O site e a ponte Pd os calculam a partir do
+Os ângulos de Euler **não** vão no fio. O site e a config-app (esta, para o Pd) os calculam a partir do
 quaternião com a convenção do firmware original, para que os patches de Pure Data recebam os
 mesmos números de antes:
 
@@ -1695,11 +1755,13 @@ Valores de referência: o quaternião identidade (1, 0, 0, 0), o do vetor IMU ac
 
 ## Compatibilidade e versionamento
 
-O protocolo é a **versão 1** e continua 1 enquanto toda mudança for **aditiva**. As regras:
+Cada tipo de pacote tem a sua versão. Todos estão na **versão 1**, menos o IMU (`0x01`), que
+está na **versão 2**. Uma versão só muda quando a mudança deixa de ser **aditiva**. As regras:
 
 1. **Campos novos só no fim do pacote.** Deslocamentos, tipos e escalas que já existem nunca
    mudam. Exemplos reais: o pacote IMU cresceu de 23 para 31 bytes (envelope do som, firmware
-   v8) e o de diagnóstico de 23 para 32 (v7) e depois 34 bytes (v8), sempre com versão 1.
+   v8) e o de diagnóstico de 23 para 32 (v7) e depois 34 bytes (v8), sempre com versão 1
+   (o IMU só mudou de versão depois, veja a regra 8).
 2. **Decodificadores aceitam pacotes maiores.** Confira `tamanho ≥ mínimo`, nunca
    `tamanho == exato`. Um decodificador do site que exigia tamanho exato parou de funcionar
    quando o IMU cresceu, e um pacote recusado é indistinguível de uma bola desligada.
@@ -1716,9 +1778,14 @@ O protocolo é a **versão 1** e continua 1 enquanto toda mudança for **aditiva
    desconhecido derruba a escrita inteira.
 7. **Ids aposentados não voltam:** registradores `0x21`, `0x27` e `0x33`, opcodes `0x00` e
    `0x01`.
-8. **Mudança incompatível = versão nova.** Se um dia for preciso mudar o significado de algo
-   que já existe, o byte de versão muda, e os decodificadores v1 descartam esses pacotes em
-   vez de lê-los errado.
+8. **Mudança incompatível = versão nova, só do tipo afetado.** Se for preciso mudar o
+   significado de algo que já existe, o byte de versão daquele tipo muda, e os decodificadores
+   antigos descartam esses pacotes em vez de lê-los errado. **O primeiro caso real é o IMU:**
+   a aceleração passou de contagens do sensor para **mg**, o som de `int16` em dBFS × 100 para
+   `u8` em meio-dB, e o bit 4 de `flags` ganhou o sopro. Como o significado de campos que já
+   existiam mudou (e o pacote encolheu de 31 para 27 bytes), o IMU virou **versão 2**; todos
+   os outros tipos continuam na versão 1. Por isso um decodificador valida a versão **por
+   tipo**, e um site antigo, que só conhece o IMU v1, não lê a bola nova.
 
 ---
 
@@ -1727,7 +1794,7 @@ O protocolo é a **versão 1** e continua 1 enquanto toda mudança for **aditiva
 ## Perguntas frequentes e solução de problemas
 
 **Conecto, assino, mas os números saem estranhos ou não chega nada.**
-Confira o MTU. Uma notificação maior que MTU − 3 é cortada: o IMU precisa de MTU ≥ 34, a
+Confira o MTU. Uma notificação maior que MTU − 3 é cortada: o IMU precisa de MTU ≥ 30, a
 navegação de ≥ 25, o áudio cru de ≥ 211. Um decodificador correto recusa o pacote cortado
 (tamanho menor que o mínimo). No bleak, veja `client.mtu_size`; com o aplicativo nRF Connect
 dá para ver o MTU negociado. Confira também se você lê *little-endian* (em JavaScript, o
@@ -1814,7 +1881,7 @@ O nome (`0x40`) vale depois de reiniciar: salve (`0x11`) e reinicie (`0x13`).
 | Navegação | [`NavEngine.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/NavEngine.cpp), [`NavMath.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/NavMath.cpp), [`MotionSettle.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/MotionSettle.h) |
 | Vetores de ouro do firmware | [`test_protocol.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/test/test_protocol/test_protocol.cpp) |
 | Decodificadores da config-app | [`packets.ts`](https://github.com/GaiaSenses/gaiaball/blob/main/config-app/src/protocol/packets.ts), [`tlv.ts`](https://github.com/GaiaSenses/gaiaball/blob/main/config-app/src/protocol/tlv.ts), [`euler.ts`](https://github.com/GaiaSenses/gaiaball/blob/main/config-app/src/protocol/euler.ts) |
-| Ponte para o Pure Data | [`gaiaball_bridge.py`](https://github.com/GaiaSenses/gaiaball/blob/main/pd-gaiaball/gaiaball_bridge.py) |
+| External `[gaiaball]` para o Pure Data | [`pd-gaiaball/`](https://github.com/GaiaSenses/gaiaball/tree/main/pd-gaiaball) (veja o `README.md`) |
 | Firmware original (JSON) | [`firmware-original.ino`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware-original.ino) |
 | Decodificador do site | [`ble-decode.ts`](https://github.com/GaiaSenses/Gaiasenses-web/blob/main/app/%5Blocale%5D/map3/ble-decode.ts) |
 | Conexão do site | [`ble-control.tsx`](https://github.com/GaiaSenses/Gaiasenses-web/blob/main/app/%5Blocale%5D/map3/ble-control.tsx) |
