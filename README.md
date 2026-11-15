@@ -160,11 +160,13 @@ site shows an "update the firmware" warning).
 | New site (IMU v2 only) + old firmware (IMU v1) | ❌ the IMU is silently ignored |
 | New site + new firmware | ✅ yes |
 
-**Flash the balls and publish the site in the same window.** The site's globe patch is
-being switched to `mapa15` ("TesteGlobo2.0"), which reads only `gaia.lat` and
-`gaia.lon`, so the deploy does not wait for any patch edit. Patches that read
-acceleration see `gaia.acc.*` and `gaia.sensors` in mg now (the migration table is in
-`Gaiasenses-web/docs/musico/README.md`).
+**Flash the balls and publish the site in the same window, after the globe patch is
+adapted to mg.** The site's globe patch is now `mapa15` ("TesteGlobo2.0"), which
+replaced paraisoGaia43. It still integrates the acceleration with constants written for
+the old raw counts (1 g = 8192), and `gaia.acc.*` and `gaia.sensors` now arrive in mg
+(1 g = 1000), so its author converts those constants before the release (the table
+for `mapa15` is in `Gaiasenses-web/docs/musico/README.md`, "Nota para quem mantém o
+patch do globo").
 
 ## Testing
 
