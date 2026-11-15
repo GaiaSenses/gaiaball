@@ -20,6 +20,26 @@ export function co2Range(virtualPeakPpm: number): [number, number] {
   return [0, Math.max(5000, virtualPeakPpm)];
 }
 
+/** CO2 levels as one source knows them (the form, or the ball); null = that source has no value. */
+export interface Co2Levels { triggerPpm: number | null; virtualPeakPpm: number | null }
+
+/**
+ * What the CO2 meter draws: its top (the chart's scale) and the trigger mark. The Configuração
+ * form wins, so the mark moves while the person edits it (and shows in the demo); what was read
+ * from the ball fills in an empty field. `pending`: the form's trigger is not the ball's yet.
+ */
+export function co2Meter(
+  form: Co2Levels | null, device: Co2Levels | null,
+): { max: number; triggerPpm: number | null; pending: boolean } {
+  const pick = (k: keyof Co2Levels): number | null => form?.[k] ?? device?.[k] ?? null;
+  const ft = form?.triggerPpm ?? null, dt = device?.triggerPpm ?? null;
+  return {
+    max: co2Range(pick('virtualPeakPpm') ?? 0)[1],
+    triggerPpm: pick('triggerPpm'),
+    pending: ft !== null && dt !== null && ft !== dt,
+  };
+}
+
 /** Sparkline range: rate 0..1.2 x configured notify Hz, loss 0..100 %. */
 export function sparkRange(kind: 'rate' | 'loss', configuredHz: number): [number, number] {
   return kind === 'rate' ? [0, 1.2 * configuredHz] : [0, 100];

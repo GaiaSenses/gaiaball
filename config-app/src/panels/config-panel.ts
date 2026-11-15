@@ -4,6 +4,7 @@ import { decodeNavRef, encodeNavRef, encodeTlv, navRefToString, parseNavRefStrin
 import { potRawToDbfs, type SensorsSample } from '../protocol/packets.ts';
 import { isToggleOn, renderSwitch, renderToggle, setSwitchValue, setToggleValue, type SwitchOptions } from '../ui/switch.ts';
 import { infoDot } from './info.ts';
+import type { Co2Levels } from './chart-model.ts';
 
 type Kind = 'number' | 'range' | 'checkbox' | 'select' | 'text' | 'pin' | 'navref' | 'switch';
 export interface Field {
@@ -311,6 +312,14 @@ export interface BandSource {
 }
 /** Registers whose edits move the spectrum's band. */
 const BAND_IDS: ReadonlySet<number> = new Set([TLV.audioBpfEnabled, TLV.audioHpHz, TLV.audioLpHz]);
+/** CO2 trigger and virtual peak as the form shows them (the CO2 meter's mark and scale). */
+export interface Co2Source {
+  current(): Co2Levels;
+  /** Calls `fn` now and on every change of the two fields (typed, read from the ball, preset, default). */
+  subscribe(fn: (c: Co2Levels) => void): void;
+}
+/** Registers whose edits move the CO2 meter's trigger mark or scale. */
+const CO2_IDS: ReadonlySet<number> = new Set([TLV.co2TriggerPpm, TLV.virtualPeakPpm]);
 const byId = (id: number): Field => FIELDS.find((f) => f.id === id)!;
 
 /**
@@ -482,7 +491,7 @@ const ADVANCED_TAB_INFO = 'Ajustes da cadeia de sinais: faixa e filtro da IMU, g
  */
 export function mountConfigPanel(
   root: HTMLElement, client: GaiaballClient, store: PresetStore = new PresetStore(),
-): { advancedSections: HTMLElement; band: BandSource } {
+): { advancedSections: HTMLElement; band: BandSource; co2: Co2Source } {
   root.innerHTML = `
     <h2>Configuração</h2>
     <div class="row">
@@ -719,9 +728,11 @@ export function mountConfigPanel(
       if (id === TLV.navMode || id === TLV.breathDetector || id === TLV.potControlsThreshold) refreshVisibility();
       if (GOVERNORS.has(id)) applyEnabled();
       if (BAND_IDS.has(id)) emitBand();
+      if (CO2_IDS.has(id)) emitCo2();
       refreshDescribe();
     });
     if (BAND_IDS.has(id)) el.addEventListener('input', () => emitBand());
+    if (CO2_IDS.has(id)) el.addEventListener('input', () => emitCo2());
   }
   navLon.addEventListener('input', () => { dirty.add(TLV.navRef); refreshAdvCount(); });
   navLon.addEventListener('change', () => refreshAdvCount());
@@ -775,6 +786,7 @@ export function mountConfigPanel(
     }
     applyEnabled();
     emitBand();
+    emitCo2();
     refreshDescribe();
     refreshPotLabel();
   };
@@ -816,6 +828,17 @@ export function mountConfigPanel(
     if (bandListeners.size === 0) return;
     const b = formBand();
     for (const fn of bandListeners) fn(b);
+  };
+  /** CO2 trigger and virtual peak as the form shows them; an empty field is null. */
+  const formCo2 = (): Co2Levels => {
+    const num = (id: number): number | null => { const v = getValue(byId(id)); return typeof v === 'number' ? v : null; };
+    return { triggerPpm: num(TLV.co2TriggerPpm), virtualPeakPpm: num(TLV.virtualPeakPpm) };
+  };
+  const co2Listeners = new Set<(c: Co2Levels) => void>();
+  const emitCo2 = (): void => {
+    if (co2Listeners.size === 0) return;
+    const c = formCo2();
+    for (const fn of co2Listeners) fn(c);
   };
   const refreshDescribe = (): void => {
     for (const f of FIELDS) {
@@ -1134,6 +1157,10 @@ export function mountConfigPanel(
     band: {
       current: formBand,
       subscribe: (fn: (b: FormBand) => void): void => { bandListeners.add(fn); fn(formBand()); },
+    },
+    co2: {
+      current: formCo2,
+      subscribe: (fn: (c: Co2Levels) => void): void => { co2Listeners.add(fn); fn(formCo2()); },
     },
   };
 }

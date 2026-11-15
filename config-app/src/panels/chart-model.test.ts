@@ -9,6 +9,7 @@ import {
   levelFraction,
   minMaxDecimate,
   SampleQueue,
+  co2Meter,
   co2Range,
   loadWindowS,
   saveWindowS,
@@ -143,5 +144,26 @@ describe('reading formatters', () => {
   it('dBFS uses the typographic minus and never shows -0', () => {
     expect(formatDb(-57.4)).toBe('\u221257');
     expect(formatDb(-0.3)).toBe('0');
+  });
+});
+
+describe('co2Meter', () => {
+  const form = (triggerPpm: number | null, virtualPeakPpm: number | null = 2100) => ({ triggerPpm, virtualPeakPpm });
+
+  it('marks the trigger from the form even with no ball (demo)', () => {
+    expect(co2Meter(form(1200), null)).toEqual({ max: 5000, triggerPpm: 1200, pending: false });
+  });
+  it('follows the form while it is edited and flags a value the ball does not have yet', () => {
+    expect(co2Meter(form(1500), form(1200))).toEqual({ max: 5000, triggerPpm: 1500, pending: true });
+    expect(co2Meter(form(1200), form(1200))).toEqual({ max: 5000, triggerPpm: 1200, pending: false });
+  });
+  it('falls back to the ball when the form field is empty, and to no mark without either', () => {
+    expect(co2Meter(form(null), form(1200))).toEqual({ max: 5000, triggerPpm: 1200, pending: false });
+    expect(co2Meter(null, form(900))).toEqual({ max: 5000, triggerPpm: 900, pending: false });
+    expect(co2Meter(null, null)).toEqual({ max: 5000, triggerPpm: null, pending: false });
+  });
+  it('stretches the scale to the virtual peak, like the chart', () => {
+    expect(co2Meter(form(1200, 8000), null).max).toBe(8000);
+    expect(co2Meter(form(1200, null), form(1200, 6000)).max).toBe(6000);
   });
 });
