@@ -35,7 +35,7 @@ constexpr Reg kRegs[] = {
     {0x10, Kind::U8, 0, kAnyU8},
     {0x11, Kind::U16, 1, 1000},       {0x12, Kind::U16, 1, 1000},
     {0x13, Kind::U16, 0, kAnyU16},    {0x14, Kind::U8, 0, kAnyU8},
-    {0x15, Kind::U32, 0, kAnyU32},    {0x16, Kind::U8, 0, 1},
+    {0x16, Kind::U8, 0, 1},
     {0x17, Kind::U16, 1, 7000},       {0x18, Kind::U16, 10, 2000},
     {0x19, Kind::U16, 1, 7000},       {0x1A, Kind::U16, 10, 2000},
     {0x1B, Kind::U16, 1, 1000},       {0x1F, Kind::U8, 0, 1},
@@ -46,6 +46,9 @@ constexpr Reg kRegs[] = {
     {0x25, Kind::U16, 0, kAnyU16},    {0x26, Kind::U8, 0, kAnyU8},
     {0x28, Kind::U16, 1, 1000},
     {0x29, Kind::U16, 400, 10000},    {0x2A, Kind::U16, 0, 2000},
+    // Breath detector in dB (v8).
+    {0x2B, Kind::U16, 0, 9000},       {0x2C, Kind::U8, 0, 1},
+    {0x2D, Kind::U8, 0, 1},           {0x2E, Kind::U8, 0, 20},
     {0x30, Kind::U8, 0, kMaxGpio},    {0x31, Kind::U8, 0, kMaxGpio},
     {0x32, Kind::U16, 0, kAnyU16},
     {0x34, Kind::U8, 0, 2},           {0x36, Kind::U8, 0, 23},
@@ -61,7 +64,8 @@ constexpr Reg kRegs[] = {
 };
 // Reserved ids (never reuse): 0x21 (was co2ChecksumVariant) and 0x27 (was co2Protocol)
 // — both removed once the SC8-CO2-5K datasheet fixed the frame format; 0x33 (was
-// statusLedPin; removed with the legacy LED command).
+// statusLedPin; removed with the legacy LED command); 0x15 (was thresholdFixed,
+// replaced by the dB-based breath threshold 0x2B).
 // 0x35 (imuDetected) is read-only status appended by BleService::onConfigRead; it is
 // deliberately NOT a register here, so a client write of it is an unknown id.
 
@@ -96,7 +100,6 @@ void *numField(GaiaConfig &c, uint8_t id) {
     case 0x12: return &c.audioSlowAlphaX1000;
     case 0x13: return &c.debounceMs;
     case 0x14: return &c.potControlsThreshold;
-    case 0x15: return &c.thresholdFixed;
     case 0x16: return &c.audioBpfEnabled;
     case 0x17: return &c.audioHpHz;
     case 0x18: return &c.audioHpQX100;
@@ -113,6 +116,10 @@ void *numField(GaiaConfig &c, uint8_t id) {
     case 0x28: return &c.co2EmaAlphaX1000;
     case 0x29: return &c.co2TriggerPpm;
     case 0x2A: return &c.co2TriggerHystPpm;
+    case 0x2B: return &c.breathThresholdNegDbX100;
+    case 0x2C: return &c.breathMetric;
+    case 0x2D: return &c.breathDetector;
+    case 0x2E: return &c.breathRearmDb;
     case 0x30: return &c.soundLedPin;
     case 0x31: return &c.co2LedPin;
     case 0x32: return &c.co2AlertPpm;

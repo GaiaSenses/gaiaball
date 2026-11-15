@@ -11,8 +11,8 @@ namespace gaia {
 // Minimal register-level driver for the GY-91 module's MPU-9250 (+ AK8963 mag via
 // bypass). No DMP, no FIFO: the data registers are polled and fusion runs on the
 // ESP32 (logic/Ahrs.h). Scales:
-//   accel ±4 g  -> 8192 LSB/g (ImuDriver::kAccelLsbPerG), FIXED by the wire protocol
-//         (same scale the ICM-20948 DMP published, so decoders keep working)
+//   accel ±4 g  -> 8192 LSB/g (ImuDriver::kAccelLsbPerG); the wire carries mg, so the range
+//         is no longer fixed by the protocol (same scale the ICM-20948 DMP published)
 //   gyro  selectable ±250/500/1000/2000 dps -> 131/65.5/32.8/16.4 LSB/dps. The
 //         gyroscope never reaches the wire (only the fused quaternion does), so the
 //         range is free to choose: the narrowest range that does not clip wins, since

@@ -57,7 +57,8 @@ export class OrientationScene {
   private ro: ResizeObserver;
   private anim: { from: THREE.Quaternion; to: THREE.Quaternion; t0: number } | null = null;
   private view: ViewId | null = null;
-  private onVis = () => { if (document.hidden) this.stop(); else this.start(); };
+  private paused = false;
+  private onVis = () => { if (document.hidden || this.paused) this.stop(); else this.start(); };
 
   private canvas: HTMLCanvasElement;
 
@@ -147,6 +148,17 @@ export class OrientationScene {
       : new THREE.GridHelper(8, 16, 0xa8b8b2, 0xc8d4d0);
     this.grid.position.y = -0.9;
     this.scene.add(this.grid);
+  }
+
+  /** Stage mode: stop the draw loop (the caller stops feeding quaternions; the next one after resume snaps the model). */
+  pause(): void {
+    this.paused = true;
+    this.stop();
+  }
+
+  resume(): void {
+    this.paused = false;
+    if (!document.hidden) this.start();
   }
 
   dispose(): void {

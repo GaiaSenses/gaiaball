@@ -15,6 +15,13 @@ declare module 'plotly.js-dist-min' {
     ): Promise<unknown>;
     restyle(el: HTMLElement, update: Record<string, unknown>, indices?: number[]): Promise<unknown>;
     relayout(el: HTMLElement, update: Record<string, unknown>): Promise<unknown>;
+    /** restyle + relayout in a single redraw. */
+    update(
+      el: HTMLElement,
+      traceUpdate: Record<string, unknown>,
+      layoutUpdate: Record<string, unknown>,
+      indices?: number[],
+    ): Promise<unknown>;
     purge(el: HTMLElement): void;
   }
   const Plotly: PlotlyStatic;

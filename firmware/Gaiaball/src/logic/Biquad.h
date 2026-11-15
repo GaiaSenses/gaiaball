@@ -5,7 +5,7 @@ namespace gaia {
 
 // RBJ audio-cookbook biquad (Direct Form II transposed), float, host-testable.
 // Used as configurable high-pass + low-pass on the microphone stream so the
-// breath band (HP..LP) feeds the peak detector. NOTE: Q > 0.707 adds a resonant
+// breath band (HP..LP) feeds the breath detector. NOTE: Q > 0.707 adds a resonant
 // peak of roughly 20*log10(Q) dB AT the cutoff frequency; steeper roll-off comes
 // from filter order, not from Q. Q is exposed to the UI so the band edges can be
 // tuned against the live spectrum.

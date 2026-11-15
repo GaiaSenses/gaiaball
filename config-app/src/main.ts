@@ -13,9 +13,15 @@ import { mountMetricsPanel } from './panels/metrics-panel.ts';
 import { mountSensorsPanel } from './panels/sensors-panel.ts';
 import { decorateInfo } from './panels/info.ts';
 import { initTheme, onThemeChange, resolvedTheme, toggleTheme } from './theme.ts';
+import { StageController, loadUiMode, type UiMode } from './stage/stage-mode.ts';
+import { mountStageBar } from './stage/stage-bar.ts';
+import { renderSwitch, setSwitchValue } from './ui/switch.ts';
 import { OrientationScene } from './viz/orientation-scene.ts';
 import { VIEW_PRESETS, type ViewId } from './viz/view-presets.ts';
-import type { AudioChunkSample, Co2Sample, ImuSample, NavSample, SensorsSample } from './protocol/packets.ts';
+import { PdBridge, browserPdDeps } from './pd/pd-bridge.ts';
+import { loadPdPrefs, mountPdBlock, mountPdChip } from './pd/pd-panel.ts';
+import { encodeCo2Packet, encodeImuPacket, encodeNavPacket, encodeSensorsPacket } from './protocol/encode.ts';
+import { AUDIO_FULL_SCALE, type AudioChunkSample, type Co2Sample, type ImuSample, type NavSample, type SensorsSample } from './protocol/packets.ts';
 
 initTheme();
 
@@ -27,11 +33,17 @@ app.innerHTML = `
       <span class="brand-mark" aria-hidden="true"></span>
       <div class="brand-text"><h1>Gaiaball</h1><p>painel de controle</p></div>
     </div>
+    <div class="mode-box">
+      <div id="mode-switch"></div>
+      <p id="mode-text" class="mode-text" role="status"></p>
+    </div>
     <div class="top-actions">
+      <span class="chip" id="pd-chip" data-state="off">Pd: desligado</span>
       <span class="chip" id="conn-chip" data-state="off">Desconectado</span>
       <button id="btn-theme" type="button"></button>
     </div>
   </header>
+  <div id="stage-bar" class="stage-bar" role="region" aria-label="Barra do modo palco" hidden></div>
   <main>
     <div id="viz-wrap"><div id="viz">
       <div class="viz-controls">
@@ -53,8 +65,6 @@ app.innerHTML = `
     <aside id="panels">
       <section id="panel-conexao"></section>
       <section id="panel-config"></section>
-      <section id="panel-magcal"></section>
-      <section id="panel-metricas"></section>
     </aside>
     <section id="panel-sensores"></section>
   </main>`;
@@ -66,6 +76,18 @@ if (!(navigator as Navigator & { bluetooth?: unknown }).bluetooth) {
 }
 
 const client = new GaiaballClient();
+// The "firmware desatualizado" warning lives in its own element so it can be cleared without
+// touching the no-Web-Bluetooth banner: on the next connect, or on the first IMU v2 sample.
+const clearOutdatedBanner = (): void => { app.querySelector('#banner .fw-outdated')?.remove(); };
+client.addEventListener('firmware-outdated', () => {
+  clearOutdatedBanner();
+  app.querySelector('#banner')!.insertAdjacentHTML('beforeend',
+    '<div class="banner fw-outdated">Firmware da bola desatualizado: grave o firmware novo (o pacote de movimento agora é a versão 2).</div>');
+});
+client.addEventListener('status', (ev) => {
+  if ((ev as CustomEvent<{ connected: boolean }>).detail.connected) clearOutdatedBanner();
+});
+client.addEventListener('imu', clearOutdatedBanner); // a decoded sample is v2: the firmware is current
 export const stats = new StreamStats();
 // Reset on every (re)connect, otherwise a device reboot freezes the stats.
 client.addEventListener('status', (ev) => {
@@ -101,11 +123,32 @@ themeBtn.addEventListener('click', toggleTheme);
 onThemeChange(renderThemeBtn);
 renderThemeBtn();
 
+const isDemo = Boolean(new URLSearchParams(location.search).get('demo'));
+const bridge = new PdBridge(browserPdDeps());
+client.setRawSink((b) => bridge.forward(b));
+const pdPrefs = loadPdPrefs();
+// The bridge only runs while the ball is connected (or in demo) and the user left it on.
+const syncPd = (): void => {
+  bridge.setPort(pdPrefs.port);
+  bridge.setWanted(pdPrefs.enabled);
+  bridge.setEnabled(pdPrefs.enabled && (client.connected || isDemo));
+};
+client.addEventListener('status', syncPd);
+mountPdChip(app.querySelector<HTMLElement>('#pd-chip')!, bridge);
+
 mountConnectionPanel(app.querySelector<HTMLElement>('#panel-conexao')!, client);
-mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client);
-mountMagCalPanel(app.querySelector<HTMLElement>('#panel-magcal')!, client);
-mountMetricsPanel(app.querySelector<HTMLElement>('#panel-metricas')!, client, stats);
-mountSensorsPanel(app.querySelector<HTMLElement>('#panel-sensores')!, client);
+mountPdBlock(app.querySelector<HTMLElement>('#panel-conexao')!, bridge, pdPrefs, syncPd);
+syncPd();
+const { advancedSections, band } = mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client);
+// Magnetometer calibration and metrics are bench tools: they live in the Avançado tab,
+// below its fields, instead of under the configuration for everyone to scroll past.
+advancedSections.innerHTML = '<section id="panel-magcal"></section><section id="panel-metricas"></section>';
+const pausable = [
+  mountMagCalPanel(app.querySelector<HTMLElement>('#panel-magcal')!, client),
+  mountMetricsPanel(app.querySelector<HTMLElement>('#panel-metricas')!, client, stats),
+  // The spectrum shades the band-pass as the form shows it, so editing a cutoff moves it at once.
+  mountSensorsPanel(app.querySelector<HTMLElement>('#panel-sensores')!, client, { band }),
+];
 
 // 3D view of the treated quaternion exactly as received over BLE (no UI smoothing:
 // the real knob is "Suavização do quaternion (slerp)" in the Configuração panel).
@@ -155,12 +198,63 @@ app.querySelector<HTMLSelectElement>('#sel-model')!.addEventListener('change', (
   scene.setModel((e.target as HTMLSelectElement).value as 'plane' | 'box'));
 
 client.addEventListener('imu', (ev) => {
+  if (stage.mode === 'palco') return; // the screen is paused; the Pd forwarding already happened in ingest
   const s = (ev as CustomEvent<ImuSample>).detail;
   stats.push(s.seq, s.tUs, performance.now());
   scene.setQuaternion(s.quat);
 });
 
-if (new URLSearchParams(location.search).get('demo')) {
+// Stage mode: only the Pd forwarding (in client.ingest) and the stage bar stay alive.
+const LOCKED_IDS = ['viz-wrap', 'panels', 'panel-sensores'];
+const MODE_TEXT: Record<UiMode, string> = {
+  palco: 'Para apresentar. Os dados vão para o Pd com o menor atraso possível. O 3D, os gráficos e os ajustes ficam pausados.',
+  ajuste: 'Para preparar e ajustar. Mostra tudo. O envio ao Pd continua, mas pode atrasar alguns milissegundos quando a tela está ocupada.',
+};
+const modeTextEl = app.querySelector<HTMLElement>('#mode-text')!;
+const stageBar = mountStageBar(app.querySelector<HTMLElement>('#stage-bar')!, client, bridge, () => void changeMode('ajuste'));
+const uiStorage = ((): Storage | null => { try { return window.localStorage; } catch { return null; } })();
+const stage = new StageController({
+  scene,
+  panels: pausable,
+  client,
+  setLocked(on) {
+    for (const id of LOCKED_IDS) {
+      const el = app.querySelector<HTMLElement>('#' + id)!;
+      el.classList.toggle('stage-locked', on);
+      el.toggleAttribute('inert', on);
+      if (on) el.dataset.lockLabel = '🔒 Pausado no modo palco'; else delete el.dataset.lockLabel;
+    }
+    if (on && app.contains(document.activeElement) && !document.activeElement?.closest('#topbar, #stage-bar')) {
+      (document.activeElement as HTMLElement).blur();
+    }
+  },
+  showBar: (on) => stageBar.show(on),
+  storage: uiStorage,
+});
+const modeSwitch = renderSwitch({
+  options: [{ value: 0, label: 'Modo ajuste' }, { value: 1, label: 'Modo palco' }],
+  value: loadUiMode(uiStorage) === 'palco' ? 1 : 0,
+  onChange: (v) => void changeMode(v === 1 ? 'palco' : 'ajuste'),
+  label: 'Modo da tela',
+});
+app.querySelector('#mode-switch')!.append(modeSwitch);
+async function changeMode(m: UiMode): Promise<void> {
+  setSwitchValue(modeSwitch, m === 'palco' ? 1 : 0);
+  modeTextEl.textContent = MODE_TEXT[m];
+  await stage.setMode(m);
+  if (m === 'ajuste') {
+    stats.reset(); // the pause left a gap in the sequence numbers
+    modeSwitch.focus(); // the stage bar (and its focused button) just got hidden
+  }
+}
+client.addEventListener('status', (ev) => {
+  if ((ev as CustomEvent<{ connected: boolean }>).detail.connected) void stage.onConnected();
+  else stage.onDisconnected();
+});
+modeTextEl.textContent = MODE_TEXT.ajuste;
+if (loadUiMode(uiStorage) === 'palco') void changeMode('palco');
+
+if (isDemo) {
   chip.dataset.state = 'demo';
   chip.textContent = 'modo demo';
   // Synthetic slow compound rotation (quaternion products only), no BLE needed.
@@ -177,6 +271,10 @@ if (new URLSearchParams(location.search).get('demo')) {
   };
   // Synthetic packets are dispatched as client events, so every panel (3D, métricas,
   // sensores) exercises the same code path as a real device.
+  // Packets with a wire format are encoded to bytes and go through client.ingest, so the screen
+  // and the Pd bridge get exactly what a real ball would send. Only the raw 2 kHz audio chunk
+  // stays a decoded object (no encoder for it: it is diagnostics, never forwarded to Pd).
+  const asView = (b: Uint8Array): DataView => new DataView(b.buffer, b.byteOffset, b.byteLength);
   const emit = <T>(event: string, detail: T): void => {
     client.dispatchEvent(new CustomEvent(event, { detail }));
   };
@@ -189,7 +287,7 @@ if (new URLSearchParams(location.search).get('demo')) {
       seq: seq++ & 0xffff,
       tUs: Math.round(t * 1e6),
       quat: q,
-      acc: [Math.round(Math.sin(t * 1.3) * 2048), Math.round(Math.cos(t * 0.9) * 2048), Math.round(8192 + Math.sin(t * 3) * 300)],
+      acc: [Math.round(Math.sin(t * 1.3) * 250), Math.round(Math.cos(t * 0.9) * 250), Math.round(1000 + Math.sin(t * 3) * 40)],
       flags: 0b1101,
       quatValid: true,
       nineAxis: false,
@@ -197,6 +295,7 @@ if (new URLSearchParams(location.search).get('demo')) {
       // Microphone envelope, as the firmware publishes it on every orientation packet:
       // a breath every ~6 s on top of a -58 dBFS room floor, peak ~8 dB above the RMS.
       audioValid: true,
+      breath: t % 6 < 0.1, // latched flag: a few packets at the start of each blow
       audioRmsDbfs: [
         -58 + (Math.sin(t * 1.05) > 0.85 ? 30 : 0) + 2 * Math.sin(t * 7),
         -60 + (Math.sin(t * 1.05) > 0.85 ? 28 : 0) + 2 * Math.sin(t * 6.3),
@@ -206,26 +305,32 @@ if (new URLSearchParams(location.search).get('demo')) {
         -52 + (Math.sin(t * 1.05) > 0.85 ? 28 : 0) + 2 * Math.sin(t * 8.1),
       ],
     };
-    emit('imu', s); // the 'imu' listener above drives the scene and the stats
+    client.ingest('imu', asView(encodeImuPacket(s))); // the 'imu' listener above drives the scene and the stats
   }, 20);
   let sensSeq = 0;
   setInterval(() => {
     const t = performance.now() / 1000;
     const rms = (base: number, f: number) => base * (1 + 0.6 * Math.sin(t * f)) + (Math.sin(t * 31) > 0.95 ? 400000 : 0);
+    // The active metric alternates every 20 s so both threshold rows can be seen;
+    // -35.5 dBFS expressed in counts of the metric in use.
+    const demoPeak = Math.floor(t / 20) % 2 === 1;
+    const demoThreshold = Math.round(AUDIO_FULL_SCALE * 10 ** (-35.5 / 20) / (demoPeak ? 1 : Math.SQRT2));
     const detail: SensorsSample = {
       seq: sensSeq++ & 0xffff,
       tMs: Math.round(t * 1000),
       rmsL: Math.max(0, Math.round(rms(22000, 0.8))),
       rmsR: Math.max(0, Math.round(rms(18000, 1.1))),
-      threshold: 100000,
+      threshold: demoThreshold,
       potRaw: Math.round(2048 + 1800 * Math.sin(t * 0.15)),
-      flags: 0b1111,
+      flags: 0b1111 | (demoPeak ? 0b10000 : 0),
       audioOk: true,
       audioEnabled: true,
       potControls: true,
       audioFiltered: true,
+      metricPeak: demoPeak,
+      adaptive: false,
     };
-    emit('sensors', detail);
+    client.ingest('diag', asView(encodeSensorsPacket(detail)));
   }, 200);
   // Raw 2 kHz audio chunks: low hum + breath-band noise bursts every ~6 s.
   let audioSeq = 0;
@@ -272,7 +377,7 @@ if (new URLSearchParams(location.search).get('demo')) {
       bearingDeg: ((t * 9 + 180) % 360) - 180,
       speedDegS: moving ? 30 + 20 * Math.sin(t * 0.8) : 0,
     };
-    emit('nav', detail);
+    client.ingest('nav', asView(encodeNavPacket(detail)));
   }, 50);
   let co2Seq = 0;
   setInterval(() => {
@@ -288,6 +393,6 @@ if (new URLSearchParams(location.search).get('demo')) {
       virtualActive: false,
       trigger: false,
     };
-    emit('co2', detail);
+    client.ingest('co2', asView(encodeCo2Packet(detail)));
   }, 1000);
 }

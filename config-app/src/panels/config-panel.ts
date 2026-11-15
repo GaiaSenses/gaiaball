@@ -1,9 +1,11 @@
 import type { GaiaballClient, StatusDetail } from '../ble/gaiaball-client.ts';
 import { PresetStore } from '../presets/preset-store.ts';
 import { decodeNavRef, encodeNavRef, encodeTlv, navRefToString, parseNavRefString, TLV, type TlvWrite } from '../protocol/tlv.ts';
+import { potRawToDbfs, type SensorsSample } from '../protocol/packets.ts';
+import { isToggleOn, renderSwitch, renderToggle, setSwitchValue, setToggleValue, type SwitchOptions } from '../ui/switch.ts';
 import { infoDot } from './info.ts';
 
-type Kind = 'number' | 'range' | 'checkbox' | 'select' | 'text' | 'pin' | 'navref';
+type Kind = 'number' | 'range' | 'checkbox' | 'select' | 'text' | 'pin' | 'navref' | 'switch';
 export interface Field {
   id: number;
   label: string;
@@ -25,8 +27,34 @@ export interface Field {
    * shows value/scale; getValue converts back. min/max stay in wire units.
    */
   scale?: number;
+  /** switch only: the two choices; the second one is the "checked" side. */
+  switchOptions?: SwitchOptions;
+  /** switch only: text shown under the row for the chosen value. */
+  describe?: (v: number) => string;
+  /** The form shows -value/scale and writes round(-x*scale); min/max stay in wire units (so the shown range is -max..-min). */
+  negate?: boolean;
+  /** Input step in DISPLAY units (default 1/scale). */
+  step?: number;
+  /** Disables the input (it stays visible) while false; re-evaluated with `visible`. */
+  enabled?: (cfg: Map<number, unknown>) => boolean;
 }
 interface Group { title: string; fields: Field[] }
+
+/** Wire value -> number shown in the form (scale and negate applied). */
+export function toDisplay(f: Pick<Field, 'scale' | 'negate'>, wire: number): number {
+  const v = wire / (f.scale ?? 1);
+  return f.negate ? -v : v;
+}
+/** Number typed in the form -> wire value. Never returns -0. */
+export function fromDisplay(f: Pick<Field, 'scale' | 'negate' | 'step'>, shown: number): number {
+  // An integer step (rearm, in whole dB) must never put a fraction on the wire.
+  if (!f.scale && !f.negate) return f.step !== undefined && Number.isInteger(f.step) ? Math.round(shown) : shown;
+  const w = Math.round((f.negate ? -shown : shown) * (f.scale ?? 1));
+  return w === 0 ? 0 : w;
+}
+
+const DETECTOR_ABSOLUTE = 'Dispara quando o som de qualquer microfone passa da linha. O que você vê no gráfico é o que dispara. Numa sala barulhenta, suba a linha.';
+const DETECTOR_ADAPTIVE = 'Aprende o ruído da sala em cerca de 3 segundos e dispara quando o som sobe acima dele pelo valor da sensibilidade. Ajusta-se sozinho ao ambiente; a linha do gráfico sobe e desce com o ruído, e o disparo pode vir um instante depois de a curva cruzá-la.';
 
 export const resolveOptions = (f: Field, cfg: Map<number, unknown>): [number, string][] =>
   typeof f.options === 'function' ? f.options(cfg) : (f.options ?? []);
@@ -144,18 +172,32 @@ const GROUPS: Group[] = [
       info: 'Compara cada amostra nova com a mediana das 5 últimas e a substitui pela mediana se ela se afastar mais de k desvios robustos (MAD). Remove leitura corrompida do I²C sem adicionar atraso nenhum — ao contrário da EMA, que espalharia a espícula pelas amostras seguintes. 0 desliga; 30 = k 3,0. Adimensional ×10.' },
   ] },
   { title: 'Áudio', fields: [
-    { id: TLV.audioEnabled, label: 'Habilitado', kind: 'checkbox',
-      info: 'Liga a captura dos dois microfones I²S e o detector de sopro. Liga/desliga, sem unidade.' },
-    { id: TLV.audioFastAlphaX1000, label: 'Alfa rápido (×1000)', kind: 'number', min: 0, max: 1000,
-      info: 'Velocidade do envelope rápido do detector de sopro (segue o pico). Valor = alfa EMA ×1000: maior = resposta mais rápida. Adimensional.' },
-    { id: TLV.audioSlowAlphaX1000, label: 'Alfa lento (×1000)', kind: 'number', min: 0, max: 1000,
-      info: 'Velocidade da linha de base (ruído ambiente) do detector; deve ser bem menor que o alfa rápido. Valor = alfa EMA ×1000. Adimensional.' },
+    { id: TLV.audioEnabled, label: 'Detector de sopro', kind: 'checkbox',
+      info: 'Liga o detector de sopro. Desligado, nenhum sopro é reconhecido e os campos do detector ficam inativos; os microfones continuam medindo: o RMS e o pico seguem para os gráficos e para o Pd, e o passa-banda e o stream cru continuam valendo. Liga/desliga, sem unidade.' },
+    { id: TLV.breathDetector, label: 'Tipo de detector', kind: 'switch',
+      switchOptions: [{ value: 0, label: 'Absoluto' }, { value: 1, label: 'Adaptativo' }],
+      describe: (v) => (v === 1 ? DETECTOR_ADAPTIVE : DETECTOR_ABSOLUTE),
+      info: 'Como o sopro é reconhecido. Absoluto: compara o som com uma linha fixa. Adaptativo: compara o som com o ruído da sala, que ele aprende sozinho. Escolha de duas opções, sem unidade.' },
+    { id: TLV.potControlsThreshold, label: 'Fonte da sensibilidade', kind: 'switch',
+      switchOptions: [{ value: 1, label: 'Potenciômetro' }, { value: 0, label: 'Valor fixo' }],
+      info: 'Potenciômetro: o botão físico da bola ajusta a sensibilidade em tempo real (de −60 a 0 dBFS). Valor fixo: vale o número do campo “Sensibilidade”. Escolha de duas opções, sem unidade.' },
+    { id: TLV.breathMetric, label: 'Medida', kind: 'switch',
+      switchOptions: [{ value: 0, label: 'RMS' }, { value: 1, label: 'Pico' }],
+      info: 'Que medida do som o detector compara com a linha. RMS: energia média da janela, mais estável. Pico: a amostra mais alta, reage a estalos curtos (e lê 3 dB abaixo do RMS para o mesmo som senoidal). Escolha de duas opções, sem unidade.' },
+    { id: TLV.breathThresholdNegDbX100, label: 'Sensibilidade (dBFS)', kind: 'number', min: 0, max: 9000,
+      scale: 100, negate: true, step: 0.5,
+      enabled: (cfg) => cfg.get(TLV.potControlsThreshold) === 0,
+      info: 'No detector absoluto é a linha: o som precisa passar dela para disparar (−35,5 dBFS por padrão; mais perto de 0 = menos sensível). No adaptativo é o quanto o som precisa subir acima do ruído da sala. De −90 a 0, em passos de 0,5. Só vale com a fonte “Valor fixo”; com o potenciômetro, o valor atual aparece ao lado. Unidade: dBFS (0 = fundo de escala).' },
+    { id: TLV.breathRearmDb, label: 'Rearme (dB)', kind: 'number', min: 0, max: 20, step: 1,
+      info: 'Quanto o som precisa cair abaixo da linha para um novo sopro poder disparar. Evita que um sopro longo dispare várias vezes. De 0 a 20, de 1 em 1. Unidade: decibéis (dB).' },
     { id: TLV.debounceMs, label: 'Debounce (ms)', kind: 'number', min: 0, max: 65535,
       info: 'Intervalo mínimo entre dois sopros reconhecidos, para o mesmo sopro não disparar duas vezes. Unidade: milissegundos (ms).' },
-    { id: TLV.potControlsThreshold, label: 'Pot controla limiar', kind: 'checkbox',
-      info: 'Ligado, o potenciômetro físico da bola ajusta o limiar do detector de sopro em tempo real; desligado, vale o “Limiar fixo”. Liga/desliga, sem unidade.' },
-    { id: TLV.thresholdFixed, label: 'Limiar fixo', kind: 'number', min: 0, max: 4294967295,
-      info: 'Nível acima do qual um sopro é reconhecido, usado quando o potenciômetro não controla. Unidade: contagens RMS do áudio (adimensional).' },
+    { id: TLV.audioFastAlphaX1000, label: 'Alfa rápido (×1000)', kind: 'number', min: 0, max: 1000,
+      visible: (cfg) => cfg.get(TLV.breathDetector) === 1,
+      info: 'Só no detector adaptativo. Velocidade do envelope rápido do detector de sopro (segue o pico). Valor = alfa EMA ×1000: maior = resposta mais rápida. Adimensional.' },
+    { id: TLV.audioSlowAlphaX1000, label: 'Alfa lento (×1000)', kind: 'number', min: 0, max: 1000,
+      visible: (cfg) => cfg.get(TLV.breathDetector) === 1,
+      info: 'Só no detector adaptativo. Velocidade da linha de base (ruído ambiente) do detector; deve ser bem menor que o alfa rápido. Valor = alfa EMA ×1000. Adimensional.' },
     { id: TLV.potEmaAlphaX1000, label: 'Suavização do potenciômetro (EMA ×1000)', kind: 'number', min: 1, max: 1000,
       offValue: 1000, onDefault: 300,
       info: 'Média móvel exponencial da leitura do potenciômetro (tira o chiado do ADC). Valor = alfa ×1000: 1000 = sem filtro. Adimensional.' },
@@ -169,13 +211,12 @@ const GROUPS: Group[] = [
       info: 'Corte superior do passa-banda: atenua o que fica acima dele. Precisa ficar acima do high-pass. Unidade: hertz (Hz).' },
     { id: TLV.audioLpQX100, label: 'Q do low-pass (×100)', kind: 'number', min: 10, max: 2000,
       info: 'Fator de qualidade do corte ×100 (71 = 0,71 = resposta plana); valores altos criam pico ressonante no corte. Adimensional.' },
-    { id: TLV.audioRawStream, label: 'Stream de áudio cru (2 kHz)', kind: 'select',
-      options: [[0, 'desligado'], [1, 'ligado']],
+    { id: TLV.audioRawStream, label: 'Stream de áudio cru (2 kHz)', kind: 'checkbox',
       info: 'Envia o áudio mono decimado a 2 kHz para desenhar o espectro no painel Sensores. Ligue só para ajustar os cortes do passa-banda: enquanto está ligado ele consome ~4,3 kB/s e ~45 ms de tempo de ar por segundo — mais que todos os outros pacotes somados. O RMS e o pico não dependem dele (vêm medidos do firmware em cada pacote de orientação). Liga/desliga, sem unidade.' },
   ] },
   { title: 'CO₂', fields: [
-    { id: TLV.co2Enabled, label: 'Habilitado', kind: 'checkbox',
-      info: 'Liga a leitura do sensor SC8 na UART (o firmware apenas escuta — nunca transmite, pois qualquer consulta emudece o sensor). Liga/desliga, sem unidade.' },
+    { id: TLV.co2Enabled, label: 'Sensor de CO₂ (SC8)', kind: 'checkbox',
+      info: 'Liga a leitura do sensor SC8 na UART (o firmware apenas escuta — nunca transmite, pois qualquer consulta emudece o sensor). Desligado, a bola manda 600 ppm no lugar da leitura e os campos do sensor ficam inativos; o pulso virtual do sopro e o gatilho continuam valendo. Liga/desliga, sem unidade.' },
     { id: TLV.co2StaleTimeoutMs, label: 'Timeout de dado velho (ms)', kind: 'number', min: 0, max: 65535,
       info: 'Sem quadro novo do sensor por esse tempo, a leitura é marcada como desatualizada (stale). Unidade: milissegundos (ms).' },
     { id: TLV.virtualPeakPpm, label: 'Pico virtual (ppm)', kind: 'number', min: 0, max: 65535,
@@ -232,6 +273,41 @@ const GROUPS: Group[] = [
   ] },
 ];
 const FIELDS = GROUPS.flatMap((g) => g.fields);
+
+/**
+ * On/off fields and the fields that stop having any effect while they are off. Taken from
+ * what the firmware does, not from where the rows sit: audioEnabled turns off the breath
+ * detector only (the microphones keep measuring, filtering and streaming), and co2Enabled
+ * turns off the real sensor only (the virtual pulse and the trigger keep working, on the
+ * 600 ppm fallback). The log of raw CO₂ frames also needs the serial log itself.
+ */
+export const GOVERNORS: ReadonlyMap<number, readonly number[]> = new Map([
+  [TLV.audioEnabled, [
+    TLV.breathDetector, TLV.potControlsThreshold, TLV.breathMetric, TLV.breathThresholdNegDbX100,
+    TLV.breathRearmDb, TLV.debounceMs, TLV.audioFastAlphaX1000, TLV.audioSlowAlphaX1000,
+  ]],
+  [TLV.audioBpfEnabled, [TLV.audioHpHz, TLV.audioHpQX100, TLV.audioLpHz, TLV.audioLpQX100]],
+  [TLV.co2Enabled, [TLV.co2StaleTimeoutMs, TLV.co2EmaAlphaX1000, TLV.co2RawLogMode]],
+  [TLV.serialLogEnabled, [TLV.co2RawLogMode]],
+]);
+
+/** True while some on/off field that governs `id` is off in `cfg` (a missing value counts as on). */
+export function governedOff(id: number, cfg: ReadonlyMap<number, unknown>): boolean {
+  for (const [gov, ids] of GOVERNORS) {
+    if (ids.includes(id) && cfg.has(gov) && Number(cfg.get(gov)) === 0) return true;
+  }
+  return false;
+}
+
+/** Spectrum band as the form shows it right now (the cutoffs the person is choosing). */
+export interface FormBand { enabled: boolean; hpHz: number | null; lpHz: number | null }
+export interface BandSource {
+  current(): FormBand;
+  /** Calls `fn` now and on every change of the band-pass controls. */
+  subscribe(fn: (b: FormBand) => void): void;
+}
+/** Registers whose edits move the spectrum's band. */
+const BAND_IDS: ReadonlySet<number> = new Set([TLV.audioBpfEnabled, TLV.audioHpHz, TLV.audioLpHz]);
 const byId = (id: number): Field => FIELDS.find((f) => f.id === id)!;
 
 /**
@@ -242,7 +318,7 @@ const byId = (id: number): Field => FIELDS.find((f) => f.id === id)!;
  */
 const BASIC_IDS: ReadonlySet<number> = new Set([
   TLV.orientationMode, TLV.imuChip, TLV.imuNotifyHz, TLV.quatSmoothMode,
-  TLV.audioEnabled, TLV.potControlsThreshold, TLV.thresholdFixed, TLV.debounceMs,
+  TLV.audioEnabled, TLV.breathDetector, TLV.potControlsThreshold, TLV.breathMetric, TLV.breathThresholdNegDbX100, TLV.breathRearmDb, TLV.debounceMs,
   TLV.audioBpfEnabled,
   // Three of the navigation fields (joyMaxSpeedDegS, joyFullAngleDeg, joyCurveX10) only show in joystick mode.
   TLV.navMode, TLV.joyMaxSpeedDegS, TLV.joyFullAngleDeg, TLV.joyCurveX10,
@@ -284,7 +360,10 @@ export const FIELD_DEFAULTS: ReadonlyMap<number, number | string> = new Map<numb
   [TLV.audioSlowAlphaX1000, 995],
   [TLV.debounceMs, 300],
   [TLV.potControlsThreshold, 1],
-  [TLV.thresholdFixed, 100000],
+  [TLV.breathThresholdNegDbX100, 3550],
+  [TLV.breathMetric, 0],
+  [TLV.breathDetector, 0],
+  [TLV.breathRearmDb, 3],
   [TLV.potEmaAlphaX1000, 300],
   [TLV.audioBpfEnabled, 1],
   [TLV.audioHpHz, 10],
@@ -390,7 +469,17 @@ export function splitUnknownIds(
   return { send, skipped };
 }
 
-export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, store: PresetStore = new PresetStore()): void {
+/** Tooltip of the Avançado tab. */
+const ADVANCED_TAB_INFO = 'Ajustes da cadeia de sinais: faixa e filtro da IMU, ganho e rejeições da fusão, bias do giroscópio, parâmetros da suavização e dos filtros de áudio e CO₂. Abaixo deles ficam a calibração do magnetômetro e as métricas do fluxo e do firmware. O número diz quantos parâmetros vivem aqui; o ponto acende quando algum está fora do padrão de fábrica.';
+
+/**
+ * Mounts the configuration panel. Returns the container at the end of the Avançado tab,
+ * below its fields, where main.ts places the magnetometer and metrics panels: they are
+ * bench tools, not something the person operating the globe needs to see.
+ */
+export function mountConfigPanel(
+  root: HTMLElement, client: GaiaballClient, store: PresetStore = new PresetStore(),
+): { advancedSections: HTMLElement; band: BandSource } {
   root.innerHTML = `
     <h2>Configuração</h2>
     <div class="row">
@@ -399,16 +488,21 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
     </div>
     <p class="msg" data-el="hint">Os campos mostram os padrões de fábrica. Leia do dispositivo para ver o que está gravado — aplicar envia só o que mudou, confere a aceitação e grava de forma permanente.</p>
     <p class="msg" data-el="msg" role="status"></p>
+    <div class="tabs-row">
     <div class="tabs" role="tablist" aria-label="Parâmetros">
       <button type="button" class="tab" role="tab" id="tab-basico" aria-controls="pane-basico" aria-selected="true">Básico</button>
-      <button type="button" class="tab" role="tab" id="tab-avancado" aria-controls="pane-avancado" aria-selected="false" tabindex="-1"
-        data-info="Ajustes da cadeia de sinais: faixa e filtro da IMU, ganho e rejeições da fusão, bias do giroscópio, parâmetros da suavização e dos filtros de áudio e CO₂. O número diz quantos parâmetros vivem aqui; o ponto acende quando algum está fora do padrão de fábrica.">Avançado
+      <button type="button" class="tab" role="tab" id="tab-avancado" aria-controls="pane-avancado" aria-selected="false" tabindex="-1">Avançado
         <span class="tab-count" data-el="advCount"></span></button>
     </div>
-    <form data-el="form" onsubmit="return false">
-      <div role="tabpanel" id="pane-basico" aria-labelledby="tab-basico" data-el="pane-basico"></div>
-      <div role="tabpanel" id="pane-avancado" aria-labelledby="tab-avancado" data-el="pane-avancado" hidden></div>
-    </form>
+    <span class="tabs-info" data-el="adv-info"></span>
+    </div>
+    <div role="tabpanel" id="pane-basico" aria-labelledby="tab-basico" data-el="tab-basico">
+      <form data-el="pane-basico" onsubmit="return false"></form>
+    </div>
+    <div role="tabpanel" id="pane-avancado" aria-labelledby="tab-avancado" data-el="tab-avancado" hidden>
+      <form data-el="pane-avancado" onsubmit="return false"></form>
+      <div class="adv-sections" data-el="adv-sections"></div>
+    </div>
     <h3>Presets</h3>
     <div class="row"><input data-el="pname" type="text" placeholder="Nome do preset" aria-label="Nome do preset" />
       <button type="button" data-act="psave">Salvar preset</button></div>
@@ -424,22 +518,42 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   const msg = q('[data-el=msg]');
   const hint = q('[data-el=hint]');
   const advCount = q('[data-el=advCount]');
+  // The "i" of the Avançado tab sits next to it, not inside: the tab is itself a button, and
+  // a button inside a button is invalid HTML (the browser drops it).
+  q('[data-el=adv-info]').append(infoDot(ADVANCED_TAB_INFO));
   const tabs: Record<Tier, HTMLButtonElement> = {
     basico: q<HTMLButtonElement>('#tab-basico'),
     avancado: q<HTMLButtonElement>('#tab-avancado'),
   };
   const pmsg = q('[data-el=pmsg]');
   const inputs = new Map<number, HTMLInputElement | HTMLSelectElement>();
-  /** On/off checkboxes for fields with offValue (one toggle per filter). */
-  const toggles = new Map<number, HTMLInputElement>();
+  /** On/off toggles for fields with offValue (one per filter). */
+  const toggles = new Map<number, HTMLButtonElement>();
+  /** On/off toggles of the on/off fields (kind 'checkbox'); the value lives in a hidden input. */
+  const onOff = new Map<number, HTMLButtonElement>();
+  /** Connection state: every control is disabled while there is no device. */
+  let connected = client.connected;
   /** The row element of every field, so `visible` can hide it. */
   const rows = new Map<number, HTMLElement>();
   /** Second input (longitude) of the navRef field; the first one lives in `inputs`. */
   let navLon!: HTMLInputElement;
+  /** Slide switches by register id (the hidden input in `inputs` holds the value). */
+  const switches = new Map<number, HTMLButtonElement>();
+  /** Description paragraph under a switch row. */
+  const descs = new Map<number, HTMLElement>();
+  /** Shows the potentiometer's current threshold next to the sensitivity input. */
+  let potLabel!: HTMLElement;
+  let lastSensors: SensorsSample | null = null;
 
+  /** Where each tier's fieldsets go. */
   const panes: Record<Tier, HTMLElement> = {
     basico: q('[data-el=pane-basico]'),
     avancado: q('[data-el=pane-avancado]'),
+  };
+  /** The tab panels themselves: the Avançado one also holds the panels in `adv-sections`. */
+  const tabPanels: Record<Tier, HTMLElement> = {
+    basico: q('[data-el=tab-basico]'),
+    avancado: q('[data-el=tab-avancado]'),
   };
 
   // A group with fields in both tiers appears in both tabs, carrying only the fields of
@@ -457,11 +571,12 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
     fs.innerHTML = `<legend>${title}</legend>`;
     for (const f of fields) {
       // navRef has two inputs, so its row is a div (a <label> would bind only the first one).
-      const label = document.createElement(f.kind === 'navref' ? 'div' : 'label');
+      const label = document.createElement(f.kind === 'navref' || f.kind === 'switch' ? 'div' : 'label');
       label.className = 'cfg-field';
       rows.set(f.id, label);
       const name = document.createElement('span');
       name.className = 'cfg-name';
+      if (f.kind === 'switch') { name.id = `cfg-name-${f.id}`; label.setAttribute('role', 'group'); label.setAttribute('aria-labelledby', name.id); }
       name.append(f.label, infoDot(f.info));
       let el: HTMLInputElement | HTMLSelectElement;
       let extra: HTMLElement | null = null;
@@ -483,31 +598,93 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
         wrap.className = 'cfg-navref';
         wrap.append(lat, navLon);
         extra = wrap;
+      } else if (f.kind === 'switch') {
+        // The value lives in a hidden input so the generic input/change plumbing (dirty, getValue) works unchanged.
+        const hid = document.createElement('input');
+        hid.type = 'hidden';
+        const opts = f.switchOptions!;
+        const sw = renderSwitch({
+          options: opts, value: opts[0].value, label: f.label,
+          onChange: (v) => {
+            hid.value = String(v);
+            hid.dispatchEvent(new Event('input', { bubbles: true }));
+            hid.dispatchEvent(new Event('change', { bubbles: true }));
+          },
+        });
+        hid.value = String(opts[0].value);
+        switches.set(f.id, sw as HTMLButtonElement);
+        el = hid;
+        extra = sw;
+        if (f.describe) {
+          const d = document.createElement('p');
+          d.className = 'cfg-desc';
+          d.dataset.desc = String(f.id);
+          d.id = `cfg-desc-${f.id}`;
+          sw.setAttribute('aria-describedby', d.id);
+          descs.set(f.id, d);
+        }
+      } else if (f.kind === 'checkbox') {
+        // A toggle instead of a checkbox; the value lives in a hidden input, as for switches.
+        const hid = document.createElement('input');
+        hid.type = 'hidden';
+        hid.value = '0';
+        const tg = renderToggle({
+          on: false, label: f.label, showState: true,
+          onChange: (on) => {
+            hid.value = on ? '1' : '0';
+            hid.dispatchEvent(new Event('input', { bubbles: true }));
+            hid.dispatchEvent(new Event('change', { bubbles: true }));
+          },
+        });
+        onOff.set(f.id, tg);
+        el = hid;
+        extra = tg;
       } else if (f.kind === 'select') {
         el = document.createElement('select');
         for (const [v, t] of resolveOptions(f, new Map())) el.add(new Option(t, String(v)));
       } else {
         el = document.createElement('input');
-        el.type = f.kind === 'checkbox' ? 'checkbox' : f.kind === 'pin' ? 'password' : f.kind === 'text' ? 'text' : f.kind;
-        if (f.min !== undefined) el.min = String(f.min / (f.scale ?? 1));
-        if (f.max !== undefined) el.max = String(f.max / (f.scale ?? 1));
-        if (f.scale) el.step = String(1 / f.scale);
+        el.type = f.kind === 'pin' ? 'password' : f.kind === 'text' ? 'text' : f.kind;
+        const lo = f.min !== undefined ? toDisplay(f, f.min) : undefined;
+        const hi = f.max !== undefined ? toDisplay(f, f.max) : undefined;
+        if (lo !== undefined && hi !== undefined) { el.min = String(Math.min(lo, hi)); el.max = String(Math.max(lo, hi)); }
+        if (f.step !== undefined) el.step = String(f.step);
+        else if (f.scale) el.step = String(1 / f.scale);
         if (f.kind === 'text') el.maxLength = 16;
         if (f.kind === 'pin') { el.maxLength = 4; el.inputMode = 'numeric'; el.autocomplete = 'off'; el.placeholder = '····'; }
       }
       el.dataset.reg = String(f.id);
       if (f.offValue !== undefined) {
-        const tg = document.createElement('input');
-        tg.type = 'checkbox';
-        tg.className = 'filter-toggle';
+        const tg = renderToggle({
+          on: true, label: f.label,
+          onChange: (on) => {
+            label.classList.toggle('filter-off', !on);
+            tg.dispatchEvent(new Event('change'));
+          },
+        });
+        tg.classList.add('filter-toggle');
         tg.title = 'Ligar/desligar este filtro';
-        tg.setAttribute('aria-label', `Ligar/desligar: ${f.label}`);
-        tg.checked = true;
         name.prepend(tg);
         toggles.set(f.id, tg);
-        tg.addEventListener('change', () => label.classList.toggle('filter-off', !tg.checked));
+      }
+      if (f.id === TLV.breathThresholdNegDbX100) {
+        // Current potentiometer level (from 'sensors'), next to the input; only meaningful while the pot is the source.
+        const wrap = document.createElement('span');
+        wrap.className = 'cfg-sens';
+        potLabel = document.createElement('span');
+        potLabel.className = 'cfg-pot';
+        potLabel.hidden = true;
+        potLabel.setAttribute('aria-live', 'off');
+        wrap.append(potLabel, el);
+        extra = wrap;
       }
       label.append(name, extra ?? el);
+      if (f.kind === 'checkbox') label.append(el);
+      if (f.kind === 'switch') {
+        label.append(el);
+        const d = descs.get(f.id);
+        if (d) label.append(d);
+      }
       fs.append(label);
       inputs.set(f.id, el);
       if (f.id === TLV.imuChip) {
@@ -536,18 +713,23 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
     el.addEventListener('change', () => {
       refreshAdvCount();
       if (id === TLV.imuChip) { refreshDependentOptions(); refreshImuBanner(); }
-      if (id === TLV.navMode) refreshVisibility();
+      if (id === TLV.navMode || id === TLV.breathDetector || id === TLV.potControlsThreshold) refreshVisibility();
+      if (GOVERNORS.has(id)) applyEnabled();
+      if (BAND_IDS.has(id)) emitBand();
+      refreshDescribe();
     });
+    if (BAND_IDS.has(id)) el.addEventListener('input', () => emitBand());
   }
   navLon.addEventListener('input', () => { dirty.add(TLV.navRef); refreshAdvCount(); });
   navLon.addEventListener('change', () => refreshAdvCount());
-  for (const [id, tg] of toggles) tg.addEventListener('change', () => { dirty.add(id); refreshAdvCount(); });
+  for (const [id, tg] of toggles) tg.addEventListener('change', () => { dirty.add(id); refreshAdvCount(); applyEnabled(); });
 
   const getValue = (f: Field): number | string | null => {
     const el = inputs.get(f.id)!;
     // A filter whose toggle is off writes its "off" value, whatever the input shows.
-    if (f.offValue !== undefined && !toggles.get(f.id)!.checked) return f.offValue;
-    if (f.kind === 'checkbox') return (el as HTMLInputElement).checked ? 1 : 0;
+    if (f.offValue !== undefined && !isToggleOn(toggles.get(f.id)!)) return f.offValue;
+    if (f.kind === 'checkbox') return Number(el.value) !== 0 ? 1 : 0;
+    if (f.kind === 'switch') return Number(el.value);
     if (f.kind === 'text' || f.kind === 'pin') return el.value;
     if (f.kind === 'navref') {
       // One canonical string "lat,lon" (6 decimals) keeps snapshot/compare/dirty working with ===.
@@ -556,33 +738,97 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       return Number.isFinite(lat) && Number.isFinite(lon) ? navRefToString({ lat, lon }) : null;
     }
     if (el.value.trim() === '') return null;
-    if (f.scale) return Math.round(Number(el.value) * f.scale);
-    return Number(el.value);
+    return fromDisplay(f, Number(el.value));
   };
   const setValue = (f: Field, v: number | string): void => {
     const el = inputs.get(f.id)!;
     if (f.offValue !== undefined) {
       const on = Number(v) !== f.offValue;
-      toggles.get(f.id)!.checked = on;
+      setToggleValue(toggles.get(f.id)!, on);
       el.closest('.cfg-field')?.classList.toggle('filter-off', !on);
       // Keep a sensible value visible while off, so turning the filter back on works.
       el.value = String(on ? v : (f.onDefault ?? f.min ?? 0));
       return;
     }
-    if (f.kind === 'checkbox') (el as HTMLInputElement).checked = Number(v) !== 0;
+    if (f.kind === 'checkbox') {
+      const on = Number(v) !== 0;
+      el.value = on ? '1' : '0';
+      setToggleValue(onOff.get(f.id)!, on);
+    }
+    else if (f.kind === 'switch') { el.value = String(v); setSwitchValue(switches.get(f.id)!, Number(v)); }
     else if (f.kind === 'navref') {
       const ref = parseNavRefString(String(v));
       el.value = ref ? ref.lat.toFixed(6) : '';
       navLon.value = ref ? ref.lon.toFixed(6) : '';
     }
-    else if (f.scale) el.value = (Number(v) / f.scale).toFixed(Math.round(Math.log10(f.scale)));
+    else if (f.scale || f.negate) el.value = toDisplay(f, Number(v)).toFixed(f.scale ? Math.round(Math.log10(f.scale)) : 0);
     else el.value = String(v);
   };
   /** Shows or hides rows whose `visible` depends on the form (joystick sensitivity follows navMode). */
   const refreshVisibility = (): void => {
     const view = formView();
-    for (const f of FIELDS) if (f.visible) rows.get(f.id)!.hidden = !f.visible(view);
+    for (const f of FIELDS) {
+      if (f.visible) rows.get(f.id)!.hidden = !f.visible(view);
+    }
+    applyEnabled();
+    emitBand();
+    refreshDescribe();
+    refreshPotLabel();
   };
+  /**
+   * Which controls take input. Nothing does without a device; a field governed by an on/off
+   * field that is off is dimmed and locked (GOVERNORS), as is the input of a filter whose own
+   * toggle is off, and a field whose `enabled` rule says no (sensitivity under the pot).
+   */
+  const applyEnabled = (): void => {
+    const view = formView();
+    for (const f of FIELDS) {
+      const off = governedOff(f.id, view);
+      rows.get(f.id)!.classList.toggle('cfg-off', off);
+      const can = connected && !off;
+      const own = f.enabled ? f.enabled(view) : true;
+      const tg = toggles.get(f.id);
+      const filterOn = !tg || isToggleOn(tg);
+      inputs.get(f.id)!.disabled = !(can && own && filterOn);
+      if (tg) tg.disabled = !can;
+      const sw = switches.get(f.id);
+      if (sw) sw.disabled = !can;
+      const oo = onOff.get(f.id);
+      if (oo) oo.disabled = !can;
+      if (f.kind === 'navref') navLon.disabled = !can;
+    }
+  };
+  /** The band-pass as the form shows it, for the spectrum's shading (it follows the controls, applied or not). */
+  const formBand = (): FormBand => {
+    const hp = getValue(byId(TLV.audioHpHz));
+    const lp = getValue(byId(TLV.audioLpHz));
+    return {
+      enabled: getValue(byId(TLV.audioBpfEnabled)) === 1,
+      hpHz: typeof hp === 'number' ? hp : null,
+      lpHz: typeof lp === 'number' ? lp : null,
+    };
+  };
+  const bandListeners = new Set<(b: FormBand) => void>();
+  const emitBand = (): void => {
+    if (bandListeners.size === 0) return;
+    const b = formBand();
+    for (const fn of bandListeners) fn(b);
+  };
+  const refreshDescribe = (): void => {
+    for (const f of FIELDS) {
+      const d = descs.get(f.id);
+      if (d && f.describe) d.textContent = f.describe(Number(inputs.get(f.id)!.value));
+    }
+  };
+  const refreshPotLabel = (): void => {
+    const pot = Number(inputs.get(TLV.potControlsThreshold)?.value) === 1;
+    potLabel.hidden = !(pot && lastSensors);
+    if (lastSensors) potLabel.textContent = `Potenciômetro: ${potRawToDbfs(lastSensors.potRaw).toFixed(1).replace('.', ',')} dBFS`;
+  };
+  client.addEventListener('sensors', (ev) => {
+    lastSensors = (ev as CustomEvent<SensorsSample>).detail;
+    refreshPotLabel();
+  });
   /** Live form values by register id, for fields whose options depend on other fields. */
   const formView = (): Map<number, unknown> => {
     const m = new Map<number, unknown>();
@@ -674,7 +920,7 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
       const on = t === tier;
       tabs[t].setAttribute('aria-selected', String(on));
       tabs[t].tabIndex = on ? 0 : -1;
-      panes[t].hidden = !on;
+      tabPanels[t].hidden = !on;
     }
   };
   for (const t of ['basico', 'avancado'] as Tier[]) {
@@ -867,12 +1113,24 @@ export function mountConfigPanel(root: HTMLElement, client: GaiaballClient, stor
   });
 
   // ---- connection gating (presets stay usable offline) ----
-  const gated = [...inputs.values(), navLon, ...toggles.values(), q<HTMLButtonElement>('[data-act=read]'), q<HTMLButtonElement>('[data-act=apply]')];
+  const actions = [q<HTMLButtonElement>('[data-act=read]'), q<HTMLButtonElement>('[data-act=apply]')];
   const render = (d: StatusDetail): void => {
-    for (const el of gated) el.disabled = !d.connected;
+    connected = d.connected;
+    for (const el of actions) el.disabled = !d.connected;
+    // Re-applies the enabled state of every field: connection, on/off sections and own rules.
+    refreshVisibility();
     if (!d.connected) { snapshot = new Map(); reportedIds = new Set(); imuDetected = undefined; refreshImuBanner(); }
   };
   client.addEventListener('status', (ev) => render((ev as CustomEvent<StatusDetail>).detail));
   client.addEventListener('config', (ev) => populate((ev as CustomEvent<Map<number, DataView>>).detail));
   render({ connected: client.connected, name: null });
+  // Descriptions under the switches must read right from the first paint, connected or not (also in demo mode).
+  refreshDescribe();
+  return {
+    advancedSections: q('[data-el=adv-sections]'),
+    band: {
+      current: formBand,
+      subscribe: (fn: (b: FormBand) => void): void => { bandListeners.add(fn); fn(formBand()); },
+    },
+  };
 }

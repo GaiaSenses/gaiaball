@@ -28,7 +28,10 @@ void test_defaults_match_legacy() {
   TEST_ASSERT_EQUAL(250, c.audioFastAlphaX1000);
   TEST_ASSERT_EQUAL(995, c.audioSlowAlphaX1000);
   TEST_ASSERT_EQUAL(300, c.debounceMs);
-  TEST_ASSERT_EQUAL_UINT32(100000, c.thresholdFixed);
+  TEST_ASSERT_EQUAL(3550, c.breathThresholdNegDbX100);
+  TEST_ASSERT_EQUAL(0, c.breathMetric);
+  TEST_ASSERT_EQUAL(0, c.breathDetector);
+  TEST_ASSERT_EQUAL(3, c.breathRearmDb);
   TEST_ASSERT_EQUAL(17000, c.virtualHoldMs);
   TEST_ASSERT_EQUAL(2, c.soundLedPin);
   TEST_ASSERT_EQUAL(4, c.co2LedPin);
@@ -51,7 +54,7 @@ void test_roundtrip() {
   a.imuNotifyHz = 30;
   a.slerpAmount = 40;
   a.audioFastAlphaX1000 = 123;
-  a.thresholdFixed = 0xA1B2C3D4u;
+  a.breathThresholdNegDbX100 = 9000;
   a.virtualHoldMs = 60000;
   a.soundLedPin = 5;
   std::strcpy(a.bleName, "MyBall");
@@ -67,7 +70,7 @@ void test_roundtrip() {
   TEST_ASSERT_EQUAL(30, b.imuNotifyHz);
   TEST_ASSERT_EQUAL(40, b.slerpAmount);
   TEST_ASSERT_EQUAL(123, b.audioFastAlphaX1000);
-  TEST_ASSERT_EQUAL_UINT32(0xA1B2C3D4u, b.thresholdFixed);
+  TEST_ASSERT_EQUAL(9000, b.breathThresholdNegDbX100);
   TEST_ASSERT_EQUAL(60000, b.virtualHoldMs);
   TEST_ASSERT_EQUAL(5, b.soundLedPin);
   TEST_ASSERT_EQUAL_STRING("MyBall", b.bleName);
@@ -99,7 +102,7 @@ void test_reject_bad_length() {
 }
 
 void test_reject_truncated() {
-  const uint8_t trunc_value[] = {0x02, 1, 20, 0x15, 4, 1, 2};  // u32 cut short
+  const uint8_t trunc_value[] = {0x02, 1, 20, 0x2B, 2, 0xDE};  // live u16 cut short
   assertRejected(trunc_value, sizeof trunc_value);
   const uint8_t trunc_header[] = {0x02, 1, 20, 0x03};  // id without len
   assertRejected(trunc_header, sizeof trunc_header);
@@ -160,6 +163,9 @@ void test_reserved_ids_rejected() {
   assertRejected(exProtocol, sizeof exProtocol);
   const uint8_t exStatusLed[] = {0x33, 1, 18};
   assertRejected(exStatusLed, sizeof exStatusLed);
+  // 0x15 (ex-thresholdFixed, replaced by the dB-based breath threshold).
+  const uint8_t exThreshold[] = {0x15, 4, 0xA0, 0x86, 0x01, 0x00};
+  assertRejected(exThreshold, sizeof exThreshold);
 }
 
 void test_filter_registers_and_band_rule() {
@@ -287,10 +293,10 @@ void test_lenient_skips_unknown_and_invalid() {
 
 void test_lenient_stops_at_truncation() {
   GaiaConfig c;
-  const uint8_t buf[] = {0x02, 1, 30, 0x15, 4, 1, 2};  // u32 cut short
+  const uint8_t buf[] = {0x02, 1, 30, 0x2B, 2, 1};  // u16 cut short
   TEST_ASSERT_EQUAL(1, tlvApplyLenient(c, buf, sizeof buf));
   TEST_ASSERT_EQUAL(30, c.imuNotifyHz);
-  TEST_ASSERT_EQUAL_UINT32(100000, c.thresholdFixed);  // untouched default
+  TEST_ASSERT_EQUAL(3550, c.breathThresholdNegDbX100);  // untouched default
   TEST_ASSERT_EQUAL(0, tlvApplyLenient(c, nullptr, 0));  // empty is a no-op
 }
 
@@ -913,6 +919,71 @@ void test_nav_lenient_skips_bad_navref() {
   TEST_ASSERT_EQUAL_INT32(20000000, c.navRefLonE6);
 }
 
+// ------------------------------------------------------------- breath detector registers
+
+void test_breath_regs_accept_range() {
+  const struct { uint8_t id; size_t n; uint32_t v; } ok[] = {
+      {0x2B, 2, 0}, {0x2B, 2, 9000}, {0x2C, 1, 0}, {0x2C, 1, 1},
+      {0x2D, 1, 0}, {0x2D, 1, 1},    {0x2E, 1, 0}, {0x2E, 1, 20}};
+  for (const auto &t : ok) {
+    uint8_t b[8];
+    size_t n = putRec(b, t.id, t.v, t.n);
+    GaiaConfig c;
+    TEST_ASSERT_TRUE(tlvApply(c, b, n));
+  }
+  uint8_t b[16];
+  size_t n = putRec(b, 0x2B, 9000, 2);
+  n += putRec(b + n, 0x2C, 1, 1);
+  n += putRec(b + n, 0x2D, 1, 1);
+  n += putRec(b + n, 0x2E, 20, 1);
+  GaiaConfig c;
+  TEST_ASSERT_TRUE(tlvApply(c, b, n));
+  TEST_ASSERT_EQUAL(9000, c.breathThresholdNegDbX100);
+  TEST_ASSERT_EQUAL(1, c.breathMetric);
+  TEST_ASSERT_EQUAL(1, c.breathDetector);
+  TEST_ASSERT_EQUAL(20, c.breathRearmDb);
+}
+
+void test_breath_regs_reject_out_of_range() {
+  uint8_t b[8];
+  size_t n = putRec(b, 0x2B, 9001, 2);
+  assertRejected(b, n);
+  n = putRec(b, 0x2C, 2, 1);
+  assertRejected(b, n);
+  n = putRec(b, 0x2D, 2, 1);
+  assertRejected(b, n);
+  n = putRec(b, 0x2E, 21, 1);
+  assertRejected(b, n);
+}
+
+void test_lenient_load_skips_retired_0x15() {
+  uint8_t b[32];
+  size_t n = putRec(b, 0x02, 33, 1);
+  n += putRec(b + n, 0x15, 100000, 4);
+  n += putRec(b + n, 0x2B, 4200, 2);
+  GaiaConfig c;
+  TEST_ASSERT_EQUAL(2, tlvApplyLenient(c, b, n));
+  TEST_ASSERT_EQUAL(33, c.imuNotifyHz);
+  TEST_ASSERT_EQUAL(4200, c.breathThresholdNegDbX100);
+}
+
+void test_breath_regs_serialized_and_0x15_absent() {
+  GaiaConfig c;
+  uint8_t buf[384];
+  size_t n = tlvSerialize(c, buf, sizeof buf);
+  size_t len = 0;
+  const uint8_t *p = findRec(buf, n, 0x2B, &len);
+  TEST_ASSERT_NOT_NULL(p);
+  TEST_ASSERT_EQUAL(2, len);
+  TEST_ASSERT_EQUAL(3550, p[0] | (p[1] << 8));
+  TEST_ASSERT_NOT_NULL(findRec(buf, n, 0x2C));
+  TEST_ASSERT_NOT_NULL(findRec(buf, n, 0x2D));
+  p = findRec(buf, n, 0x2E);
+  TEST_ASSERT_NOT_NULL(p);
+  TEST_ASSERT_EQUAL(3, p[0]);
+  TEST_ASSERT_NULL(findRec(buf, n, 0x15));
+}
+
 void test_default_serialized_length_fits_buffer() {
   GaiaConfig c;
   uint8_t buf[384];
@@ -970,6 +1041,10 @@ int main(int, char **) {
   RUN_TEST(test_nav_cross_rule_pair_changed_together);
   RUN_TEST(test_nav_lenient_restores_invariants);
   RUN_TEST(test_nav_lenient_skips_bad_navref);
+  RUN_TEST(test_breath_regs_accept_range);
+  RUN_TEST(test_breath_regs_reject_out_of_range);
+  RUN_TEST(test_lenient_load_skips_retired_0x15);
+  RUN_TEST(test_breath_regs_serialized_and_0x15_absent);
   RUN_TEST(test_default_serialized_length_fits_buffer);
   return UNITY_END();
 }

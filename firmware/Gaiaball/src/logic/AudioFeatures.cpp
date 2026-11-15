@@ -20,6 +20,19 @@ int16_t rmsToDbfsX100(float rms) { return encodeDbX100(rms * 1.41421356f / kAudi
 
 int16_t peakToDbfsX100(float peak) { return encodeDbX100(peak / kAudioFullScale); }
 
+uint8_t dbX100ToHalfDb(int16_t dbX100) {
+  long v = lround((dbX100 - kAudioDbFloorX100) / 50.0);
+  if (v < 0) return 0;
+  if (v > 255) return 255;
+  return static_cast<uint8_t>(v);
+}
+
+float dbfsToPeakCounts(float dbfs) { return kAudioFullScale * powf(10.0f, dbfs / 20.0f); }
+
+float dbfsToRmsCounts(float dbfs) { return dbfsToPeakCounts(dbfs) / 1.41421356f; }
+
+float dbToAmplitudeRatio(float db) { return powf(10.0f, -db / 20.0f); }
+
 void AudioLevelWindow::push(const float sumSq[2], const float peak[2], uint16_t frames) {
   if (frames == 0) return;
   Entry &e = ring_[next_];

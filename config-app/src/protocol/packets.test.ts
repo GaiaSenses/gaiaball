@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { decodeAudioChunkPacket, decodeCo2Packet, decodeDiagPacket, decodeImuPacket, decodeMagChunkPacket, decodeNav, decodeSensorsPacket, rmsToDbfs } from './packets';
+import { decodeAudioChunkPacket, decodeCo2Packet, decodeDiagPacket, decodeImuPacket, decodeMagChunkPacket, decodeNav, decodeSensorsPacket, isLegacyImuPacket, peakToDbfs, potRawToDbfs, rmsToDbfs, thresholdToDbfs } from './packets';
 import { TLV, VALID_OUTPUT_GPIOS, buildCommand, decodeNavRef, decodeTlv, encodeNavRef, encodeTlv, navRefToString, parseNavRefString } from './tlv';
 
 const hex = (s: string) => new DataView(new Uint8Array(s.trim().split(/\s+/).map((b) => parseInt(b, 16))).buffer);
 
 // Golden vectors copied verbatim from firmware/docs/protocol.md
 const IMU =
+  '02 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 E8 03 0C FE 97 00 0B F0 C8 F0 E4';
+// Version 1 IMU packet (31 B, acceleration in LSB, audio int16 dBFS x100): legacy firmware.
+const IMU_V1 =
   '01 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 01 00 FE FF 03 00 0B' +
   ' 00 00 30 F8 00 00 A6 FD';
 const CO2 = '01 02 02 01 0D 0C 0B 0A E8 03 05 07';
@@ -21,26 +24,30 @@ describe('golden decode', () => {
     expect(s.seq).toBe(258);
     expect(s.tUs).toBe(0x0a0b0c0d);
     expect(s.quat).toEqual({ w: 1.0, x: 0, y: 0, z: 0 });
-    expect(s.acc).toEqual([1, -2, 3]);
+    expect(s.acc).toEqual([1000, -500, 151]); // mg
     expect(s.flags).toBe(0b1011);
     expect([s.quatValid, s.nineAxis, s.moving]).toEqual([true, true, false]);
-    // Microphone envelope appended in v8: AES17 dBFS for the RMS, amplitude dBFS for
-    // the peak, both x100 on the wire.
+    // Microphone envelope: u8 half-dB, dBFS = value / 2 - 120.
     expect(s.audioValid).toBe(true);
     expect(s.audioRmsDbfs).toEqual([0, -20]);
-    expect(s.audioPeakDbfs[0]).toBe(0);
-    expect(s.audioPeakDbfs[1]).toBeCloseTo(-6.02, 2);
+    expect(s.audioPeakDbfs).toEqual([0, -6]);
   });
 
   it('IMU without a microphone reads the dB floor, not 0 dBFS', () => {
-    // Same packet with kImuAudioValid clear and both levels at the floor (-120.00).
+    // Same packet with kImuAudioValid clear and all four levels at the floor (0 = -120 dBFS).
     const silent =
-      '01 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 01 00 FE FF 03 00 01' +
-      ' 20 D1 20 D1 20 D1 20 D1';
+      '02 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 E8 03 0C FE 97 00 01 00 00 00 00';
     const s = decodeImuPacket(hex(silent))!;
     expect(s.audioValid).toBe(false);
     expect(s.audioRmsDbfs).toEqual([-120, -120]);
     expect(s.audioPeakDbfs).toEqual([-120, -120]);
+  });
+
+  it('legacy 31-byte v1 IMU packet decodes to null and is flagged as legacy', () => {
+    expect(decodeImuPacket(hex(IMU_V1))).toBeNull();
+    expect(isLegacyImuPacket(hex(IMU_V1))).toBe(true);
+    expect(isLegacyImuPacket(hex(IMU))).toBe(false);
+    expect(isLegacyImuPacket(hex(CO2))).toBe(false);
   });
   it('CO2', () => {
     const s = decodeCo2Packet(hex(CO2))!;
@@ -75,6 +82,41 @@ describe('golden decode', () => {
     // Cross-type safety on the shared diag characteristic.
     expect(decodeMagChunkPacket(hex(DIAG))).toBeNull();
     expect(decodeDiagPacket(hex(MAG))).toBeNull();
+  });
+
+  it('Sensors flags 4 and 5: metricPeak and adaptive', () => {
+    const on = decodeSensorsPacket(hex(SENSORS.replace(/07$/, '37')))!;
+    expect([on.metricPeak, on.adaptive]).toEqual([true, true]);
+    expect(on.audioFiltered).toBe(false);
+    const off = decodeSensorsPacket(hex(SENSORS))!;
+    expect([off.metricPeak, off.adaptive]).toEqual([false, false]);
+  });
+
+  it('IMU flag bit 4 = breath recognized', () => {
+    expect(decodeImuPacket(hex(IMU))!.breath).toBe(false);
+    expect(decodeImuPacket(hex(IMU.replace('0B F0', '1B F0')))!.breath).toBe(true);
+  });
+
+  it('peakToDbfs: 0 dBFS at full scale, -6.02 at half, floor at -120', () => {
+    expect(peakToDbfs(8388608)).toBe(0);
+    expect(peakToDbfs(4194304)).toBeCloseTo(-6.0206, 3);
+    expect(peakToDbfs(0)).toBe(-120);
+  });
+
+  it('potRawToDbfs: linear -60..0 dBFS, clamped', () => {
+    expect(potRawToDbfs(0)).toBe(-60);
+    expect(potRawToDbfs(4095)).toBe(0);
+    expect(potRawToDbfs(2047.5)).toBeCloseTo(-30, 9);
+    expect(potRawToDbfs(-10)).toBe(-60);
+    expect(potRawToDbfs(5000)).toBe(0);
+  });
+
+  it('thresholdToDbfs picks the formula by the active metric', () => {
+    const base = decodeSensorsPacket(hex(SENSORS))!;
+    const peak = { ...base, threshold: 4194304, metricPeak: true };
+    expect(thresholdToDbfs(peak)).toBeCloseTo(peakToDbfs(4194304), 6);
+    const rms = { ...base, threshold: 4194304, metricPeak: false };
+    expect(thresholdToDbfs(rms)).toBeCloseTo(rmsToDbfs(4194304), 6);
   });
 
   it('Sensors', () => {
@@ -126,7 +168,7 @@ describe('invalid input returns null', () => {
   it('wrong version / type', () => {
     dec.forEach((d, i) => {
       const v = new Uint8Array(hex(good[i]).buffer);
-      v[0] = 2;
+      v[0] = 3;
       expect(d(new DataView(v.buffer))).toBeNull();
       const t = new Uint8Array(hex(good[i]).buffer);
       t[1] = 0x7f;
@@ -151,11 +193,12 @@ describe('invalid input returns null', () => {
 
 describe('TLV', () => {
   it('registry ids', () => {
-    expect(Object.keys(TLV)).toHaveLength(60);
+    expect(Object.keys(TLV)).toHaveLength(63);
     expect(TLV.orientationMode).toBe(0x01);
     expect(TLV.imuNotifyHz).toBe(0x02);
     expect(TLV.slerpAmount).toBe(0x03);
-    expect(TLV.thresholdFixed).toBe(0x15);
+    expect(Object.values(TLV)).not.toContain(0x15); // 0x15 retired: the firmware rejects the whole write
+    expect([TLV.breathThresholdNegDbX100, TLV.breathMetric, TLV.breathDetector, TLV.breathRearmDb]).toEqual([0x2b, 0x2c, 0x2d, 0x2e]);
     expect(TLV.co2AlertPpm).toBe(0x32);
     expect(TLV.bleName).toBe(0x40);
     expect(TLV.pin).toBe(0x41);
@@ -169,19 +212,20 @@ describe('TLV', () => {
   it('encode layout little-endian', () => {
     expect(Array.from(encodeTlv([{ id: TLV.imuNotifyHz, value: 50 }]))).toEqual([0x02, 1, 50]);
     expect(Array.from(encodeTlv([{ id: TLV.audioFastAlphaX1000, value: 250 }]))).toEqual([0x11, 2, 0xfa, 0x00]);
-    expect(Array.from(encodeTlv([{ id: TLV.thresholdFixed, value: 100000 }]))).toEqual([0x15, 4, 0xa0, 0x86, 0x01, 0x00]);
+    expect(Array.from(encodeTlv([{ id: TLV.breathThresholdNegDbX100, value: 3550 }]))).toEqual([0x2b, 2, 0xde, 0x0d]);
+    expect(Array.from(encodeTlv([{ id: TLV.breathMetric, value: 1 }]))).toEqual([0x2c, 1, 1]);
     expect(Array.from(encodeTlv([{ id: TLV.bleName, value: 'Globo_1' }]))).toEqual([0x40, 7, ...new TextEncoder().encode('Globo_1')]);
   });
   it('roundtrip', () => {
     const out = decodeTlv(new DataView(encodeTlv([
       { id: TLV.orientationMode, value: 1 },
       { id: TLV.virtualHoldMs, value: 17000 },
-      { id: TLV.thresholdFixed, value: 4000000000 },
+      { id: TLV.breathThresholdNegDbX100, value: 9000 },
       { id: TLV.bleName, value: 'Globo_9' },
     ]).buffer));
     expect(out.get(TLV.orientationMode)!.getUint8(0)).toBe(1);
     expect(out.get(TLV.virtualHoldMs)!.getUint16(0, true)).toBe(17000);
-    expect(out.get(TLV.thresholdFixed)!.getUint32(0, true)).toBe(4000000000);
+    expect(out.get(TLV.breathThresholdNegDbX100)!.getUint16(0, true)).toBe(9000);
     expect(new TextDecoder().decode(out.get(TLV.bleName)!)).toBe('Globo_9');
   });
   it('rejects bad writes and tolerates truncated decode', () => {

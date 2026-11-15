@@ -350,13 +350,24 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
 
 /* ---- sensors ------------------------------------------------------------------ */
 .sensor-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(235px, 1fr)); gap: 12px; margin: 12px 0 16px; }
-.sensor-card { background: var(--raised); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+/* Each card is tinted with the color of its own line in the charts (set from the chart
+   palette, per theme, as --card-tint), so card and chart read as one. */
+.sensor-card {
+  background: color-mix(in srgb, var(--card-tint, transparent) 14%, var(--raised));
+  border-left: 3px solid var(--card-tint, var(--line));
+  border-radius: 8px;
+  padding: 10px 12px;
+  min-width: 0;
+}
 .sensor-card h3 { margin: 0 0 6px; font-size: 0.8rem; color: var(--muted); }
 .sensor-card p { margin: 0 0 4px; font: 500 0.92rem/1.4 'IBM Plex Mono', monospace; overflow-wrap: break-word; }
 .sensor-card small { color: var(--muted); font-size: 0.72rem; line-height: 1.35; display: block; }
 .sensor-chart { width: 100%; }
 .sensor-spectrum { width: 100%; margin-bottom: 8px; }
 .spec-title { margin: 16px 0 4px; }
+.spec-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
+.spec-head .spec-title { margin-bottom: 0; }
+.spec-scale { margin-top: 12px; }
 
 /* ---- responsive ---------------------------------------------------------------- */
 @media (max-width: 1080px) {
@@ -413,12 +424,15 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
    diferentes, feitas por pessoas diferentes em momentos diferentes — a primeira não
    deve ter que ler 25 parâmetros de filtro para achar o limiar do sopro. A contagem na
    aba Avançado responde, sem abri-la, "tem algo fora do padrão aqui?". */
-.tabs {
+.tabs-row {
   display: flex;
-  gap: 2px;
+  align-items: flex-end;
+  gap: 6px;
   margin-bottom: 14px;
   border-bottom: 1px solid var(--line);
 }
+.tabs { display: flex; gap: 2px; }
+.tabs-info { align-self: center; }
 .tab {
   display: inline-flex;
   align-items: center;
@@ -434,6 +448,16 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
   cursor: pointer;
 }
 .tab:hover { color: var(--text); }
+/* Magnetômetro e Métricas dentro da aba Avançado: blocos no mesmo traço dos fieldsets,
+   sem o cartão (fundo e sombra) que eles tinham quando eram painéis soltos. */
+.adv-sections > section {
+  background: none;
+  box-shadow: none;
+  border-radius: 8px;
+  padding: 10px 12px 12px;
+  margin: 0 0 14px;
+}
+.adv-sections > section > h2 { font-size: 0.92rem; color: var(--accent); }
 .tab[aria-selected='true'] {
   color: var(--text);
   border-bottom-color: var(--accent);
@@ -462,3 +486,112 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
 .cfg-reboot { border: 1px solid var(--warn); border-radius: 6px; margin: 4px 0 8px; padding: 8px 10px; }
 .cfg-reboot[hidden] { display: none; }
 .cfg-reboot button { margin-left: 8px; }
+
+/* ---- slide switch (src/ui/switch.ts) ----------------------------------------- */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.86rem;
+  cursor: pointer;
+}
+.switch:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.switch-opt { color: var(--muted); transition: color 0.15s; }
+.switch:not(.on) .switch-opt-a, .switch.on .switch-opt-b { color: var(--text); font-weight: 600; }
+.switch-track {
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  transition: background 0.15s, border-color 0.15s;
+}
+.switch.on .switch-track { background: var(--accent-soft); border-color: var(--accent); }
+.switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border-radius: 50%;
+  transition: transform 0.15s;
+}
+.switch.on .switch-knob { transform: translateX(16px); }
+.switch:disabled { opacity: 0.45; cursor: not-allowed; }
+/* On/off toggle: the knob goes grey when off, so the state reads without the label. */
+.toggle { gap: 6px; padding: 2px 4px; }
+.toggle:not(.on) .switch-knob { background: var(--muted); }
+.toggle-state { min-width: 5.5em; text-align: left; color: var(--muted); font-size: 0.82rem; }
+.toggle.on .toggle-state { color: var(--text); }
+.filter-toggle { padding: 0 2px; }
+.filter-toggle .switch-track { width: 30px; height: 16px; }
+.filter-toggle .switch-knob { width: 10px; height: 10px; }
+.filter-toggle.on .switch-knob { transform: translateX(14px); }
+/* A field whose on/off field is off (GOVERNORS in config-panel.ts): dimmed and locked. */
+.cfg-field.cfg-off { opacity: 0.45; }
+.cfg-field.cfg-off :disabled { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .switch-opt, .switch-track, .switch-knob { transition: none; }
+}
+.cfg-desc { flex: 1 0 100%; margin: 0; color: var(--muted); font-size: 0.82rem; line-height: 1.4; }
+.cfg-pot { color: var(--muted); font-family: 'IBM Plex Mono', monospace; font-size: 0.82rem; }
+.cfg-sens { display: inline-flex; align-items: center; gap: 8px; }
+.cfg-field input:disabled { opacity: 0.55; }
+
+.chart-window { display: flex; align-items: center; gap: 6px; margin: 8px 0; font-size: 0.8rem; color: var(--muted); }
+.chart-window-btn { background: var(--raised); color: inherit; border: 1px solid transparent; border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; }
+.chart-window-btn[aria-pressed="true"] { border-color: currentColor; color: var(--text, inherit); font-weight: 600; }
+
+/* ---- stage mode (src/stage) -------------------------------------------------- */
+.mode-box { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; flex: 1 1 auto; max-width: 460px; }
+.mode-text { margin: 0; font-size: 0.74rem; line-height: 1.35; color: var(--muted); }
+
+.stage-locked { position: relative; opacity: 0.45; filter: grayscale(1); user-select: none; }
+.stage-locked::after {
+  content: attr(data-lock-label);
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: 500 0.78rem/1.2 'IBM Plex Mono', monospace;
+  pointer-events: none;
+}
+
+.stage-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 20px;
+  padding: 12px 20px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--accent);
+}
+.stage-bar[hidden] { display: none; }
+.stage-label { font-size: 0.78rem; color: var(--muted); }
+.stage-meter { display: flex; align-items: center; gap: 8px; }
+.stage-meter-track { width: 180px; height: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); overflow: hidden; }
+.stage-meter-fill { height: 100%; width: 0; background: var(--accent); }
+.stage-db { min-width: 84px; font: 500 0.78rem/1 'IBM Plex Mono', monospace; }
+.stage-pulse { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line); background: var(--surface); }
+.stage-pulse.on { background: var(--warn); border-color: var(--warn); }
+.stage-sens { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.stage-sens input { width: 100px; }
+.stage-actions { display: flex; gap: 10px; margin-left: auto; }
+@media (max-width: 700px) {
+  .mode-box { max-width: none; flex-basis: 100%; order: 3; }
+  #topbar { flex-wrap: wrap; }
+}

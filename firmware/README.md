@@ -71,15 +71,12 @@ arduino-cli compile --fqbn esp32:esp32:esp32 firmware/Gaiaball
 arduino-cli upload  --fqbn esp32:esp32:esp32 -p /dev/ttyUSB0 firmware/Gaiaball
 ```
 
-### Resource usage (build of 2026-11-09)
+### Resource usage (build of 2026-11-14)
 
 | Toolchain | Flash (of 1 310 720 B) | Static RAM (of 327 680 B) |
 |---|---|---|
-| PlatformIO `esp32dev` | 814 085 B (62.1 %) | 51 372 B (15.7 %) |
-| arduino-cli `esp32:esp32:esp32` | 803 653 B (61 %) | 51 268 B (15 %) |
-
-Static RAM went *down* with the v8 audio changes: the I2S block shrank from 256 to 80
-frames, so both the DMA buffers and the task's sample buffer are smaller.
+| PlatformIO `esp32dev` | 829 993 B (63.3 %) | 52 324 B (16.0 %) |
+| arduino-cli `esp32:esp32:esp32` | 819 337 B (62 %) | 52 220 B (15 %) |
 
 Known build warnings (pre-existing, harmless, from the legacy IDF drivers kept on
 purpose for core 2.0.17): `'I2S_COMM_FORMAT_I2S' is deprecated` (AudioService) and
@@ -202,12 +199,12 @@ Default configuration (`imuNotifyHz` = 50, raw stream off):
 
 | # | Item | Bytes on the wire | Payload/s | Air time/s | CPU |
 |---|---|---|---|---|---|
-| 1 | RMS per channel on every ImuPacket | **+4 B/packet** (2 × i16, 0.01 dBFS) | +200 B/s | +1.6 ms | ~0 (it was already being computed) |
-| 2 | Peak per channel, tracked at 16 kHz | **+4 B/packet** (2 × i16, 0.01 dBFS) | +200 B/s | +1.6 ms | +1 compare per sample per channel ≈ 0.01 % of a core |
+| 1 | RMS per channel on every ImuPacket | **+2 B/packet** (2 × u8, 0.5 dB) | +100 B/s | +0.8 ms | ~0 (it was already being computed) |
+| 2 | Peak per channel, tracked at 16 kHz | **+2 B/packet** (2 × u8, 0.5 dB) | +100 B/s | +0.8 ms | +1 compare per sample per channel ≈ 0.01 % of a core |
 | 3 | Granted connection interval in the DiagPacket | **+2 B/packet** (u16, 0.1 ms) | +2 B/s | +0.02 ms | 0 |
 | 4 | Raw 2 kHz stream now opt-in (TLV `0x1F`) | **−208 B/packet × −20.8 packets/s** | **−4333 B/s** | **−45.4 ms** | −1 decimator feed per sample ≈ −0.1 % of a core |
 | 5 | `double` → `float` in the RMS accumulators | 0 | 0 | 0 | **−1.7 % of a core** (the LX6 FPU is single-precision; every double op was emulated) |
-| | **Total** | ImuPacket 23 → 31 B, DiagPacket 32 → 34 B | **−3931 B/s (−70 %)** | **−42.2 ms (−49 %)** | ≈ −1.8 % of one core |
+| | **Total** | ImuPacket 23 → 27 B, DiagPacket 32 → 34 B | **−4131 B/s (−73 %)** | **−43.8 ms (−51 %)** | ≈ −1.8 % of one core |
 
 ### Globe navigation (v9): the NavPacket
 
@@ -222,7 +219,7 @@ trigger flag is one bit of an existing byte: 0 extra bytes.
 
 These figures are arithmetic from the formula above, **not measured on hardware**.
 
-Item 1 and item 2 together are the 8 bytes appended to the ImuPacket; they are listed
+Item 1 and item 2 together are the 4 bytes appended to the ImuPacket; they are listed
 apart because they answer different questions (energy over a window vs. the transient
 inside it), and because only the peak needed new per-sample work.
 
@@ -231,27 +228,27 @@ inside it), and because only the peak needed new per-sample work.
 | Scenario | Packets/s | Payload | Air time | Duty |
 |---|---|---|---|---|
 | v7 (50 Hz, stream always on) | 77.8 | 5642 B/s | 85.3 ms/s | 8.5 % |
-| **v8 default (50 Hz, stream off)** | **57** | **1711 B/s** | **43.1 ms/s** | **4.3 %** |
-| v8 at 100 Hz, stream off | 107 | 3261 B/s | 81.3 ms/s | 8.1 % |
-| v8 at 200 Hz, stream off | 207 | 6361 B/s | 157.7 ms/s | 15.8 % |
-| v8 at 100 Hz while tuning (stream on) | 128 | 7594 B/s | 126.7 ms/s | 12.7 % |
-| **v9 default (50 Hz, stream off, nav 50 Hz)** | **107** | **2811 B/s** | **77.7 ms/s** | **7.8 %** |
-| v9 at 100 Hz, stream off, nav 50 Hz | 157 | 4361 B/s | 115.9 ms/s | 11.6 % |
-| v9 at 200 Hz, stream off, nav 50 Hz | 257 | 7461 B/s | 192.3 ms/s | 19.2 % |
-| v9 at 100 Hz while tuning (stream on, nav 50 Hz) | 178 | 8694 B/s | 161.3 ms/s | 16.1 % |
+| **v8 default (50 Hz, stream off)** | **57** | **1511 B/s** | **41.5 ms/s** | **4.2 %** |
+| v8 at 100 Hz, stream off | 107 | 2861 B/s | 78.1 ms/s | 7.8 % |
+| v8 at 200 Hz, stream off | 207 | 5561 B/s | 151.3 ms/s | 15.1 % |
+| v8 at 100 Hz while tuning (stream on) | 128 | 7194 B/s | 123.5 ms/s | 12.4 % |
+| **v9 default (50 Hz, stream off, nav 50 Hz)** | **107** | **2611 B/s** | **76.1 ms/s** | **7.6 %** |
+| v9 at 100 Hz, stream off, nav 50 Hz | 157 | 3961 B/s | 112.7 ms/s | 11.3 % |
+| v9 at 200 Hz, stream off, nav 50 Hz | 257 | 6661 B/s | 185.9 ms/s | 18.6 % |
+| v9 at 100 Hz while tuning (stream on, nav 50 Hz) | 178 | 8294 B/s | 158.1 ms/s | 15.8 % |
 
 The v9 rows are the v8 rows plus the NavPacket at 50 Hz (+50 packets/s, +1100 B/s,
 +34.6 ms/s). Breakdown of the v9 default (v8 plus the NavPacket row), per packet type:
 
 | Packet | Payload | Rate | Payload/s | Air time/s |
 |---|---|---|---|---|
-| ImuPacket (orientation + envelope) | 31 B | 50 Hz | 1550 B/s | 38.2 ms |
+| ImuPacket (orientation + envelope) | 27 B | 50 Hz | 1350 B/s | 36.6 ms |
 | SensorsPacket (threshold, pot, health) | 23 B | 5 Hz | 115 B/s | 3.5 ms |
 | DiagPacket | 34 B | 1 Hz | 34 B/s | 0.8 ms |
 | Co2Packet | 12 B | 1 Hz | 12 B/s | 0.6 ms |
 | NavPacket (v9, own characteristic) | 22 B | 50 Hz | 1100 B/s | 34.6 ms |
 | AudioChunkPacket (opt-in) | 208 B | 0 (20.8 Hz when on) | 0 (4333 B/s) | 0 (45.4 ms) |
-| **Total (v8 was 1711 B/s, 43.1 ms)** | | | **2811 B/s** | **77.7 ms** |
+| **Total (v8 was 1511 B/s, 41.5 ms)** | | | **2611 B/s** | **76.1 ms** |
 
 ### Why the spectrum is not computed here
 
@@ -331,8 +328,8 @@ choosing a DLPF index by hand:
 | Magnetometer axes | AK8963 frame | different from the accel/gyro frame on both chips; the operator-selected `magAxisRemap` (TLV `0x36`) puts it right |
 | Data ready | `INT_STATUS` bit 0 | `INT_STATUS_1` bit 0 (clear-on-read behaviour not confirmed from the vendored register map: see `docs/bench-validation.md`) |
 
-The scales on the wire are the same for both: accelerometer +-4 g at 8192 LSB/g, gyro
-full scale selectable with the same four codes (TLV `0x06`).
+The sensor scales are the same for both: accelerometer +-4 g at 8192 LSB/g (the packet
+carries it as milli-g, converted in `makeImuPacket`), gyro full scale selectable with the same four codes (TLV `0x06`).
 
 ### Sound (2× INMP441)
 
@@ -347,13 +344,16 @@ full scale selectable with the same four codes (TLV `0x06`).
         │          │
         │     [4] AudioLevelWindow: 20 ms pooled energy, fresh every block
         │          │
-        │          ├──> [5] RMS + peak per channel ──> every ImuPacket (dBFS x100)
+        │          ├──> [5] RMS + peak per channel ──> every ImuPacket (half-dB, u8)
         │          │                                   and the 5 Hz SensorsPacket
         │          │
-        │          └──> [6] adaptive peak detector (every 3rd block = 15 ms):
-        │                   fast EMA vs slow EMA + threshold, hysteresis, debounce
+        │          └──> [6] breath detector on RMS or peak (TLV 0x2C), threshold in dBFS:
+        │                   absolute (every block, either mic over the line) or
+        │                   adaptive (every 3rd block, fast EMA vs slow EMA + threshold);
+        │                   re-arm in dB, debounce
         │                   │
-        │                   └──> sound event ──> LED flash + virtual CO2 pulse
+        │                   ├──> breath event ──> LED flash + virtual CO2 pulse
+        │                   └──> breath bit (recognized, latched) ──> every ImuPacket
         │
         └──> [7] decimate 16 kHz -> 2 kHz (average of 8) ──> AudioChunkPacket
                    OPT-IN (TLV 0x1F, off by default); the FFT runs in the browser
@@ -365,8 +365,8 @@ full scale selectable with the same four codes (TLV `0x06`).
 | 2 | Breath band-pass (`audioBpfEnabled`, HP/LP + Q) | Handling noise and table thumps live below the breath band; speech and room tone above it. Both fire the detector. | Only the breath band reaches the detector. The cut-offs are tuned against the live spectrum in the config-app, which is what the opt-in raw stream is for. |
 | 3 | Sum of squares + peak, in `float` | Instantaneous amplitude swings sample to sample; a threshold on it would chatter. A peak measured on the decimated stream (as the browser used to) is averaged over 8 samples, so it under-reads every transient. | Energy and the true 16 kHz peak of the same signal, so peak/RMS is a meaningful crest factor. `float`, not `double`: the Xtensa LX6 FPU is single-precision, so every double operation here was emulated in software — more cycles than the rest of the audio front end put together, for an error of 1e-4 dB. |
 | 4 | Pooled 20 ms window (`src/logic/AudioFeatures.*`) | At 200 Hz a block is 5 ms — shorter than one period of the low end of the breath band (10 ms at 100 Hz) — so a single block measures instantaneous amplitude, not energy, and the value wobbles with the waveform. | A 20 ms energy window that still refreshes every block (75 % overlap): a stable number at a fast rate, instead of having to choose. |
-| 5 | Envelope on the wire (`audioRmsDbX100`, `audioPeakDbX100`) | The envelope used to reach the host at 5 Hz (SensorsPacket) or had to be re-derived in the browser from the decimated stream — a 200 ms-old number, or a wrong one. | The signal the application actually uses as a control arrives at the orientation rate (up to 200 Hz), with the same timestamp, for 8 bytes on a packet that was already being sent. |
-| 6 | Adaptive peak detector (`src/logic/PeakDetector.*`) | A fixed threshold drifts out of calibration with the room: too high in a quiet hall, constantly triggered in a noisy one. | The fast envelope is compared against a slow envelope (the room's own noise floor) plus the threshold, so the detector adapts to the room. Hysteresis and debounce turn one long breath into exactly one event. It runs every 3rd block (15 ms) on purpose: its EMA coefficients are per update and were tuned against the old 16 ms block, so keeping the cadence keeps the stored alphas meaningful. |
+| 5 | Envelope on the wire (`audioRmsHalfDb`, `audioPeakHalfDb`) | The envelope used to reach the host at 5 Hz (SensorsPacket) or had to be re-derived in the browser from the decimated stream — a 200 ms-old number, or a wrong one. | The signal the application actually uses as a control arrives at the orientation rate (up to 200 Hz), with the same timestamp, for 4 bytes on a packet that was already being sent. |
+| 6 | Breath detector (`src/logic/BreathDetector.*`), absolute or adaptive (TLV `0x2D`), on RMS or peak (TLV `0x2C`) | A threshold in raw counts means nothing to the person tuning it, and one detector does not fit every room: a fixed line is predictable in a quiet hall but fires constantly in a noisy one, while an adaptive line follows the room but is harder to read. | The threshold is set in dBFS (potentiometer −60…0 dBFS, or TLV `0x2B`) and converted to counts of the chosen metric on the audio task. **Absolute** (default) runs on every 5 ms block and fires when either microphone passes the line, so what the chart shows is what fires. **Adaptive** compares the fast envelope of the louder microphone against a slow envelope (the room's own noise floor) plus the threshold; it runs every 3rd block (15 ms) on purpose: its EMA coefficients (`0x11`/`0x12`) are per update and were tuned against the old 16 ms block, so keeping the cadence keeps the stored alphas meaningful. Both re-arm once the level falls `breathRearmDb` (TLV `0x2E`, default 3 dB) below the line, and debounce (`0x13`) turns one long breath into exactly one event. The state "breath recognized" rides on every ImuPacket as flags bit 4, latched until sent. |
 | 7 | Decimation to 2 kHz, opt-in (`audioRawStream`) | Streaming 16 kHz audio over BLE would eat the notify budget the orientation stream needs. Streaming even the decimated version *all the time* costs more air time than every other packet put together. | ~4.3 kB/s instead of ~32 kB/s while it is on, and nothing at all while it is off — which is the default, because only the spectrum view needs it. Average-of-8 is the anti-alias filter for that decimation. |
 
 ### CO2 (SC8-CO2-5K)
@@ -399,12 +399,17 @@ full scale selectable with the same four codes (TLV `0x06`).
         │
    [1] EMA (potEmaAlphaX1000)
         │
-   threshold for the sound peak detector (when potControlsThreshold = 1)
+   [2] linear map 0…4095 -> −60…0 dBFS, 0.5 dB hysteresis (src/logic/PotMapping.h)
+        │
+   breath threshold in dBFS (when potControlsThreshold = 1; otherwise TLV 0x2B)
 ```
 
 The ESP32's SAR ADC is noisy by a few LSB, and that noise would modulate the detector
 threshold continuously. One EMA (default α = 0.3, the legacy value) is enough: the knob
-is turned by hand, so there is nothing fast to preserve.
+is turned by hand, so there is nothing fast to preserve. The 0.5 dB hysteresis keeps the
+residual noise from moving the line between two positions. The dBFS value travels to the
+audio task as is; the audio task converts it to counts of the active metric (RMS or
+peak), so the same knob position means the same dBFS whichever metric is chosen.
 
 ## PIN and commands
 
@@ -458,10 +463,11 @@ persisted only by command `0x11`. Full table with types: [`docs/protocol.md`](do
 | `0x0E`–`0x0F` | quatSmoothMode (0 off / 1 slerp / 2 one-euro), oneEuroFcMinX100 | 0, 100 |
 | `0x1C`–`0x1D` | oneEuroBetaX1000, accelHampelKX10 (0 off) | 20, 0 |
 | `0x1E` | magCal — 24-byte hard/soft-iron record (see protocol.md) | identity |
-| `0x10`–`0x15` | audio: enabled, fast/slow alpha ×1000, debounceMs, potControlsThreshold, thresholdFixed | 1, 250, 995, 300, 1, 100000 |
+| `0x10`–`0x14` | audio: enabled, fast/slow alpha ×1000 (adaptive detector only), debounceMs, potControlsThreshold (1 pot / 0 fixed `0x2B`) | 1, 250, 995, 300, 1 |
+| `0x2B`–`0x2E` | breath: threshold as −dBFS ×100 (0–9000), metric (0 RMS / 1 peak), detector (0 absolute / 1 adaptive), re-arm dB (0–20) | 3550 (−35.5 dBFS), 0, 0, 3 |
 | `0x16`–`0x1A` | breath band-pass: enabled, HP Hz, HP Q×100, LP Hz, LP Q×100 (LP > HP enforced) | 1, 10, 500, 200, 500 |
 | `0x1F` | audioRawStream — raw 2 kHz stream on/off (costs ~4.3 kB/s; only the spectrum view needs it) | 0 |
-| `0x1B` | potEmaAlphaX1000 | 300 |
+| `0x1B` | potEmaAlphaX1000 (the pot maps 0…4095 to −60…0 dBFS, 0.5 dB hysteresis) | 300 |
 | `0x20`, `0x22`–`0x26` | CO2: enabled, stale timeout, virtual peak/delay/hold, raw log | 1, 5000, 2100, 1000, 17000, 0 |
 | `0x28` | co2EmaAlphaX1000 (1000 = off) | 1000 |
 | `0x29`–`0x2A` | CO2 trigger flag: co2TriggerPpm (400–10000), co2TriggerHystPpm (0–2000) | 1200, 50 |
@@ -480,8 +486,9 @@ persisted only by command `0x11`. Full table with types: [`docs/protocol.md`](do
 | `0x69`–`0x6A` | joystick settle: joyStartDegSX10 (1–2000), joyStopDegSX10 (1–2000, < start) | 10, 5 |
 
 Reserved ids (removed, never reused): `0x21` (ex co2ChecksumVariant), `0x27`
-(ex co2Protocol) — gone since the SC8-CO2-5K datasheet fixed the frame format —
-and `0x33` (ex statusLedPin).
+(ex co2Protocol) — gone since the SC8-CO2-5K datasheet fixed the frame format —,
+`0x33` (ex statusLedPin) and `0x15` (ex thresholdFixed, in counts; replaced by the
+dBFS threshold `0x2B`). A write that contains any of them is rejected whole.
 
 ## Serial log
 

@@ -26,8 +26,9 @@ constexpr size_t kFrames = 80;
 constexpr int kDmaBufCount = 8;
 // The adaptive detector's EMA coefficients are per update and were tuned against the
 // old 16 ms block. Feeding it every 3rd block keeps that cadence at 15 ms, so the
-// stored alphas keep their meaning (time constants shift by 6 %, not by 3.2x).
-constexpr uint8_t kDetectorBlocks = 3;
+// stored alphas keep their meaning (time constants shift by 6 %, not by 3.2x). The
+// absolute detector has no per-update state to keep in tune and runs on every block.
+constexpr uint8_t kAdaptiveBlocks = 3;
 // A DMA buffer is ready every 5 ms; a finite read timeout keeps the task feeding
 // the WDT even if the I2S DMA stalls (a timeout counts as an i2sError).
 constexpr TickType_t kReadTimeout = pdMS_TO_TICKS(100);
@@ -35,7 +36,9 @@ constexpr TickType_t kReadTimeout = pdMS_TO_TICKS(100);
 
 bool AudioService::begin(const GaiaConfig &cfg) {
   applyConfig(cfg);
-  fixedThreshold_ = (float)cfg.thresholdFixed;
+  // Valid from boot, before the first block (and stays this way if I2S fails).
+  const float dbfs = thresholdProvider_ ? thresholdProvider_() : fixedThresholdDbfs_.load();
+  triggerLevel_.store(cfg.breathMetric != 0 ? dbfsToPeakCounts(dbfs) : dbfsToRmsCounts(dbfs));
 
   i2s_config_t c = {};
   c.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX);
@@ -72,9 +75,13 @@ bool AudioService::begin(const GaiaConfig &cfg) {
 }
 
 void AudioService::applyConfig(const GaiaConfig &cfg) {
+  fixedThresholdDbfs_.store(-cfg.breathThresholdNegDbX100 / 100.0f);
   fastX1000_.store(cfg.audioFastAlphaX1000);
   slowX1000_.store(cfg.audioSlowAlphaX1000);
   debounceMs_.store(cfg.debounceMs);
+  breathMetric_.store(cfg.breathMetric);
+  breathDetector_.store(cfg.breathDetector);
+  breathRearmDb_.store(cfg.breathRearmDb);
   enabled_.store(cfg.audioEnabled != 0);
   bpfEnabled_.store(cfg.audioBpfEnabled != 0);
   rawStreamEnabled_.store(cfg.audioRawStream != 0);
@@ -132,8 +139,21 @@ void AudioService::taskLoop() {
       continue;
     }
     if (cfgDirty_.exchange(false)) {
-      detector_.configure(fastX1000_.load() / 1000.0f, slowX1000_.load() / 1000.0f,
-                          debounceMs_.load());
+      BreathParams bp;
+      bp.mode = breathDetector_.load() != 0 ? BreathMode::Adaptive : BreathMode::Absolute;
+      bp.rearmDb = breathRearmDb_.load();
+      bp.debounceMs = debounceMs_.load();
+      bp.fastAlpha = fastX1000_.load() / 1000.0f;
+      bp.slowAlpha = slowX1000_.load() / 1000.0f;
+      const bool wantPeak = breathMetric_.load() != 0;
+      // A new metric changes the units the detector works in: the adaptive EMAs (and
+      // a pending disarm) would mix RMS and peak counts, so start the detector over.
+      // A new mode is reset by configure() itself; anything else applies live.
+      if (wantPeak != metricPeak_) detector_ = BreathDetector();
+      if (bp.mode != breathParams_.mode) detectorPhase_ = 0;
+      metricPeak_ = wantPeak;
+      breathParams_ = bp;
+      breathDirty_ = true;  // thresholdCounts is filled in once the levels are in
       bpfActive_ = bpfEnabled_.load();
       // Raw stream toggled: starting fresh keeps the first chunk after a pause from
       // mixing new samples with ones captured before it; stopping drops the chunk the
@@ -198,14 +218,51 @@ void AudioService::taskLoop() {
     rmsR_.store(lv.rms[1]);
     peakL_.store(lv.peak[0]);
     peakR_.store(lv.peak[1]);
-    if (!enabled_.load()) continue;
-    // The detector keeps its own, slower cadence: see kDetectorBlocks.
-    if (++detectorPhase_ < kDetectorBlocks) continue;
-    detectorPhase_ = 0;
-    const float thr = thresholdProvider_ ? thresholdProvider_() : fixedThreshold_;
-    const uint32_t now = millis();
-    const float level = lv.rms[0] > lv.rms[1] ? lv.rms[0] : lv.rms[1];
-    if (detector_.update(level, thr, now) && onPeak_) onPeak_(now);
+
+    // Switching the detector off or on starts it over: a baseline or a pending disarm
+    // from before the pause says nothing about the room now.
+    const bool enabled = enabled_.load();
+    if (enabled != detecting_) {
+      detector_ = BreathDetector();
+      breathDirty_ = true;
+      detectorPhase_ = 0;
+      detecting_ = enabled;
+      breathLatch_.store(false);  // enable/disable restarts the detector: no stale bit 4
+    }
+
+    // Threshold in dBFS (potentiometer or fixed), converted to counts of the active
+    // metric. Reconfigured here, on the detector's own task, only when it changed.
+    const float dbfs = thresholdProvider_ ? thresholdProvider_() : fixedThresholdDbfs_.load();
+    if (breathDirty_ || dbfs != activeDbfs_) {
+      activeDbfs_ = dbfs;
+      breathParams_.thresholdCounts = metricPeak_ ? dbfsToPeakCounts(dbfs) : dbfsToRmsCounts(dbfs);
+      detector_.configure(breathParams_);
+      breathDirty_ = false;
+    }
+
+    if (!enabled) {  // audioEnabled = 0: nothing fires and the state stays 0
+      breathRecognized_.store(false);
+      breathLatch_.store(false);  // a packet must not carry bit 4 after audio is disabled
+      triggerLevel_.store(detector_.triggerLevel());
+      continue;
+    }
+    // Absolute: every block. Adaptive: its own, slower cadence (see kAdaptiveBlocks).
+    bool evaluate = true;
+    if (breathParams_.mode == BreathMode::Adaptive) {
+      if (++detectorPhase_ < kAdaptiveBlocks) {
+        evaluate = false;
+      } else {
+        detectorPhase_ = 0;
+      }
+    }
+    if (evaluate) {
+      const uint32_t now = millis();
+      if (detector_.update(metricPeak_ ? lv.peak : lv.rms, now) && onPeak_) onPeak_(now);
+    }
+    const bool recognized = detector_.recognized();
+    breathRecognized_.store(recognized);
+    if (recognized) breathLatch_.store(true);
+    triggerLevel_.store(detector_.triggerLevel());
   }
 }
 

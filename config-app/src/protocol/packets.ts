@@ -2,6 +2,8 @@
 // (little-endian, packed). Decoders return null on any malformed input and never throw.
 
 export const PROTOCOL_VERSION = 1;
+/** The IMU (movement) packet is at version 2; every other packet stays at version 1. */
+export const IMU_PACKET_VERSION = 2;
 export const PKT_IMU = 0x01;
 export const PKT_CO2 = 0x02;
 export const PKT_DIAG = 0x03;
@@ -10,7 +12,7 @@ export const PKT_AUDIO = 0x05;
 export const PKT_MAG = 0x06;
 export const PKT_NAV = 0x07;
 
-export const IMU_PACKET_SIZE = 31;
+export const IMU_PACKET_SIZE = 27;
 export const CO2_PACKET_SIZE = 12;
 export const DIAG_PACKET_SIZE = 34;
 export const SENSORS_PACKET_SIZE = 23;
@@ -23,8 +25,6 @@ export const MAG_CHUNK_MAX_SAMPLES = 16;
 export const MAG_LSB_PER_UT = 10;
 
 export const QUAT_SCALE = 16384; // Q14
-/** MPU-9250 accel full scale is ±4 g -> 8192 LSB/g. */
-export const ACCEL_LSB_PER_G = 8192;
 /** Audio RMS counts: INMP441 24-bit samples (int32 >> 8), full-scale amplitude 2^23. */
 export const AUDIO_FULL_SCALE = 8388608;
 /** AES17 dBFS: 0 dBFS = RMS of a full-scale sine (FS/sqrt(2)). Floor at -120 dBFS. */
@@ -33,13 +33,34 @@ export function rmsToDbfs(rms: number): number {
   return Math.max(-120, 20 * Math.log10((rms * Math.SQRT2) / AUDIO_FULL_SCALE));
 }
 
-/** Floor of the firmware's dBFS x100 wire fields (firmware logic/AudioFeatures.h). */
+/** Amplitude dBFS: 0 dBFS = full-scale sample (so a full-scale sine reads 3.01 dB lower than on the RMS scale). Floor at -120 dBFS. */
+export function peakToDbfs(peak: number): number {
+  if (!(peak > 0)) return -120;
+  return Math.max(-120, 20 * Math.log10(peak / AUDIO_FULL_SCALE));
+}
+
+/** Effective trigger level of a Sensors packet in dBFS, by the metric the detector is using. */
+export function thresholdToDbfs(s: Pick<SensorsSample, 'threshold' | 'metricPeak'>): number {
+  return s.metricPeak ? peakToDbfs(s.threshold) : rmsToDbfs(s.threshold);
+}
+
+/**
+ * Potentiometer ADC (0..4095) -> dBFS, linear -60..0. Mirror of `potRawToDbfs` in
+ * firmware/Gaiaball/src/logic/PotMapping.h; change them only together.
+ */
+export function potRawToDbfs(potRaw: number): number {
+  const v = -60 + (potRaw / 4095) * 60;
+  return Math.min(0, Math.max(-60, v));
+}
+
+/** Floor of the firmware's dBFS audio fields (-120 dBFS; half-dB u8 value 0 on the wire; firmware logic/AudioFeatures.h). */
 export const AUDIO_DB_FLOOR = -120;
 
 export const IMU_FLAG_QUAT_VALID = 1 << 0;
 export const IMU_FLAG_NINE_AXIS = 1 << 1;
 export const IMU_FLAG_MOVING = 1 << 2;
 export const IMU_FLAG_AUDIO_VALID = 1 << 3;
+export const IMU_FLAG_BREATH = 1 << 4;
 export const CO2_FLAG_VALID = 1 << 0;
 export const CO2_FLAG_STALE = 1 << 1;
 export const CO2_FLAG_VIRTUAL_ACTIVE = 1 << 2;
@@ -63,12 +84,15 @@ export const SENS_FLAG_AUDIO_OK = 1 << 0;
 export const SENS_FLAG_AUDIO_ENABLED = 1 << 1;
 export const SENS_FLAG_POT_CONTROLS = 1 << 2;
 export const SENS_FLAG_AUDIO_FILTERED = 1 << 3;
+export const SENS_FLAG_METRIC_PEAK = 1 << 4;
+export const SENS_FLAG_ADAPTIVE = 1 << 5;
 export const AUDIO_FLAG_BPF_ENABLED = 1 << 0;
 
 export interface ImuSample {
   seq: number;
   tUs: number;
   quat: { w: number; x: number; y: number; z: number };
+  /** Acceleration in mg (1000 = 1 g), already converted by the firmware. */
   acc: [number, number, number];
   flags: number;
   quatValid: boolean;
@@ -82,6 +106,8 @@ export interface ImuSample {
    * Both read AUDIO_DB_FLOOR while audioValid is false.
    */
   audioValid: boolean;
+  /** Breath recognized by the firmware detector (latched until sent). */
+  breath: boolean;
   audioRmsDbfs: [number, number];
   audioPeakDbfs: [number, number];
 }
@@ -171,7 +197,7 @@ export interface SensorsSample {
   /** Audio RMS in 24-bit counts (left / right); see rmsToDbfs for the dBFS value. */
   rmsL: number;
   rmsR: number;
-  /** Peak-detector threshold, same RMS counts. */
+  /** Effective trigger level, in counts of the active metric (RMS or peak; see metricPeak, thresholdToDbfs). */
   threshold: number;
   /** EMA-filtered potentiometer ADC reading, 0..4095. */
   potRaw: number;
@@ -181,6 +207,10 @@ export interface SensorsSample {
   potControls: boolean;
   /** RMS computed after the firmware HP/LP band-pass. */
   audioFiltered: boolean;
+  /** Detector metric: true = peak, false = RMS. */
+  metricPeak: boolean;
+  /** Detector type: true = adaptive, false = absolute. */
+  adaptive: boolean;
 }
 
 export interface AudioChunkSample {
@@ -196,15 +226,21 @@ export interface AudioChunkSample {
   lpHz: number;
 }
 
-function header(dv: DataView, size: number, type: number): boolean {
-  return dv.byteLength === size && dv.getUint8(0) === PROTOCOL_VERSION && dv.getUint8(1) === type;
+function header(dv: DataView, size: number, type: number, version = PROTOCOL_VERSION): boolean {
+  return dv.byteLength === size && dv.getUint8(0) === version && dv.getUint8(1) === type;
+}
+
+/** True for an IMU packet from firmware that still speaks version 1 (31 B, acceleration in LSB). */
+export function isLegacyImuPacket(dv: DataView): boolean {
+  return dv.byteLength >= 2 && dv.getUint8(0) === 1 && dv.getUint8(1) === PKT_IMU;
 }
 
 export function decodeImuPacket(dv: DataView): ImuSample | null {
-  if (!header(dv, IMU_PACKET_SIZE, PKT_IMU)) return null;
+  if (!header(dv, IMU_PACKET_SIZE, PKT_IMU, IMU_PACKET_VERSION)) return null;
   const q = (o: number) => dv.getInt16(o, true) / QUAT_SCALE;
   const flags = dv.getUint8(22);
-  const db = (o: number) => dv.getInt16(o, true) / 100;
+  // u8 half-dB: 0 = floor (-120 dBFS), 1 step = 0.5 dB.
+  const db = (o: number) => dv.getUint8(o) / 2 - 120;
   return {
     seq: dv.getUint16(2, true),
     tUs: dv.getUint32(4, true),
@@ -215,8 +251,9 @@ export function decodeImuPacket(dv: DataView): ImuSample | null {
     nineAxis: (flags & IMU_FLAG_NINE_AXIS) !== 0,
     moving: (flags & IMU_FLAG_MOVING) !== 0,
     audioValid: (flags & IMU_FLAG_AUDIO_VALID) !== 0,
-    audioRmsDbfs: [db(23), db(25)],
-    audioPeakDbfs: [db(27), db(29)],
+    breath: (flags & IMU_FLAG_BREATH) !== 0,
+    audioRmsDbfs: [db(23), db(24)],
+    audioPeakDbfs: [db(25), db(26)],
   };
 }
 
@@ -251,6 +288,8 @@ export function decodeSensorsPacket(dv: DataView): SensorsSample | null {
     audioEnabled: (flags & SENS_FLAG_AUDIO_ENABLED) !== 0,
     potControls: (flags & SENS_FLAG_POT_CONTROLS) !== 0,
     audioFiltered: (flags & SENS_FLAG_AUDIO_FILTERED) !== 0,
+    metricPeak: (flags & SENS_FLAG_METRIC_PEAK) !== 0,
+    adaptive: (flags & SENS_FLAG_ADAPTIVE) !== 0,
   };
 }
 

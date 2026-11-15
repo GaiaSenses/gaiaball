@@ -1,0 +1,163 @@
+name: pd-gaiaball
+
+# Builds the [gaiaball] external for every system and Pd float size, runs the C tests,
+# and packages everything as a Deken package (a workflow artifact; publishing to
+# puredata.info is a manual step, see pd-gaiaball/PUBLICAR-NO-DEKEN.md).
+
+# Automatic runs are switched OFF for now: the workflow only runs when started by hand
+# (Actions tab -> pd-gaiaball -> "Run workflow"). To turn the automatic runs back on,
+# add these triggers under `on:` again:
+#
+#   push:
+#     branches: [main]
+#     tags: ['v*']
+#     paths: ['pd-gaiaball/**', '.github/workflows/pd-gaiaball.yml']
+#   pull_request:
+#     paths: ['pd-gaiaball/**', '.github/workflows/pd-gaiaball.yml']
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Pd source tag used for the headers (m_pd.h, s_stuff.h). On Windows the official
+  # binary release of the same version is used instead, because it also has pd.dll.
+  PD_TAG: '0.55-2'
+
+jobs:
+  build:
+    name: build (${{ matrix.name }}, float ${{ matrix.floatsize }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # `ext` is the binary extension handed to pd-lib-builder. Single precision uses
+        # the classic extension where it is unambiguous (readable by Pd 0.51 and later);
+        # double precision always uses <system>-<cpu>-64.<ext> (Pd 0.54 and later).
+        include:
+          - { name: linux-amd64, runner: ubuntu-latest, floatsize: 32, ext: pd_linux }
+          - { name: linux-amd64, runner: ubuntu-latest, floatsize: 64, ext: linux-amd64-64.so }
+          - { name: linux-arm64, runner: ubuntu-24.04-arm, floatsize: 32, ext: linux-arm64-32.so }
+          - { name: linux-arm64, runner: ubuntu-24.04-arm, floatsize: 64, ext: linux-arm64-64.so }
+          - { name: macos, runner: macos-latest, floatsize: 32, ext: pd_darwin, arch: 'x86_64 arm64' }
+          - { name: macos, runner: macos-latest, floatsize: 64, ext: darwin-fat-64.so, arch: 'x86_64 arm64' }
+          - { name: windows, runner: windows-latest, floatsize: 32, ext: dll }
+          - { name: windows, runner: windows-latest, floatsize: 64, ext: windows-amd64-64.dll }
+    env:
+      FLOATSIZE: ${{ matrix.floatsize }}
+      EXT: ${{ matrix.ext }}
+      ARCH: ${{ matrix.arch }}
+    defaults:
+      run:
+        shell: ${{ matrix.name == 'windows' && 'msys2 {0}' || 'bash' }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Set up MSYS2 MinGW64
+        if: matrix.name == 'windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            make
+            unzip
+            curl
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-tools-git
+
+      - name: Fetch Pd headers (source tag)
+        if: matrix.name != 'windows'
+        run: |
+          git clone --depth 1 --branch "$PD_TAG" https://github.com/pure-data/pure-data pd-gaiaball/build-deps/pure-data
+
+      - name: Fetch Pd (Windows binary release, with pd.dll)
+        if: matrix.name == 'windows'
+        run: |
+          mkdir -p pd-gaiaball/build-deps
+          curl -fsSL -o pd.zip "https://msp.ucsd.edu/Software/pd-$PD_TAG.msw.zip"
+          unzip -q pd.zip -d pd-gaiaball/build-deps
+          ls pd-gaiaball/build-deps/pd-$PD_TAG/bin/pd.dll pd-gaiaball/build-deps/pd-$PD_TAG/src/m_pd.h
+
+      - name: Make an import library named pd64.dll (Windows, double precision)
+        # Pd ships no pd64.dll; the externals only need something to link against and
+        # the export list is the same as pd.dll, so build an import library for pd64.dll.
+        if: matrix.name == 'windows' && matrix.floatsize == 64
+        working-directory: pd-gaiaball/build-deps/pd-${{ env.PD_TAG }}/bin
+        run: |
+          gendef pd.dll
+          sed -i 's/^LIBRARY.*/LIBRARY "pd64.dll"/' pd.def
+          dlltool -d pd.def -D pd64.dll -l pd64.dll
+          ls -l pd64.dll
+
+      - name: C unit tests
+        working-directory: pd-gaiaball
+        run: make test TEST_CC=gcc
+
+      - name: Build the external
+        working-directory: pd-gaiaball
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            PD_ARGS=("PDDIR=build-deps/pd-$PD_TAG")
+          else
+            PD_ARGS=(PDINCLUDEDIR=build-deps/pure-data/src)
+          fi
+          ARCH_ARGS=()
+          if [ -n "$ARCH" ]; then ARCH_ARGS=("arch=$ARCH"); fi
+          make "${PD_ARGS[@]}" "floatsize=$FLOATSIZE" "extension=$EXT" "${ARCH_ARGS[@]}"
+          ls -l "gaiaball.$EXT"
+          file "gaiaball.$EXT" || true
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gaiaball-bin-${{ matrix.name }}-${{ matrix.floatsize }}
+          path: pd-gaiaball/gaiaball.${{ matrix.ext }}
+          if-no-files-found: error
+
+  package:
+    name: package (Deken)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: gaiaball-bin-*
+          merge-multiple: true
+          path: gaiaball
+
+      - name: Assemble the gaiaball/ folder
+        run: |
+          cp pd-gaiaball/gaiaball-help.pd pd-gaiaball/README.md pd-gaiaball/gaiaball.c pd-gaiaball/Makefile gaiaball/
+          cp LICENSE gaiaball/LICENSE
+          mkdir -p gaiaball/src gaiaball/pd-lib-builder
+          cp pd-gaiaball/src/*.c pd-gaiaball/src/*.h gaiaball/src/
+          cp pd-gaiaball/pd-lib-builder/Makefile.pdlibbuilder gaiaball/pd-lib-builder/
+          ls -lR gaiaball
+
+      - name: Package with Deken
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = tag ]; then VERSION="${REF_NAME#v}"; else VERSION=0.0.0-dev; fi
+          echo "Deken version: $VERSION"
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/work -w /work \
+            registry.git.iem.at/pd/deken deken package --version "$VERSION" gaiaball
+          mkdir dek
+          mv ./*.dek ./*.dek.txt ./*.dek.sha256 dek/
+          ls -l dek
+          cat dek/*.dek.txt
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gaiaball-deken
+          path: dek
+          if-no-files-found: error

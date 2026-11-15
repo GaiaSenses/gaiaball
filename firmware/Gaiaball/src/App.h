@@ -27,8 +27,12 @@ namespace gaia {
 // Cross-task boundaries handled here:
 //  - Audio peak callback (audio task) only stores lastPeakMs_ + peakPending_; the App
 //    task triggers the virtual CO2 pulse and drives the sound LED.
-//  - Audio threshold provider (audio task) reads threshold_, an atomic the App task
-//    refreshes after every PotService::poll() (PotService itself is single-task).
+//  - Audio threshold provider (audio task) reads threshold_, an atomic (dBFS) the App
+//    task refreshes after every PotService::poll() (PotService itself is single-task);
+//    the audio task converts it to counts of the active breath metric.
+//  - Breath bit: the audio task publishes breathRecognized() and a latch; the IMU
+//    packet sender ORs both into kImuBreath and clears the latch (takeBreathLatch),
+//    and the SensorsPacket reads triggerLevelCounts(). All three are atomics.
 //  - ConfigStore onChange (NimBLE host task) only sets configDirty_; the App task
 //    re-applies the config to every service.
 //  - Globe navigation (nav_) is App-task-only: it learns about IMU reference changes
@@ -83,7 +87,7 @@ class App {
   // Cross-task handoffs.
   std::atomic<uint32_t> lastPeakMs_{0};
   std::atomic<bool> peakPending_{false};
-  std::atomic<float> threshold_{100000.0f};
+  std::atomic<float> threshold_{-35.5f};  // breath threshold, dBFS (pot or TLV 0x2B)
   std::atomic<bool> configDirty_{false};
 
   // App-task-only state.
@@ -96,6 +100,8 @@ class App {
   bool audioEnabled_ = true;
   bool potControls_ = true;
   bool audioBpf_ = true;
+  bool breathMetricPeak_ = false;  // SensorsPacket flag bit 4
+  bool breathAdaptive_ = false;    // SensorsPacket flag bit 5
   uint16_t audioHpHz_ = 10;
   uint16_t audioLpHz_ = 200;
   bool peakSeen_ = false;

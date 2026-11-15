@@ -4,7 +4,7 @@
 #include "../../Gaiaball/src/logic/AudioBlock.h"
 #include "../../Gaiaball/src/logic/AudioDecimator.h"
 #include "../../Gaiaball/src/logic/AudioFeatures.h"
-#include "../../Gaiaball/src/logic/PeakDetector.h"
+#include "../../Gaiaball/src/logic/BreathDetector.h"
 
 using namespace gaia;
 
@@ -60,70 +60,169 @@ void test_rms_odd_trailing_ignored() {
   TEST_ASSERT_FLOAT_WITHIN(4000.f / 1.41421f * 0.01f, 4000.f / 1.41421f, r.left);
 }
 
-// Steps are 16 ms (one 256-frame block at 16 kHz).
+// Adaptive steps are 15 ms (3 blocks of 5 ms), the real cadence of the adaptive mode.
 static uint32_t t = 0;
-static bool step(PeakDetector &d, float rms, float thr) {
-  t += 16;
-  return d.update(rms, thr, t);
+static BreathParams adaptiveParams(float thr, float fastA, float slowA, uint32_t debounce,
+                                   uint8_t rearmDb = 3) {
+  BreathParams p;
+  p.mode = BreathMode::Adaptive;
+  p.thresholdCounts = thr;
+  p.rearmDb = rearmDb;
+  p.debounceMs = debounce;
+  p.fastAlpha = fastA;
+  p.slowAlpha = slowA;
+  return p;
+}
+static bool step(BreathDetector &d, float level, uint32_t dtMs = 15) {
+  t += dtMs;
+  const float lv[2] = {level, level};
+  return d.update(lv, t);
 }
 
-void test_peak_fires_and_debounces() {
-  PeakDetector d;
-  d.configure(0.5f, 0.99f, 300);
+void test_adaptive_fires_and_debounces() {
+  BreathDetector d;
+  d.configure(adaptiveParams(1000.f, 0.5f, 0.99f, 300));
   t = 0;
-  for (int i = 0; i < 50; i++) TEST_ASSERT_FALSE(step(d, 100.f, 1000.f));
+  for (int i = 0; i < 50; i++) TEST_ASSERT_FALSE(step(d, 100.f));
   int fires = 0;
-  for (int i = 0; i < 5; i++) fires += step(d, 5000.f, 1000.f);  // burst 1
+  for (int i = 0; i < 5; i++) fires += step(d, 5000.f);  // burst 1
   TEST_ASSERT_EQUAL(1, fires);
-  for (int i = 0; i < 5; i++) TEST_ASSERT_FALSE(step(d, 100.f, 1000.f));  // drop, re-armed
+  for (int i = 0; i < 5; i++) TEST_ASSERT_FALSE(step(d, 100.f));  // drop, re-armed
   fires = 0;
-  for (int i = 0; i < 5; i++) fires += step(d, 5000.f, 1000.f);  // burst 2 at ~+160 ms
-  TEST_ASSERT_EQUAL(0, fires);                                   // inside debounce
-  for (int i = 0; i < 30; i++) TEST_ASSERT_FALSE(step(d, 100.f, 1000.f));
-  fires = 0;
-  for (int i = 0; i < 5; i++) fires += step(d, 5000.f, 1000.f);  // burst 3, after debounce
-  TEST_ASSERT_EQUAL(1, fires);
-}
-
-void test_hysteresis_rearm() {
-  PeakDetector d;
-  d.configure(1.0f, 1.0f, 0);  // fast = rms, slow frozen at first sample (0)
-  t = 0;
-  step(d, 0.f, 1000.f);
-  TEST_ASSERT_TRUE(step(d, 2000.f, 1000.f));
-  TEST_ASSERT_FALSE(step(d, 2000.f, 1000.f));  // still over: no refire
-  TEST_ASSERT_FALSE(step(d, 800.f, 1000.f));   // below threshold but above 70%
-  TEST_ASSERT_FALSE(step(d, 2000.f, 1000.f));  // not re-armed yet
-  TEST_ASSERT_FALSE(step(d, 500.f, 1000.f));   // below 70% -> re-arm
-  TEST_ASSERT_TRUE(step(d, 2000.f, 1000.f));
-}
-
-void test_baseline_adapts() {
-  PeakDetector d;
-  d.configure(0.25f, 0.99f, 300);
-  t = 0;
-  int fires = 0;
-  // Noise floor drifts 100 -> 3000 over 3000 blocks (~1 unit/block); threshold 1000.
-  for (int i = 0; i < 3000; i++) fires += step(d, 100.f + i, 1000.f);
+  for (int i = 0; i < 5; i++) fires += step(d, 5000.f);  // burst 2 inside debounce
   TEST_ASSERT_EQUAL(0, fires);
-  TEST_ASSERT_TRUE(d.slow() > 2500.f);
-  // A real burst on top of the new floor still fires.
+  for (int i = 0; i < 30; i++) TEST_ASSERT_FALSE(step(d, 100.f));
   fires = 0;
-  for (int i = 0; i < 4; i++) fires += step(d, 3100.f + 6000.f, 1000.f);
+  for (int i = 0; i < 5; i++) fires += step(d, 5000.f);  // burst 3, after debounce
+  TEST_ASSERT_EQUAL(1, fires);
+}
+
+void test_adaptive_rearm_db() {
+  BreathDetector d;
+  d.configure(adaptiveParams(1000.f, 1.0f, 1.0f, 0, 3));  // fast = level, slow frozen at first sample (0)
+  t = 0;
+  step(d, 0.f);
+  TEST_ASSERT_TRUE(step(d, 2000.f));
+  TEST_ASSERT_FALSE(step(d, 2000.f));  // still over: no refire
+  TEST_ASSERT_FALSE(step(d, 800.f));   // below threshold but above 707.9
+  TEST_ASSERT_FALSE(step(d, 2000.f));  // not re-armed yet
+  TEST_ASSERT_FALSE(step(d, 500.f));   // below 707.9 -> re-arm
+  TEST_ASSERT_TRUE(step(d, 2000.f));
+}
+
+void test_adaptive_baseline_adapts() {
+  BreathDetector d;
+  d.configure(adaptiveParams(1000.f, 0.25f, 0.99f, 300));
+  t = 0;
+  int fires = 0;
+  // Noise floor drifts 100 -> 3000 over 3000 steps (~1 unit/step); threshold 1000.
+  for (int i = 0; i < 3000; i++) fires += step(d, 100.f + i);
+  TEST_ASSERT_EQUAL(0, fires);
+  TEST_ASSERT_TRUE(d.triggerLevel() > 2500.f + 1000.f);
+  fires = 0;
+  for (int i = 0; i < 4; i++) fires += step(d, 3100.f + 6000.f);
   TEST_ASSERT_EQUAL(1, fires);
 }
 
 void test_debounce_wraparound() {
-  PeakDetector d;
-  d.configure(1.0f, 1.0f, 300);
+  BreathDetector d;
+  d.configure(adaptiveParams(1000.f, 1.0f, 1.0f, 300));
   uint32_t n = 0xFFFFFF00u;
-  d.update(0.f, 1000.f, n);
-  TEST_ASSERT_TRUE(d.update(5000.f, 1000.f, n + 10));
-  d.update(0.f, 1000.f, n + 20);  // re-arm
-  TEST_ASSERT_FALSE(d.update(5000.f, 1000.f, n + 100));  // 90 ms later, across no wrap yet
-  d.update(0.f, 1000.f, n + 150);
+  const float lo[2] = {0.f, 0.f}, hi[2] = {5000.f, 5000.f};
+  d.update(lo, n);
+  TEST_ASSERT_TRUE(d.update(hi, n + 10));
+  d.update(lo, n + 20);  // re-arm
+  TEST_ASSERT_FALSE(d.update(hi, n + 100));
+  d.update(lo, n + 150);
   // 0xFFFFFF00 + 400 wraps past zero; elapsed since fire = 390 ms >= 300.
-  TEST_ASSERT_TRUE(d.update(5000.f, 1000.f, n + 400));
+  TEST_ASSERT_TRUE(d.update(hi, n + 400));
+}
+
+static BreathParams absParams(float thr, uint8_t rearmDb = 3, uint32_t debounce = 300) {
+  BreathParams p;
+  p.mode = BreathMode::Absolute;
+  p.thresholdCounts = thr;
+  p.rearmDb = rearmDb;
+  p.debounceMs = debounce;
+  return p;
+}
+
+void test_abs_fires_on_left() {
+  BreathDetector d;
+  d.configure(absParams(1000.f));
+  const float lv[2] = {1200.f, 0.f};
+  TEST_ASSERT_TRUE(d.update(lv, 1000));
+}
+
+void test_abs_fires_on_right() {
+  BreathDetector d;
+  d.configure(absParams(1000.f));
+  const float lv[2] = {0.f, 1200.f};
+  TEST_ASSERT_TRUE(d.update(lv, 1000));
+}
+
+void test_abs_rearm_at_configured_db() {
+  BreathDetector d;
+  d.configure(absParams(1000.f, 3, 0));
+  const float hi[2] = {1200.f, 1200.f}, mid[2] = {800.f, 800.f}, low[2] = {700.f, 700.f};
+  TEST_ASSERT_TRUE(d.update(hi, 1000));
+  TEST_ASSERT_FALSE(d.update(mid, 1010));
+  TEST_ASSERT_FALSE(d.update(hi, 1020));  // still disarmed
+  TEST_ASSERT_FALSE(d.update(low, 1030));  // 700 < 707.9 re-arms
+  TEST_ASSERT_TRUE(d.update(hi, 1040));
+}
+
+void test_abs_one_fire_per_long_breath() {
+  BreathDetector d;
+  d.configure(absParams(1000.f));
+  const float hi[2] = {1500.f, 0.f};
+  int fires = 0;
+  for (int i = 0; i < 100; i++) {
+    fires += d.update(hi, 1000 + 5 * i);
+    TEST_ASSERT_TRUE(d.recognized());
+  }
+  TEST_ASSERT_EQUAL(1, fires);
+  const float low[2] = {0.f, 0.f};
+  d.update(low, 2000);
+  TEST_ASSERT_FALSE(d.recognized());
+}
+
+void test_abs_debounce() {
+  BreathDetector d;
+  d.configure(absParams(1000.f, 3, 300));
+  const float hi[2] = {1500.f, 1500.f}, low[2] = {0.f, 0.f};
+  TEST_ASSERT_TRUE(d.update(hi, 1000));
+  d.update(low, 1050);  // re-arm
+  TEST_ASSERT_FALSE(d.update(hi, 1100));  // 100 ms after fire
+  d.update(low, 1150);
+  TEST_ASSERT_TRUE(d.update(hi, 1400));  // 400 ms after fire
+}
+
+void test_rearm_zero_db() {
+  BreathDetector d;
+  d.configure(absParams(1000.f, 0, 0));
+  const float hi[2] = {1200.f, 1200.f}, under[2] = {999.f, 999.f};
+  TEST_ASSERT_TRUE(d.update(hi, 1000));
+  TEST_ASSERT_FALSE(d.update(under, 1010));  // re-arms immediately below thr
+  TEST_ASSERT_TRUE(d.update(hi, 1020));
+}
+
+void test_trigger_level() {
+  BreathDetector a;
+  a.configure(absParams(1234.f));
+  TEST_ASSERT_EQUAL_FLOAT(1234.f, a.triggerLevel());
+  BreathDetector d;
+  d.configure(adaptiveParams(800.f, 0.25f, 0.995f, 300));
+  const float lv[2] = {5000.f, 5000.f};
+  d.update(lv, 1000);  // seeds fast = slow = 5000
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 5800.f, d.triggerLevel());
+}
+
+void test_dbfs_to_counts() {
+  TEST_ASSERT_FLOAT_WITHIN(99580.f * 0.005f, 99580.f, dbfsToRmsCounts(-35.5f));
+  TEST_ASSERT_EQUAL_FLOAT(8388608.f, dbfsToPeakCounts(0.f));
+  TEST_ASSERT_FLOAT_WITHIN(5931642.f * 0.001f, 5931642.f, dbfsToRmsCounts(0.f));
+  TEST_ASSERT_FLOAT_WITHIN(0.0005f, 0.70795f, dbToAmplitudeRatio(3.f));
 }
 
 // --- RMS accumulator precision (float, not double) -------------------------
@@ -241,9 +340,17 @@ int main() {
   RUN_TEST(test_window_peak_ages_out);
   RUN_TEST(test_window_empty_and_reset);
   RUN_TEST(test_decimator_reset_drops_partial_chunk);
-  RUN_TEST(test_peak_fires_and_debounces);
-  RUN_TEST(test_hysteresis_rearm);
-  RUN_TEST(test_baseline_adapts);
+  RUN_TEST(test_adaptive_fires_and_debounces);
+  RUN_TEST(test_adaptive_rearm_db);
+  RUN_TEST(test_adaptive_baseline_adapts);
   RUN_TEST(test_debounce_wraparound);
+  RUN_TEST(test_abs_fires_on_left);
+  RUN_TEST(test_abs_fires_on_right);
+  RUN_TEST(test_abs_rearm_at_configured_db);
+  RUN_TEST(test_abs_one_fire_per_long_breath);
+  RUN_TEST(test_abs_debounce);
+  RUN_TEST(test_rearm_zero_db);
+  RUN_TEST(test_trigger_level);
+  RUN_TEST(test_dbfs_to_counts);
   return UNITY_END();
 }

@@ -3,10 +3,14 @@
 
 #include "AudioFeatures.h"
 
-// Binary BLE wire protocol v1. Little-endian, packed. See firmware/docs/protocol.md.
+// Binary BLE wire protocol: every packet is v1 except the movement (IMU) packet, which
+// is v2. Little-endian, packed. See firmware/docs/protocol.md.
 namespace gaia {
 
 constexpr uint8_t kProtocolVersion = 1;
+// The movement (IMU) packet is the only one that moved to v2: acceleration in mg and
+// the microphone levels in half-dB (31 -> 27 B). Every other packet stays at v1.
+constexpr uint8_t kImuPacketVersion = 2;
 
 enum class PacketType : uint8_t {
   ImuSample = 0x01,
@@ -25,6 +29,10 @@ constexpr uint8_t kImuQuatValid = 1u << 0;
 constexpr uint8_t kImuNineAxis = 1u << 1;
 constexpr uint8_t kImuMoving = 1u << 2;
 constexpr uint8_t kImuAudioValid = 1u << 3;  // the appended microphone levels are live
+// Breath recognized: set while the detector is past its line (fire .. re-arm), and
+// latched so that a recognition shorter than one notify interval still reaches the
+// next packet sent.
+constexpr uint8_t kImuBreath = 1u << 4;
 
 // Co2Packet.flags
 constexpr uint8_t kCo2Valid = 1u << 0;
@@ -47,6 +55,8 @@ constexpr uint8_t kSensAudioOk = 1u << 0;
 constexpr uint8_t kSensAudioEnabled = 1u << 1;
 constexpr uint8_t kSensPotControls = 1u << 2;
 constexpr uint8_t kSensAudioFiltered = 1u << 3;  // RMS computed after the HP/LP band-pass
+constexpr uint8_t kSensMetricPeak = 1u << 4;     // breath metric is the peak (else RMS)
+constexpr uint8_t kSensAdaptive = 1u << 5;       // breath detector is adaptive (else absolute)
 
 // AudioChunkPacket.flags
 constexpr uint8_t kAudioBpfEnabled = 1u << 0;  // band-pass active (chunk itself is RAW)
@@ -73,19 +83,20 @@ struct __attribute__((packed)) ImuPacket {
   uint16_t seq;
   uint32_t timestampUs;
   int16_t quatW, quatX, quatY, quatZ;
-  int16_t accX, accY, accZ;  // raw MPU-9250 counts (±4 g full scale, 8192 LSB/g)
+  int16_t accX, accY, accZ;  // mg (1 g = 1000 mg), converted from the sensor counts
   uint8_t flags;
-  // Appended in v8 (packet grew 23 -> 31 B): the microphone envelope, pooled over the
-  // 20 ms window that ended with this orientation sample. [0] = left, [1] = right.
+  // Appended in v8 (packet grew 23 -> 31 B), shrunk to 4 B in protocol v2 (27 B): the
+  // microphone envelope, pooled over the 20 ms window that ended with this orientation
+  // sample. [0] = left, [1] = right.
   //
   // WHY it rides on the orientation packet instead of its own: at 100-200 Hz the cost
-  // of a BLE notification is dominated by the packet slot, not by its length (a 31-byte
-  // notification occupies 764 us of air time against 700 us for a 23-byte one), and the
+  // of a BLE notification is dominated by the packet slot, not by its length (a 27-byte
+  // notification occupies 732 us of air time against 700 us for a 23-byte one), and the
   // connection-event budget is the scarce resource. One packet per tick also means the
   // envelope and the orientation always share a timestamp. Valid only when
-  // kImuAudioValid is set; otherwise both fields read kAudioDbFloorX100.
-  int16_t audioRmsDbX100[2];   // AES17 dBFS x100 (0 dBFS = full-scale sine)
-  int16_t audioPeakDbX100[2];  // peak dBFS x100 (0 dBFS = full-scale sample)
+  // kImuAudioValid is set; otherwise all four bytes read 0 (the -120 dBFS floor).
+  uint8_t audioRmsHalfDb[2];   // AES17 dBFS, 0.5 dB steps: dBFS = value / 2 - 120
+  uint8_t audioPeakHalfDb[2];  // peak dBFS, same scale (0 dBFS = full-scale sample)
 };
 
 struct __attribute__((packed)) Co2Packet {
@@ -138,8 +149,11 @@ struct __attribute__((packed)) MagChunkPacket {
 
 // Live sensor levels for the config-app charts, notified on the diag characteristic
 // at 5 Hz. RMS values are in 24-bit sample counts (INMP441 data, sample >> 8; full
-// scale 2^23): dBFS = 20*log10(rms*sqrt(2)/2^23). Threshold is in the same RMS
-// counts; potRaw is the EMA-filtered 12-bit ADC reading (0..4095).
+// scale 2^23): dBFS = 20*log10(rms*sqrt(2)/2^23). audioThreshold is the breath
+// detector's effective trigger level, in counts of the ACTIVE metric (flags bit 4):
+// RMS counts (AES17 scale above) or peak counts (dBFS = 20*log10(peak/2^23)). Absolute
+// detector: the line itself; adaptive (flags bit 5): the slow baseline plus the
+// threshold. potRaw is the EMA-filtered 12-bit ADC reading (0..4095).
 struct __attribute__((packed)) SensorsPacket {
   uint8_t version, type;
   uint16_t seq;
@@ -182,7 +196,7 @@ struct __attribute__((packed)) NavPacket {
   uint16_t speedDegSX10;
 };
 
-static_assert(sizeof(ImuPacket) == 31, "ImuPacket size");
+static_assert(sizeof(ImuPacket) == 27, "ImuPacket size");
 static_assert(sizeof(Co2Packet) == 12, "Co2Packet size");
 static_assert(sizeof(DiagPacket) == 34, "DiagPacket size");
 static_assert(sizeof(SensorsPacket) == 23, "SensorsPacket size");

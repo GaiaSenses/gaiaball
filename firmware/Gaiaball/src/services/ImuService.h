@@ -29,7 +29,7 @@ class ConfigStore;
 struct ImuSample {
   uint32_t tUs;    // micros() when the sample was read
   Quat q;          // output orientation (mounting + zero applied, optionally smoothed)
-  int16_t acc[3];  // accelerometer counts (±4 g, 8192 LSB/g), optionally filtered
+  int16_t acc[3];  // accelerometer counts (±4 g, 8192 LSB/g; sent as mg), optionally filtered
   uint8_t flags;
   // Reference epoch: changes whenever the frame q is expressed in changes (zero
   // applied, mounting captured, Quat6/Quat9 switch), so a consumer that integrates

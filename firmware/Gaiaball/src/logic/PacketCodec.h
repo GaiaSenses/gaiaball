@@ -5,11 +5,15 @@
 
 namespace gaia {
 
+// Raw +-4 g counts (8192 LSB/g) to milli-g: lroundf(counts * 1000 / 8192). Monotonic.
+int16_t accelCountsToMg(int16_t counts);
+
 // Encodes q (w,x,y,z; unit quaternion) to Q14 with saturation. If any component is
 // non-finite, encodes identity and clears kImuQuatValid in flags.
 // `audio` holds the linear microphone levels of the window that ended with this sample
-// (24-bit sample units); they are encoded to dBFS x100 here. Silence, zero and
-// non-finite levels encode as kAudioDbFloorX100. Declaring the levels live is the
+// (24-bit sample units); they are encoded to half-dB bytes here. Silence, zero and
+// non-finite levels encode as 0 (the -120 dBFS floor). `acc` is in raw sensor counts
+// and goes on the wire in mg. The packet is protocol version 2 (kImuPacketVersion). Declaring the levels live is the
 // caller's job (kImuAudioValid): this function never sets that flag.
 ImuPacket makeImuPacket(uint16_t seq, uint32_t tUs, const float q[4], const int16_t acc[3],
                         uint8_t flags, const AudioLevels &audio);
