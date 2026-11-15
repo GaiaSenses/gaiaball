@@ -47,16 +47,37 @@ sinais e, abaixo dos campos, a **calibração do magnetômetro** e as **Métrica
 jitter, perda, idade da amostra, navegação e o diagnóstico do firmware): são ferramentas de
 bancada, que não precisam ficar à vista de quem opera.
 
+### Interruptores liga/desliga
+
+Tudo o que liga ou desliga uma função é um interruptor (o estado aparece ao lado:
+"Ligado"/"Desligado"); os filtros com posição "desligado" têm um interruptor pequeno antes
+do nome. Com um interruptor desligado, os campos que deixam de ter efeito ficam
+esmaecidos e travados. Quais são eles segue o que o **firmware** faz, não a seção em que o
+campo aparece (`GOVERNORS` em `src/panels/config-panel.ts`):
+
+| Interruptor | Desligado, deixam de valer |
+|---|---|
+| Áudio › Detector de sopro | tipo de detector, fonte e valor da sensibilidade, medida, rearme, debounce e os alfas do adaptativo. Os microfones continuam medindo (RMS e pico vão para os gráficos e para o Pd), e o passa-banda e o stream cru continuam valendo. |
+| Áudio › Filtro passa-banda | high-pass, low-pass e os dois Q |
+| CO₂ › Sensor de CO₂ (SC8) | timeout de dado velho, suavização e log bruto. A bola manda 600 ppm no lugar da leitura; o pulso virtual do sopro e o gatilho continuam valendo. |
+| Sistema › Log serial (USB) | CO₂ › log bruto (ele escreve no log serial) |
+
 ## Sensores em tempo real
 
 O painel "Sensores em tempo real" mostra o valor atual de cada sensor com a unidade
 correta e, abaixo, gráficos de linha empilhados verticalmente que **compartilham o
-mesmo eixo X (tempo, em segundos)**, cada gráfico com uma cor própria.
+mesmo eixo X (tempo, em segundos)**, cada gráfico com uma cor própria. Cada cartão tem o
+fundo na cor da sua linha nos gráficos; orientação, potenciômetro e microfones aparecem
+em números inteiros.
 
-- **Janela:** 5, 10, 30 ou 60 s (padrão 10), escolhida acima dos gráficos. Os gráficos guardam só o que a janela mostra: ao passar para uma janela maior, ela se completa com o tempo.
-- **Todos os pacotes:** os gráficos mostram cada pacote recebido, sem decimar. O rodapé diz
-  "Últimos N s, com todos os pacotes recebidos. Os gráficos são redesenhados 10 vezes por
-  segundo; isso não atrasa o envio ao Pd nem o site."
+- **Janela:** 5, 10, 30 ou 60 s (padrão 10), escolhida acima dos gráficos. Os últimos 60 s
+  ficam sempre guardados, então trocar para uma janela maior já mostra o passado.
+- **Todos os pacotes:** cada pacote recebido entra no gráfico. Quando a parte visível de uma
+  linha passa de 500 pontos (janelas longas ou taxas altas), cada trecho é desenhado pelo seu
+  mínimo e máximo: os picos e os pulsos de sopro continuam aparecendo e o redesenho custa o
+  mesmo em qualquer janela. Desenhar os 12 000 pontos de 60 s a 200 Hz em cada um dos 10
+  redesenhos por segundo travava a página — e, com ela, o envio ao Pd, que roda na mesma
+  thread.
 - **Faixas fixas do eixo Y** (a escala não pula com o dado): orientação −180…180°; aceleração
   −4000…4000 mg; RMS e pico −120…0 dBFS; detecção de sopro −0,1…1,1; CO₂ 0…máx(5000,
   `virtualPeakPpm`) ppm; potenciômetro 0…100 %; minilinha Taxa 0…1,2 × `imuNotifyHz`;
@@ -80,9 +101,10 @@ painel roda com dados sintéticos.
 
 A bola transmite o **áudio bruto decimado** (mono, 2 kHz, int16, ~4,3 kB/s) e o
 **FFT roda aqui no navegador** (512 pontos, janela Hann de 256 ms, bins de ~3,9 Hz).
-O gráfico mostra o nível em dBFS contra a frequência em **escala log, de 10 a 1000 Hz**,
-como num analisador de áudio: assim os graves, onde está o sopro, não ficam espremidos
-no canto esquerdo.
+O gráfico mostra o nível em dBFS contra a frequência. Um interruptor **Linear ⟷ Log** no
+título troca a escala da frequência (o navegador lembra a escolha): **log, de 10 a 1000 Hz**
+(padrão), como num analisador de áudio, para os graves, onde está o sopro, não ficarem
+espremidos no canto esquerdo; ou **linear, de 0 a 1000 Hz**.
 
 > **Esse stream vem desligado de fábrica.** Ligue em **Configuração › Avançado › Áudio ›
 > Stream de áudio cru (2 kHz)** e aplique; enquanto está desligado o gráfico mostra o
@@ -90,8 +112,11 @@ no canto esquerdo.
 > ~53 % do total quando ligado) e nada mais depende dele: o RMS e o pico vêm medidos do
 > firmware. Desligue ao terminar o ajuste.
 
-Sopre na bola e observe quais frequências sobem; as linhas tracejadas
-mostram os cortes HP/LP configurados (ecoados pelo firmware em cada pacote). Os
+Sopre na bola e observe quais frequências sobem. As linhas tracejadas marcam os cortes
+HP/LP e um **cinza claro cobre o que o passa-banda corta**. Os dois seguem os campos
+**High-pass** e **Low-pass** da Configuração enquanto você digita, antes de aplicar; um
+corte diferente do que o firmware ecoa em cada pacote aparece como "(não aplicado)". Com o
+passa-banda desligado, o cinza e as linhas somem. Os
 filtros (HP 10 Hz / LP 200 Hz, Q 5,00 por padrão) são aplicados **no firmware**,
 antes do detector de pico — o espectro mostra o sinal **cru**, justamente para
 escolher os cortes. Atenção: Q > 0,71 cria um pico ressonante de ~20·log₁₀(Q) dB
