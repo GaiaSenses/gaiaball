@@ -197,8 +197,8 @@ Desbloqueie com o PIN antes de mudar qualquer campo.
 
 **Preparação.** Conecte e abra Sensores (o bit de sopro viaja no pacote de movimento, o
 mesmo da orientação). Cada mudança abaixo vale depois de **Aplicar**. Comece pelos
-padrões: detector **Absoluto**, fonte **Potenciômetro**, medida **RMS**, rearme 3 dB,
-debounce 300 ms.
+padrões: detector **Absoluto**, fonte **Potenciômetro**, medida **RMS**, rearme 6 dB,
+debounce 3 s.
 
 **A. Absoluto, potenciômetro, RMS, sala silenciosa**
 
@@ -207,11 +207,11 @@ debounce 300 ms.
    horizontal. Com o potenciômetro parado, a linha não oscila (histerese de 0,5 dB).
 2. Deixe a linha perto de −35 dBFS e sopre num microfone. Quando a curva RMS desse microfone
    passa da linha: o LED de som pisca, o CO₂ sobe com o pulso virtual e o gráfico
-   **Detecção de sopro** vai a 1. Ele volta a 0 quando o som cai uns 3 dB abaixo da linha.
+   **Detecção de sopro** vai a 1. Ele volta a 0 quando o som cai uns 6 dB abaixo da linha.
    Um sopro longo dá **um** disparo só.
 3. Tape esse microfone e sopre no outro: também dispara (basta **qualquer** microfone passar
    da linha).
-4. Sopros curtos em sequência, mais próximos que 300 ms: só o primeiro dispara (debounce,
+4. Sopros curtos em sequência, mais próximos que 3 s: só o primeiro dispara (debounce,
    TLV `0x13`).
 5. Um sopro bem curto (um "tuf"): o degrau aparece no gráfico de sopro mesmo quando dura
    menos que o intervalo entre dois pacotes de movimento.
@@ -238,7 +238,7 @@ debounce 300 ms.
    perto da linha pode dar vários disparos, separados pelo debounce.
 2. Rearme 10 dB: o degrau de **Detecção de sopro** fica mais largo, e um novo disparo só vem
    depois de o som cair 10 dB abaixo da linha.
-3. Volte para 3 dB.
+3. Volte para 6 dB (o padrão).
 
 **E. Adaptativo, sala silenciosa**
 

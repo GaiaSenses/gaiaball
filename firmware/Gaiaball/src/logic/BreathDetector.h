@@ -9,8 +9,8 @@ struct BreathParams {
   BreathMode mode = BreathMode::Absolute;
   // Absolute: the line. Adaptive: how far above the slow baseline the fast envelope must rise.
   float thresholdCounts = 0.0f;
-  uint8_t rearmDb = 3;  // 0..20 whole dB below the line before the detector re-arms
-  uint32_t debounceMs = 300;
+  uint8_t rearmDb = 6;  // 0..20 whole dB below the line before the detector re-arms
+  uint32_t debounceMs = 3000;
   float fastAlpha = 0.25f;   // adaptive only: weight of the new sample
   float slowAlpha = 0.995f;  // adaptive only: near 1 = slow baseline
 };

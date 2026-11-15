@@ -452,7 +452,7 @@ TLV register and are persisted under their own NVS keys.
 | 0x10 | u8 | 1 | audioEnabled |
 | 0x11 | u16 | 250 | audioFastAlphaX1000 — fast envelope weight; **adaptive detector only** (0x2D = 1) |
 | 0x12 | u16 | 995 | audioSlowAlphaX1000 — slow baseline weight; **adaptive detector only** (0x2D = 1) |
-| 0x13 | u16 | 300 | debounceMs — minimum time between two breath fires (both detectors) |
+| 0x13 | u16 | 3000 | debounceMs — minimum time between two breath fires, ms (both detectors; the config-app shows it in seconds) |
 | 0x14 | u8 | 1 | potControlsThreshold — breath threshold source: 1 = potentiometer (ADC 0…4095 → −60…0 dBFS, linear, 0.5 dB hysteresis), 0 = fixed value 0x2B |
 | 0x16 | u8 | 1 | audioBpfEnabled — breath band-pass (HP then LP) before the RMS/peak detector |
 | 0x17 | u16 | 10 | audioHpHz (1–7000) |
@@ -476,7 +476,7 @@ TLV register and are persisted under their own NVS keys.
 | 0x2B | u16 | 3550 | breathThresholdNegDbX100 — fixed breath threshold, stored unsigned as −dBFS × 100 (0–9000; 3550 = −35.5 dBFS), in the scale of the active metric (0x2C). Used when 0x14 = 0. Absolute detector: the line; adaptive: how far the sound must rise above the slow baseline |
 | 0x2C | u8 | 0 | breathMetric — level the detector measures: 0 = RMS, 1 = peak (0–1) |
 | 0x2D | u8 | 0 | breathDetector — 0 = absolute (every 5 ms block, fires when **either** microphone passes the line), 1 = adaptive (every 3rd block, fast envelope − slow baseline of the louder microphone) (0–1) |
-| 0x2E | u8 | 3 | breathRearmDb — the detector re-arms once the level falls below `threshold × 10^(−this/20)`, whole dB (0–20) |
+| 0x2E | u8 | 6 | breathRearmDb — the detector re-arms once the level falls below `threshold × 10^(−this/20)`, whole dB (0–20) |
 | 0x30 | u8 | 2 | soundLedPin (valid output GPIOs only; 6–11 (flash) and nonexistent pins rejected) |
 | 0x31 | u8 | 4 | co2LedPin (same validation as 0x30) |
 | 0x32 | u16 | 2000 | co2AlertPpm |

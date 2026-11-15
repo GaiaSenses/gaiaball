@@ -70,14 +70,14 @@ struct GaiaConfig {
   uint8_t audioEnabled = 1;
   uint16_t audioFastAlphaX1000 = 250;  // 1..1000
   uint16_t audioSlowAlphaX1000 = 995;  // 1..1000
-  uint16_t debounceMs = 300;
+  uint16_t debounceMs = 3000;  // minimum time between two breath fires (ms)
   uint8_t potControlsThreshold = 1;
   // Breath threshold in dBFS, stored unsigned as -dBFS x 100 (0..9000; 3550 = -35.5 dBFS).
   // Used when potControlsThreshold == 0.
   uint16_t breathThresholdNegDbX100 = 3550;
   uint8_t breathMetric = 0;    // 0 = RMS, 1 = peak
   uint8_t breathDetector = 0;  // 0 = absolute, 1 = adaptive
-  uint8_t breathRearmDb = 3;   // re-arm below threshold - this many dB (0..20)
+  uint8_t breathRearmDb = 6;   // re-arm below threshold - this many dB (0..20)
   // Breath band-pass (HP then LP biquads) applied to the mic stream before the RMS /
   // peak detector. Q is x100 (500 = 5.00). NOTE: Q > 0.707 adds a resonant peak of
   // ~20*log10(Q) dB at the cutoff; validation enforces lpHz > hpHz.

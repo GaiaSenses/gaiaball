@@ -35,6 +35,8 @@ export interface Field {
   negate?: boolean;
   /** Input step in DISPLAY units (default 1/scale). */
   step?: number;
+  /** Decimals shown in the form for a scaled field (default log10(scale)). */
+  decimals?: number;
   /** Disables the input (it stays visible) while false; re-evaluated with `visible`. */
   enabled?: (cfg: Map<number, unknown>) => boolean;
 }
@@ -190,8 +192,9 @@ const GROUPS: Group[] = [
       info: 'No detector absoluto é a linha: o som precisa passar dela para disparar (−35,5 dBFS por padrão; mais perto de 0 = menos sensível). No adaptativo é o quanto o som precisa subir acima do ruído da sala. De −90 a 0, em passos de 0,5. Só vale com a fonte “Valor fixo”; com o potenciômetro, o valor atual aparece ao lado. Unidade: dBFS (0 = fundo de escala).' },
     { id: TLV.breathRearmDb, label: 'Rearme (dB)', kind: 'number', min: 0, max: 20, step: 1,
       info: 'Quanto o som precisa cair abaixo da linha para um novo sopro poder disparar. Evita que um sopro longo dispare várias vezes. De 0 a 20, de 1 em 1. Unidade: decibéis (dB).' },
-    { id: TLV.debounceMs, label: 'Debounce (ms)', kind: 'number', min: 0, max: 65535,
-      info: 'Intervalo mínimo entre dois sopros reconhecidos, para o mesmo sopro não disparar duas vezes. Unidade: milissegundos (ms).' },
+    { id: TLV.debounceMs, label: 'Debounce (s)', kind: 'number', min: 0, max: 65535,
+      scale: 1000, step: 0.1, decimals: 1,
+      info: 'Intervalo mínimo entre dois sopros reconhecidos, para o mesmo sopro não disparar duas vezes. De 0 a 65,5, em passos de 0,1 (3 por padrão). Unidade: segundos (s).' },
     { id: TLV.audioFastAlphaX1000, label: 'Alfa rápido (×1000)', kind: 'number', min: 0, max: 1000,
       visible: (cfg) => cfg.get(TLV.breathDetector) === 1,
       info: 'Só no detector adaptativo. Velocidade do envelope rápido do detector de sopro (segue o pico). Valor = alfa EMA ×1000: maior = resposta mais rápida. Adimensional.' },
@@ -358,12 +361,12 @@ export const FIELD_DEFAULTS: ReadonlyMap<number, number | string> = new Map<numb
   [TLV.audioEnabled, 1],
   [TLV.audioFastAlphaX1000, 250],
   [TLV.audioSlowAlphaX1000, 995],
-  [TLV.debounceMs, 300],
+  [TLV.debounceMs, 3000],
   [TLV.potControlsThreshold, 1],
   [TLV.breathThresholdNegDbX100, 3550],
   [TLV.breathMetric, 0],
   [TLV.breathDetector, 0],
-  [TLV.breathRearmDb, 3],
+  [TLV.breathRearmDb, 6],
   [TLV.potEmaAlphaX1000, 300],
   [TLV.audioBpfEnabled, 1],
   [TLV.audioHpHz, 10],
@@ -761,7 +764,7 @@ export function mountConfigPanel(
       el.value = ref ? ref.lat.toFixed(6) : '';
       navLon.value = ref ? ref.lon.toFixed(6) : '';
     }
-    else if (f.scale || f.negate) el.value = toDisplay(f, Number(v)).toFixed(f.scale ? Math.round(Math.log10(f.scale)) : 0);
+    else if (f.scale || f.negate) el.value = toDisplay(f, Number(v)).toFixed(f.decimals ?? (f.scale ? Math.round(Math.log10(f.scale)) : 0));
     else el.value = String(v);
   };
   /** Shows or hides rows whose `visible` depends on the form (joystick sensitivity follows navMode). */
