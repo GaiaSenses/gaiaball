@@ -58,3 +58,54 @@ export class SampleQueue<T> {
 export function thresholdRows(metricPeak: boolean): { rms: boolean; peak: boolean } {
   return { rms: !metricPeak, peak: metricPeak };
 }
+
+/** Seconds of history every line keeps, whatever window is showing: the largest window. */
+export const HISTORY_S: number = WINDOW_OPTIONS_S[WINDOW_OPTIONS_S.length - 1];
+/**
+ * Most points a line hands to the chart per redraw. Above it the line is drawn as the
+ * minimum and maximum of each stretch (MAX_DRAWN_POINTS / 2 stretches), so a 60 s window at
+ * 200 Hz costs the same as a short one and peaks and breath pulses still show.
+ */
+export const MAX_DRAWN_POINTS = 500;
+
+/** Index of the first x >= cutoff in an ascending array (xs.length when there is none). */
+export function firstIndexAtOrAfter(xs: readonly number[], cutoff: number): number {
+  let lo = 0, hi = xs.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (xs[mid] < cutoff) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * Min/max decimation. Lines at or under `maxPoints` come back untouched; longer ones are cut
+ * into maxPoints / 2 stretches of equal count, each drawn as its lowest and highest value in
+ * time order (one point when they coincide). A stretch holding only gaps (null) stays a gap.
+ */
+export function minMaxDecimate(
+  xs: readonly number[], ys: readonly (number | null)[], maxPoints: number,
+): { x: number[]; y: (number | null)[] } {
+  const n = xs.length;
+  if (n <= maxPoints) return { x: xs.slice(), y: ys.slice() };
+  const buckets = Math.max(1, Math.floor(maxPoints / 2));
+  const size = Math.ceil(n / buckets);
+  const x: number[] = [];
+  const y: (number | null)[] = [];
+  for (let start = 0; start < n; start += size) {
+    const end = Math.min(n, start + size);
+    let iMin = -1, iMax = -1;
+    for (let i = start; i < end; i++) {
+      const v = ys[i];
+      if (v === null) continue;
+      if (iMin < 0 || v < (ys[iMin] as number)) iMin = i;
+      if (iMax < 0 || v > (ys[iMax] as number)) iMax = i;
+    }
+    if (iMin < 0) { x.push(xs[start]); y.push(null); continue; }
+    const a = Math.min(iMin, iMax), b = Math.max(iMin, iMax);
+    x.push(xs[a]); y.push(ys[a]);
+    if (b !== a) { x.push(xs[b]); y.push(ys[b]); }
+  }
+  return { x, y };
+}

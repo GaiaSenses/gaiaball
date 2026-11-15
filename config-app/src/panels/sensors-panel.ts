@@ -26,8 +26,12 @@ import { TLV } from '../protocol/tlv.ts';
 import { renderSwitch } from '../ui/switch.ts';
 import type { BandSource, FormBand } from './config-panel.ts';
 import {
+  HISTORY_S,
+  MAX_DRAWN_POINTS,
   SampleQueue,
   WINDOW_OPTIONS_S,
+  firstIndexAtOrAfter,
+  minMaxDecimate,
   Y_RANGES,
   co2Range,
   loadWindowS,
@@ -44,8 +48,6 @@ const FFT_MS = 250; // spectrum refresh period
 // audio analysers draw it) starts at 10 Hz so the low band where breath lives is not squeezed
 // into the left edge; the linear one starts at 0.
 const SPEC_TICKS_HZ = [10, 20, 50, 100, 200, 500, 1000];
-/** Largest window (60 s) at the highest notify rate (200 Hz). */
-const MAX_POINTS = 60 * 200;
 
 // One color family per chart (each chart visually distinct), picked per theme so
 // every line keeps contrast on both backgrounds.
@@ -153,7 +155,7 @@ export function mountSensorsPanel(
   let windowS: WindowS = loadWindowS(safeStorage());
   const footEl = q<HTMLElement>('[data-el=chart-foot]');
   const syncWindowUi = (): void => {
-    footEl.textContent = `Últimos ${windowS} s, com todos os pacotes recebidos. Os gráficos são redesenhados 10 vezes por segundo; isso não atrasa o envio ao Pd nem o site.`;
+    footEl.textContent = `Últimos ${windowS} s, com todos os pacotes recebidos. Quando uma linha passa de ${MAX_DRAWN_POINTS} pontos, cada trecho é desenhado pelo seu mínimo e máximo, para os picos continuarem visíveis. Os gráficos são redesenhados 10 vezes por segundo; isso não atrasa o envio ao Pd nem o site.`;
     root.querySelectorAll<HTMLButtonElement>('.chart-window-btn').forEach((b) =>
       b.setAttribute('aria-pressed', String(Number(b.dataset.win) === windowS)));
   };
@@ -481,10 +483,12 @@ export function mountSensorsPanel(
 
   // --- sampler: one tick plots every packet queued since the previous one ------
   const NT = 16; // trace count (see `traces`)
-  // Orientation packets per second, smoothed: the traces keep only what the chosen window
-  // shows (plus a margin), so a short window stays light even after minutes of data.
-  let imuRate = 50;
-  let lastTickT = now();
+  // Every line keeps HISTORY_S seconds of packets here, whatever window is showing, so a
+  // larger window has its past at once. Each redraw hands the chart only the visible part,
+  // reduced to its min/max envelope when it is longer than MAX_DRAWN_POINTS: the cost of a
+  // redraw no longer grows with the window or the notify rate.
+  const bufX: number[][] = [];
+  const bufY: (number | null)[][] = [];
   const tick = (): void => {
     // Drain first: if renderCards throws, the queues must not grow without bound.
     const imus = imuQ.drain();
@@ -522,16 +526,26 @@ export function mountSensorsPanel(
     }
     for (const { t: x, v: c } of co2s) add(14, x, c.ppm);
     if (!xs.some((a) => a.length > 0)) return; // nothing received since the last tick
-    // Every x axis follows the bottom one: set its range on the layout object first so the
-    // single redraw done by extendTraces already shows [t-N, t].
-    const lay = (chartEl as unknown as { layout?: Record<string, { range?: number[]; autorange?: boolean }> }).layout;
-    const xa = lay?.[`xaxis${N_ROWS}`];
-    if (xa) { xa.range = [t - windowS, t]; xa.autorange = false; }
-    const dt = t - lastTickT;
-    lastTickT = t;
-    if (dt > 0 && imus.length > 0) imuRate = 0.8 * imuRate + 0.2 * (imus.length / dt);
-    const keep = Math.min(MAX_POINTS, Math.ceil(windowS * Math.max(imuRate, 5) * 1.3) + 20);
-    void Plotly.extendTraces(chartEl, { x: xs, y: ys }, xs.map((_, i) => i), keep);
+    const viewX: number[][] = [];
+    const viewY: (number | null)[][] = [];
+    for (let tr = 0; tr < NT; tr++) {
+      const bx = (bufX[tr] ??= []);
+      const by = (bufY[tr] ??= []);
+      for (let i = 0; i < xs[tr].length; i++) { bx.push(xs[tr][i]); by.push(ys[tr][i]); }
+      const old = firstIndexAtOrAfter(bx, t - HISTORY_S);
+      if (old > 0) { bx.splice(0, old); by.splice(0, old); }
+      const from = firstIndexAtOrAfter(bx, t - windowS);
+      const v = minMaxDecimate(bx.slice(from), by.slice(from), MAX_DRAWN_POINTS);
+      viewX.push(v.x);
+      viewY.push(v.y);
+    }
+    // One redraw: the data and the time range together. Every x axis follows the bottom one.
+    void Plotly.update(
+      chartEl,
+      { x: viewX, y: viewY },
+      { [`xaxis${N_ROWS}.range`]: [t - windowS, t], [`xaxis${N_ROWS}.autorange`]: false },
+      viewX.map((_, i) => i),
+    );
   };
 
   const timer = setInterval(() => {

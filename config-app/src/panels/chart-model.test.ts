@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_WINDOW_S,
+  HISTORY_S,
+  MAX_DRAWN_POINTS,
+  firstIndexAtOrAfter,
+  minMaxDecimate,
   SampleQueue,
   co2Range,
   loadWindowS,
@@ -61,5 +65,45 @@ describe('ranges', () => {
   it('thresholdRows follows the active metric', () => {
     expect(thresholdRows(true)).toEqual({ rms: false, peak: true });
     expect(thresholdRows(false)).toEqual({ rms: true, peak: false });
+  });
+});
+
+describe('chart history and decimation', () => {
+  it('keeps the largest window of history', () => {
+    expect(HISTORY_S).toBe(60);
+  });
+
+  it('finds where the window starts', () => {
+    const xs = [0, 1, 2, 3, 4];
+    expect(firstIndexAtOrAfter(xs, 2)).toBe(2);
+    expect(firstIndexAtOrAfter(xs, 2.5)).toBe(3);
+    expect(firstIndexAtOrAfter(xs, -1)).toBe(0);
+    expect(firstIndexAtOrAfter(xs, 9)).toBe(5);
+    expect(firstIndexAtOrAfter([], 1)).toBe(0);
+  });
+
+  it('leaves short lines untouched', () => {
+    const r = minMaxDecimate([0, 1, 2], [5, null, 7], 10);
+    expect(r).toEqual({ x: [0, 1, 2], y: [5, null, 7] });
+  });
+
+  it('bounds the drawn points and keeps a one-sample spike', () => {
+    const n = 12000;
+    const xs = Array.from({ length: n }, (_, i) => i / 200);
+    const ys: (number | null)[] = Array.from({ length: n }, () => 0);
+    ys[7777] = 1; // a breath pulse lasting one packet
+    const r = minMaxDecimate(xs, ys, MAX_DRAWN_POINTS);
+    expect(r.x.length).toBeLessThanOrEqual(MAX_DRAWN_POINTS);
+    expect(Math.max(...(r.y as number[]))).toBe(1);
+    expect(r.x).toContain(xs[7777]);
+    // time order is preserved
+    expect(r.x.every((v, i) => i === 0 || v > r.x[i - 1])).toBe(true);
+  });
+
+  it('a stretch of gaps stays a gap; mixed stretches use the values', () => {
+    const xs = Array.from({ length: 8 }, (_, i) => i);
+    const r = minMaxDecimate(xs, [null, null, null, null, 3, null, 1, 2], 4);
+    expect(r.y[0]).toBeNull();
+    expect(r.y.slice(1)).toEqual([3, 1]);
   });
 });
