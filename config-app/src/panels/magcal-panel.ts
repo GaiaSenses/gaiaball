@@ -25,7 +25,7 @@ function octantOf(v: readonly [number, number, number], dead: number): number | 
   return (v[0] > 0 ? 1 : 0) | (v[1] > 0 ? 2 : 0) | (v[2] > 0 ? 4 : 0);
 }
 
-export function mountMagCalPanel(root: HTMLElement, client: GaiaballClient): void {
+export function mountMagCalPanel(root: HTMLElement, client: GaiaballClient): { setPaused(p: boolean): void } {
   root.innerHTML = `
     <h2>Magnetômetro</h2>
     <p class="msg">O modo Quat9 só dá um rumo confiável depois desta calibração: ímã do alto-falante, bateria e
@@ -110,8 +110,9 @@ export function mountMagCalPanel(root: HTMLElement, client: GaiaballClient): voi
     render();
   };
 
+  let paused = false;
   client.addEventListener('magchunk', (ev) => {
-    if (!capturing) return;
+    if (paused || !capturing) return;
     const chunk = (ev as CustomEvent<MagChunkSample>).detail;
     for (const s of chunk.samples) samples.push(s);
     if (samples.length > MAX_SAMPLES) samples = samples.slice(-MAX_SAMPLES);
@@ -124,6 +125,7 @@ export function mountMagCalPanel(root: HTMLElement, client: GaiaballClient): voi
   // The device is the source of truth about whether a capture is running (it also
   // stops on its own after three minutes).
   client.addEventListener('diag', (ev) => {
+    if (paused) return;
     const d = (ev as CustomEvent<DiagSample>).detail;
     if (capturing && !d.magCapturing && samples.length > 0) {
       capturing = false;
@@ -177,4 +179,5 @@ export function mountMagCalPanel(root: HTMLElement, client: GaiaballClient): voi
   });
 
   render();
+  return { setPaused(p: boolean): void { paused = p; } };
 }

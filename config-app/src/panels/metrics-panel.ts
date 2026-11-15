@@ -28,7 +28,7 @@ export function navText(nav: NavSample | null, missing: boolean): string {
     `${num(nav.speedDegS, 1)} °/s · ${nav.settled ? 'parado' : 'em movimento'}`;
 }
 
-export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, stats: StreamStats): void {
+export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, stats: StreamStats): { setPaused(p: boolean): void } {
   root.innerHTML = `
     <h2>Métricas <span class="msg">— medidas aqui, no navegador</span></h2>
     <dl class="metrics">
@@ -59,6 +59,7 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
   const $ = (id: string) => root.querySelector<HTMLElement>('#' + id)!;
   const hzBuf = new RingBuffer(POINTS), lossBuf = new RingBuffer(POINTS);
   const spHz = $('sp-hz') as HTMLCanvasElement, spLoss = $('sp-loss') as HTMLCanvasElement;
+  let paused = false;
   let diag: DiagSample | null = null;
   let co2: Co2Sample | null = null;
   let nav: NavSample | null = null;
@@ -67,9 +68,9 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
   /** Connected to a ball whose firmware has no navigation characteristic. */
   let navMissing = false;
 
-  client.addEventListener('diag', (ev) => { diag = (ev as CustomEvent<DiagSample>).detail; });
-  client.addEventListener('nav', (ev) => { nav = (ev as CustomEvent<NavSample>).detail; });
-  client.addEventListener('co2', (ev) => { co2 = (ev as CustomEvent<Co2Sample>).detail; });
+  client.addEventListener('diag', (ev) => { if (paused) return; diag = (ev as CustomEvent<DiagSample>).detail; });
+  client.addEventListener('nav', (ev) => { if (paused) return; nav = (ev as CustomEvent<NavSample>).detail; });
+  client.addEventListener('co2', (ev) => { if (paused) return; co2 = (ev as CustomEvent<Co2Sample>).detail; });
 
   // The configuration is read on connect and after every Aplicar/Ler; 0x35 has no Field, so it is read here.
   client.addEventListener('config', (ev) => {
@@ -91,7 +92,7 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
     `<span class="${ok ? 'ok' : 'fail'}">${name} ${ok ? 'OK' : 'falha'}</span>`;
 
   setInterval(() => {
-    if (document.hidden) return;
+    if (document.hidden || paused) return;
     const hz = stats.hz(), loss = stats.lossPct();
     hzBuf.push(hz); lossBuf.push(loss);
     $('m-hz').textContent = `${hz.toFixed(1)} Hz`;
@@ -142,4 +143,11 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
         (co2.virtualActive ? ' <span class="badge">virtual</span>' : '');
     }
   }, UPDATE_MS);
+  return {
+    setPaused(p: boolean): void {
+      paused = p;
+      // Drop stale data: the panel repaints from fresh packets after the resume.
+      if (p) { diag = null; nav = null; co2 = null; }
+    },
+  };
 }

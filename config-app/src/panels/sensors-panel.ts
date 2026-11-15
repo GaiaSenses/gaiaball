@@ -96,7 +96,7 @@ function safeStorage(): Storage | null {
 const fmt = (v: number, digits = 1): string =>
   v.toLocaleString('pt-BR', { minimumFractionDigits: digits, maximumFractionDigits: digits });
 
-export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): void {
+export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): { setPaused(p: boolean): void } {
   root.innerHTML = `
     <h2>Sensores em tempo real</h2>
     <div class="sensor-cards">
@@ -152,6 +152,7 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
   const p0 = pal();
   client.addEventListener('audio', (ev) => {
     const c = (ev as CustomEvent<AudioChunkSample>).detail;
+    if (paused) return;
     lastChunk = c;
     lastChunkAt = performance.now();
     for (const v of c.samples) audioRing.push(v);
@@ -224,8 +225,9 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
       });
     }
   };
+  let paused = false;
   const specTimer = setInterval(() => {
-    if (!document.hidden) refreshSpectrum();
+    if (!document.hidden && !paused) refreshSpectrum();
   }, FFT_MS);
 
   // --- chart ----------------------------------------------------------------
@@ -327,14 +329,17 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
 
   // --- live readouts (updated per packet) ------------------------------------
   client.addEventListener('imu', (ev) => {
+    if (paused) return;
     latest.imu = (ev as CustomEvent<ImuSample>).detail;
     imuQ.push(now(), latest.imu);
   });
   client.addEventListener('sensors', (ev) => {
+    if (paused) return;
     latest.sensors = (ev as CustomEvent<SensorsSample>).detail;
     sensQ.push(now(), latest.sensors);
   });
   client.addEventListener('co2', (ev) => {
+    if (paused) return;
     latest.co2 = (ev as CustomEvent<Co2Sample>).detail;
     co2Q.push(now(), latest.co2);
   });
@@ -385,10 +390,11 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
   // --- sampler: one tick plots every packet queued since the previous one ------
   const NT = 16; // trace count (see `traces`)
   const tick = (): void => {
-    renderCards();
+    // Drain first: if renderCards throws, the queues must not grow without bound.
     const imus = imuQ.drain();
     const senss = sensQ.drain();
     const co2s = co2Q.drain();
+    try { renderCards(); } catch (e) { console.warn('renderCards falhou', e); }
     const t = now();
     const xs: number[][] = Array.from({ length: NT }, () => []);
     const ys: (number | null)[][] = Array.from({ length: NT }, () => []);
@@ -429,7 +435,7 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
   };
 
   const timer = setInterval(() => {
-    if (document.hidden) { imuQ.clear(); sensQ.clear(); co2Q.clear(); return; }
+    if (document.hidden || paused) { imuQ.clear(); sensQ.clear(); co2Q.clear(); return; }
     tick();
   }, TICK_MS);
   window.addEventListener('pagehide', () => {
@@ -438,4 +444,12 @@ export function mountSensorsPanel(root: HTMLElement, client: GaiaballClient): vo
     Plotly.purge(chartEl);
     Plotly.purge(specEl);
   });
+  return {
+    setPaused(p: boolean): void {
+      paused = p;
+      // Stale samples would plot as a burst of old points on resume.
+      imuQ.clear(); sensQ.clear(); co2Q.clear();
+      audioRing.length = 0;
+    },
+  };
 }

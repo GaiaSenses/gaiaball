@@ -514,3 +514,48 @@ legend { color: var(--accent); font-size: 0.82rem; font-weight: 600; padding: 0 
 .chart-window { display: flex; align-items: center; gap: 6px; margin: 8px 0; font-size: 0.8rem; color: var(--muted); }
 .chart-window-btn { background: var(--raised); color: inherit; border: 1px solid transparent; border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; }
 .chart-window-btn[aria-pressed="true"] { border-color: currentColor; color: var(--text, inherit); font-weight: 600; }
+
+/* ---- stage mode (src/stage) -------------------------------------------------- */
+.mode-box { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; flex: 1 1 auto; max-width: 460px; }
+.mode-text { margin: 0; font-size: 0.74rem; line-height: 1.35; color: var(--muted); }
+
+.stage-locked { position: relative; opacity: 0.45; filter: grayscale(1); user-select: none; }
+.stage-locked::after {
+  content: attr(data-lock-label);
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 5;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font: 500 0.78rem/1.2 'IBM Plex Mono', monospace;
+  pointer-events: none;
+}
+
+.stage-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px 20px;
+  padding: 12px 20px;
+  background: var(--accent-soft);
+  border-bottom: 1px solid var(--accent);
+}
+.stage-bar[hidden] { display: none; }
+.stage-label { font-size: 0.78rem; color: var(--muted); }
+.stage-meter { display: flex; align-items: center; gap: 8px; }
+.stage-meter-track { width: 180px; height: 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); overflow: hidden; }
+.stage-meter-fill { height: 100%; width: 0; background: var(--accent); }
+.stage-db { min-width: 84px; font: 500 0.78rem/1 'IBM Plex Mono', monospace; }
+.stage-pulse { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line); background: var(--surface); }
+.stage-pulse.on { background: var(--warn); border-color: var(--warn); }
+.stage-sens { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.stage-sens input { width: 100px; }
+.stage-actions { display: flex; gap: 10px; margin-left: auto; }
+@media (max-width: 700px) {
+  .mode-box { max-width: none; flex-basis: 100%; order: 3; }
+  #topbar { flex-wrap: wrap; }
+}

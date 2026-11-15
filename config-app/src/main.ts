@@ -13,6 +13,9 @@ import { mountMetricsPanel } from './panels/metrics-panel.ts';
 import { mountSensorsPanel } from './panels/sensors-panel.ts';
 import { decorateInfo } from './panels/info.ts';
 import { initTheme, onThemeChange, resolvedTheme, toggleTheme } from './theme.ts';
+import { StageController, loadUiMode, type UiMode } from './stage/stage-mode.ts';
+import { mountStageBar } from './stage/stage-bar.ts';
+import { renderSwitch, setSwitchValue } from './ui/switch.ts';
 import { OrientationScene } from './viz/orientation-scene.ts';
 import { VIEW_PRESETS, type ViewId } from './viz/view-presets.ts';
 import { PdBridge, browserPdDeps } from './pd/pd-bridge.ts';
@@ -30,12 +33,17 @@ app.innerHTML = `
       <span class="brand-mark" aria-hidden="true"></span>
       <div class="brand-text"><h1>Gaiaball</h1><p>painel de controle</p></div>
     </div>
+    <div class="mode-box">
+      <div id="mode-switch"></div>
+      <p id="mode-text" class="mode-text" role="status"></p>
+    </div>
     <div class="top-actions">
       <span class="chip" id="pd-chip" data-state="off">Pd: desligado</span>
       <span class="chip" id="conn-chip" data-state="off">Desconectado</span>
       <button id="btn-theme" type="button"></button>
     </div>
   </header>
+  <div id="stage-bar" class="stage-bar" role="region" aria-label="Barra do modo palco" hidden></div>
   <main>
     <div id="viz-wrap"><div id="viz">
       <div class="viz-controls">
@@ -125,9 +133,11 @@ mountConnectionPanel(app.querySelector<HTMLElement>('#panel-conexao')!, client);
 mountPdBlock(app.querySelector<HTMLElement>('#panel-conexao')!, bridge, pdPrefs, syncPd);
 syncPd();
 mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client);
-mountMagCalPanel(app.querySelector<HTMLElement>('#panel-magcal')!, client);
-mountMetricsPanel(app.querySelector<HTMLElement>('#panel-metricas')!, client, stats);
-mountSensorsPanel(app.querySelector<HTMLElement>('#panel-sensores')!, client);
+const pausable = [
+  mountMagCalPanel(app.querySelector<HTMLElement>('#panel-magcal')!, client),
+  mountMetricsPanel(app.querySelector<HTMLElement>('#panel-metricas')!, client, stats),
+  mountSensorsPanel(app.querySelector<HTMLElement>('#panel-sensores')!, client),
+];
 
 // 3D view of the treated quaternion exactly as received over BLE (no UI smoothing:
 // the real knob is "Suavização do quaternion (slerp)" in the Configuração panel).
@@ -177,10 +187,58 @@ app.querySelector<HTMLSelectElement>('#sel-model')!.addEventListener('change', (
   scene.setModel((e.target as HTMLSelectElement).value as 'plane' | 'box'));
 
 client.addEventListener('imu', (ev) => {
+  if (stage.mode === 'palco') return; // the screen is paused; the Pd forwarding already happened in ingest
   const s = (ev as CustomEvent<ImuSample>).detail;
   stats.push(s.seq, s.tUs, performance.now());
   scene.setQuaternion(s.quat);
 });
+
+// Stage mode: only the Pd forwarding (in client.ingest) and the stage bar stay alive.
+const LOCKED_IDS = ['viz-wrap', 'panels', 'panel-sensores'];
+const MODE_TEXT: Record<UiMode, string> = {
+  palco: 'Para apresentar. Os dados vão para o Pd com o menor atraso possível. O 3D, os gráficos e os ajustes ficam pausados.',
+  ajuste: 'Para preparar e ajustar. Mostra tudo. O envio ao Pd continua, mas pode atrasar alguns milissegundos quando a tela está ocupada.',
+};
+const modeTextEl = app.querySelector<HTMLElement>('#mode-text')!;
+const stageBar = mountStageBar(app.querySelector<HTMLElement>('#stage-bar')!, client, bridge, () => void changeMode('ajuste'));
+const uiStorage = ((): Storage | null => { try { return window.localStorage; } catch { return null; } })();
+const stage = new StageController({
+  scene,
+  panels: pausable,
+  client,
+  setLocked(on) {
+    for (const id of LOCKED_IDS) {
+      const el = app.querySelector<HTMLElement>('#' + id)!;
+      el.classList.toggle('stage-locked', on);
+      el.toggleAttribute('inert', on);
+      if (on) el.dataset.lockLabel = '🔒 Pausado no modo palco'; else delete el.dataset.lockLabel;
+    }
+    if (on && app.contains(document.activeElement) && !document.activeElement?.closest('#topbar, #stage-bar')) {
+      (document.activeElement as HTMLElement).blur();
+    }
+  },
+  showBar: (on) => stageBar.show(on),
+  storage: uiStorage,
+});
+const modeSwitch = renderSwitch({
+  options: [{ value: 0, label: 'Modo ajuste' }, { value: 1, label: 'Modo palco' }],
+  value: loadUiMode(uiStorage) === 'palco' ? 1 : 0,
+  onChange: (v) => void changeMode(v === 1 ? 'palco' : 'ajuste'),
+  label: 'Modo da tela',
+});
+app.querySelector('#mode-switch')!.append(modeSwitch);
+async function changeMode(m: UiMode): Promise<void> {
+  setSwitchValue(modeSwitch, m === 'palco' ? 1 : 0);
+  modeTextEl.textContent = MODE_TEXT[m];
+  await stage.setMode(m);
+  if (m === 'ajuste') stats.reset(); // the pause left a gap in the sequence numbers
+}
+client.addEventListener('status', (ev) => {
+  if ((ev as CustomEvent<{ connected: boolean }>).detail.connected) void stage.onConnected();
+  else stage.onDisconnected();
+});
+modeTextEl.textContent = MODE_TEXT.ajuste;
+if (loadUiMode(uiStorage) === 'palco') void changeMode('palco');
 
 if (isDemo) {
   chip.dataset.state = 'demo';
