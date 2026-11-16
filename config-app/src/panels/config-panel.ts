@@ -319,6 +319,12 @@ export interface Co2Source {
   /** Calls `fn` now and on every change of the two fields (typed, read from the ball, preset, default). */
   subscribe(fn: (c: Co2Levels) => void): void;
 }
+/** The breath metric as the form shows it (true = peak, false = RMS, null = not set). */
+export interface MetricSource {
+  current(): boolean | null;
+  /** Calls `fn` now and on every change of the RMS/Pico switch (clicked, read from the ball, preset). */
+  subscribe(fn: (peak: boolean | null) => void): void;
+}
 /** Registers whose edits move the CO2 meter's trigger mark or scale. */
 const CO2_IDS: ReadonlySet<number> = new Set([TLV.co2TriggerPpm, TLV.virtualPeakPpm]);
 const byId = (id: number): Field => FIELDS.find((f) => f.id === id)!;
@@ -492,7 +498,7 @@ const ADVANCED_TAB_INFO = 'Ajustes da cadeia de sinais: faixa e filtro da IMU, g
  */
 export function mountConfigPanel(
   root: HTMLElement, client: GaiaballClient, store: PresetStore = new PresetStore(),
-): { advancedSections: HTMLElement; band: BandSource; co2: Co2Source } {
+): { advancedSections: HTMLElement; band: BandSource; co2: Co2Source; metric: MetricSource } {
   root.innerHTML = `
     <h2>Configuração</h2>
     <div class="row">
@@ -730,6 +736,7 @@ export function mountConfigPanel(
       if (GOVERNORS.has(id)) applyEnabled();
       if (BAND_IDS.has(id)) emitBand();
       if (CO2_IDS.has(id)) emitCo2();
+      if (id === TLV.breathMetric) emitMetric();
       refreshDescribe();
     });
     if (BAND_IDS.has(id)) el.addEventListener('input', () => emitBand());
@@ -788,6 +795,7 @@ export function mountConfigPanel(
     applyEnabled();
     emitBand();
     emitCo2();
+    emitMetric();
     refreshDescribe();
     refreshPotLabel();
   };
@@ -840,6 +848,17 @@ export function mountConfigPanel(
     if (co2Listeners.size === 0) return;
     const c = formCo2();
     for (const fn of co2Listeners) fn(c);
+  };
+  /** RMS/Pico switch as the form shows it, for the threshold line in the charts. */
+  const formMetric = (): boolean | null => {
+    const v = getValue(byId(TLV.breathMetric));
+    return v === 1 ? true : v === 0 ? false : null;
+  };
+  const metricListeners = new Set<(peak: boolean | null) => void>();
+  const emitMetric = (): void => {
+    if (metricListeners.size === 0) return;
+    const m = formMetric();
+    for (const fn of metricListeners) fn(m);
   };
   const refreshDescribe = (): void => {
     for (const f of FIELDS) {
@@ -1162,6 +1181,10 @@ export function mountConfigPanel(
     co2: {
       current: formCo2,
       subscribe: (fn: (c: Co2Levels) => void): void => { co2Listeners.add(fn); fn(formCo2()); },
+    },
+    metric: {
+      current: formMetric,
+      subscribe: (fn: (peak: boolean | null) => void): void => { metricListeners.add(fn); fn(formMetric()); },
     },
   };
 }

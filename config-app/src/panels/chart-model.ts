@@ -74,6 +74,14 @@ export class SampleQueue<T> {
   clear(): void { this.items = []; }
 }
 
+/**
+ * The metric whose chart shows the threshold line: the RMS/Pico switch of the form when
+ * there is one (it follows the click at once, applied or not), else what the ball reports.
+ */
+export function activeMetricPeak(form: boolean | null, device: boolean | null): boolean {
+  return form ?? device ?? false;
+}
+
 /** Which rows draw the threshold line: only the rows of the active metric. */
 export function thresholdRows(metricPeak: boolean): { rms: boolean; peak: boolean } {
   return { rms: !metricPeak, peak: metricPeak };
