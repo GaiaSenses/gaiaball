@@ -37,7 +37,7 @@ export const TLV = {
   // 0x21 is reserved (was co2ChecksumVariant; the SC8-CO2-5K frame format is fixed).
   co2StaleTimeoutMs: 0x22,
   virtualPeakPpm: 0x23,
-  virtualDelayMs: 0x24,
+  // 0x24 is RETIRED and reserved (was virtualDelayMs): the virtual CO2 pulse starts on the breath itself.
   virtualHoldMs: 0x25,
   co2RawLogMode: 0x26,
   // 0x27 is reserved (was co2Protocol; the SC8-CO2-5K streams actively, nothing to pick).
@@ -69,6 +69,7 @@ export const TLV = {
   breathMetric: 0x2c, // 0 RMS / 1 peak
   breathDetector: 0x2d, // 0 absolute / 1 adaptive
   breathRearmDb: 0x2e, // 0..20 dB
+  audioWindowMs: 0x2f, // 5..200 ms, RMS/peak window (rounded to 5 ms blocks); applied live
 } as const;
 
 /** Output-capable ESP32 GPIOs (excludes SPI-flash 6–11 and nonexistent pins). Mirrors firmware isValidOutputGpio. */
@@ -139,10 +140,10 @@ const SPECS: Record<number, Spec> = {
   [TLV.breathMetric]: U8,
   [TLV.breathDetector]: U8,
   [TLV.breathRearmDb]: U8,
+  [TLV.audioWindowMs]: U16,
   [TLV.co2Enabled]: U8,
   [TLV.co2StaleTimeoutMs]: U16,
   [TLV.virtualPeakPpm]: U16,
-  [TLV.virtualDelayMs]: U16,
   [TLV.virtualHoldMs]: U16,
   [TLV.co2RawLogMode]: U8,
   [TLV.soundLedPin]: U8,

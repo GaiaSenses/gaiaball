@@ -203,7 +203,7 @@ debounce 3 s.
 **A. Absoluto, potenciômetro, RMS, sala silenciosa**
 
 1. Gire o potenciômetro de um batente ao outro. O gráfico do potenciômetro vai de 0 a 100 % e
-   a linha de limiar nos gráficos **Mic esquerdo/direito** vai de −60 a 0 dBFS, sempre
+   a linha de limiar no gráfico **Microfones - RMS** vai de −60 a 0 dBFS, sempre
    horizontal. Com o potenciômetro parado, a linha não oscila (histerese de 0,5 dB).
 2. Deixe a linha perto de −35 dBFS e sopre num microfone. Quando a curva RMS desse microfone
    passa da linha: o LED de som pisca, o CO₂ sobe com o pulso virtual e o gráfico
@@ -226,8 +226,8 @@ debounce 3 s.
 
 **C. Pico**
 
-1. Mude a medida para **Pico**. A linha de limiar sai dos gráficos Mic esquerdo/direito e
-   passa para **Pico por canal (dBFS)**.
+1. Mude a medida para **Pico**. A linha de limiar sai do gráfico Microfones - RMS e
+   passa para **Microfones - Pico (dBFS)**.
 2. Com o mesmo dBFS, o pico dispara mais fácil que o RMS (o pico fica alguns dB acima do RMS,
    o fator de crista). Suba a linha alguns dB para ter a mesma sensação do RMS.
 3. Uma palma seca dispara no pico; no RMS ela pode não disparar.

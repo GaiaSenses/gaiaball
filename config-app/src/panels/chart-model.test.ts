@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_WINDOW_S,
+  effectiveWindowMs,
+  micNote,
   HISTORY_S,
   MAX_DRAWN_POINTS,
   firstIndexAtOrAfter,
@@ -165,5 +167,27 @@ describe('co2Meter', () => {
   it('stretches the scale to the virtual peak, like the chart', () => {
     expect(co2Meter(form(1200, 8000), null).max).toBe(8000);
     expect(co2Meter(form(1200, null), form(1200, 6000)).max).toBe(6000);
+  });
+});
+
+describe('microphone window footnote (TLV 0x2F)', () => {
+  it('says the window the ball reports, rounded like the firmware', () => {
+    expect(effectiveWindowMs(50)).toBe(50);
+    expect(effectiveWindowMs(52)).toBe(50);
+    expect(effectiveWindowMs(53)).toBe(55);
+    expect(micNote(effectiveWindowMs(120))).toMatch(/^RMS é a média de 120 ms;/);
+  });
+
+  it('firmware without the register still has the old fixed 20 ms window', () => {
+    expect(effectiveWindowMs(null)).toBe(20);
+  });
+
+  it('clamps like the firmware', () => {
+    expect(effectiveWindowMs(0)).toBe(5);
+    expect(effectiveWindowMs(9999)).toBe(200);
+  });
+
+  it('before any read it names the default instead of a number it does not know', () => {
+    expect(micNote(null)).toMatch(/50 ms por padrão/);
   });
 });

@@ -46,8 +46,9 @@ describe('config fields', () => {
     expect(basic.length).toBeLessThan(advanced.length);
     // 20, not 16: three joystick fields (max speed, full-scale angle, curve) are only visible in joystick mode.
     // 23: +4 campos do detector de sopro, −1 limiar fixo em contagens.
-    expect(basic.length).toBeLessThanOrEqual(23);
-    expect(BASIC_FIELD_IDS.size).toBe(23);
+    // 22: −1 atraso do pulso virtual (TLV 0x24 aposentado; o pulso sai no próprio sopro).
+    expect(basic.length).toBeLessThanOrEqual(22);
+    expect(BASIC_FIELD_IDS.size).toBe(22);
     // Operating the globe must not require the advanced tab.
     for (const id of [TLV.orientationMode, TLV.imuNotifyHz, TLV.breathThresholdNegDbX100, TLV.bleName, TLV.pin]) {
       expect(BASIC_FIELD_IDS.has(id)).toBe(true);
@@ -403,5 +404,44 @@ describe('on/off fields and what they switch off', () => {
     expect(governedOff(TLV.co2StaleTimeoutMs, off)).toBe(true);
     expect(governedOff(TLV.virtualPeakPpm, off)).toBe(false);
     expect(governedOff(TLV.co2TriggerPpm, off)).toBe(false);
+  });
+});
+
+describe('CO₂ virtual pulse fields', () => {
+  const f = (id: number) => CONFIG_FIELDS.find((x) => x.id === id)!;
+
+  it('has no delay field: the pulse starts on the breath itself (0x24 is retired)', () => {
+    expect('virtualDelayMs' in TLV).toBe(false);
+    expect(CONFIG_FIELDS.some((x) => x.id === 0x24)).toBe(false);
+    expect(FIELD_DEFAULTS.has(0x24)).toBe(false);
+    expect(() => encodeTlv([{ id: 0x24, value: 0 }])).toThrow(RangeError);
+  });
+
+  it('duration is shown in seconds (default 10 s) and stays in ms on the wire', () => {
+    const d = f(TLV.virtualHoldMs);
+    expect(d.label).toBe('Duração virtual (s)');
+    expect(FIELD_DEFAULTS.get(TLV.virtualHoldMs)).toBe(10000);
+    expect(toDisplay(d, 10000)).toBe(10);
+    expect(fromDisplay(d, 10)).toBe(10000);
+    expect(fromDisplay(d, 2.5)).toBe(2500);
+    expect(BASIC_FIELD_IDS.has(TLV.virtualHoldMs)).toBe(true);
+  });
+});
+
+describe('RMS window field (TLV 0x2F)', () => {
+  const f = CONFIG_FIELDS.find((x) => x.id === TLV.audioWindowMs)!;
+
+  it('lives in Avançado with the firmware range and default', () => {
+    expect(f).toBeDefined();
+    expect(BASIC_FIELD_IDS.has(TLV.audioWindowMs)).toBe(false);
+    expect([f.min, f.max, f.step]).toEqual([5, 200, 5]);
+    expect(FIELD_DEFAULTS.get(TLV.audioWindowMs)).toBe(50);
+    expect(f.info).toMatch(/ms/);
+  });
+
+  it('encodes as a u16 and is not governed by the breath on/off', () => {
+    const out = decodeTlv(new DataView(encodeTlv([{ id: TLV.audioWindowMs, value: 50 }]).buffer));
+    expect(out.get(TLV.audioWindowMs)!.getUint16(0, true)).toBe(50);
+    expect(governedOff(TLV.audioWindowMs, new Map([[TLV.audioEnabled, 0]]))).toBe(false);
   });
 });
