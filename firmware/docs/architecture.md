@@ -57,7 +57,7 @@ silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen b
                                          │  1 Hz                 │          │
  ┌──────────┐ onPeak + levels(): atomics │  LED update 20 Hz     │  BleCommand queue
  │audio task│──lastPeakMs_, peakPending_>│  pot poll 10 Hz       │<─(depth 8)──┤
- │ prio 2   │──rms/peak of the 20 ms win>│  → threshold_ atomic  │             │
+ │ prio 2   │──rms/peak of the 50 ms win>│  → threshold_ atomic  │             │
  │          │<─threshold provider────────│  command dispatch     │  ConfigStore onChange
  └──────────┘  reads App::threshold_     │  config re-apply      │<─configDirty_ flag──┤
  ┌──────────┐ realPpm/frameCount atomics │  mount persist (NVS)  │   NimBLE host task
@@ -82,7 +82,7 @@ silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen b
   (also when nobody is subscribed, so a late subscriber never gets an old breath); a
   breath shorter than one notify interval still reaches the next packet. The effective
   trigger level for the SensorsPacket is a third atomic.
-- **Audio → App (envelope)**: the audio task publishes the pooled 20 ms levels (RMS and
+- **Audio → App (envelope)**: the audio task publishes the pooled levels (RMS and
   peak per channel) into four `std::atomic<float>`; the App task snapshots them with
   `AudioService::levels()` and appends them to the ImuPacket it was already sending.
   Atomics and not a queue because only the latest value matters: a control signal has

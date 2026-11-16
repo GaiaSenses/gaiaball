@@ -97,7 +97,8 @@ the App task reads and clears the latch at every notify slot: when it builds the
 or when nobody is subscribed, so a late subscriber never gets an old breath (atomics). With
 `audioEnabled = 0` (TLV 0x10) the detector does not run and the bit stays 0.
 
-The microphone envelope is measured in the firmware over the 20 ms window that ended
+The microphone envelope is measured in the firmware over the `audioWindowMs` window
+(TLV 0x2F, default 50 ms; 20 ms fixed on firmware without that register) that ended
 with this orientation sample, with the peak tracked at the full 16 kHz. While
 `audioValid` is clear (no microphone / I²S failure) all four fields read 0, the
 −120 dBFS floor. The packet grew from 23 to 31 bytes in firmware v8 and became version 2
@@ -467,8 +468,7 @@ TLV register and are persisted under their own NVS keys.
 | 0x20 | u8 | 1 | co2Enabled |
 | 0x22 | u16 | 5000 | co2StaleTimeoutMs |
 | 0x23 | u16 | 2100 | virtualPeakPpm |
-| 0x24 | u16 | 1000 | virtualDelayMs |
-| 0x25 | u16 | 17000 | virtualHoldMs |
+| 0x25 | u16 | 10000 | virtualHoldMs — how long the virtual pulse lasts, ms (0 = no pulse). The pulse starts on the breath itself: there is no delay register any more (0x24 is retired) |
 | 0x26 | u8 | 0 | co2RawLogMode |
 | 0x28 | u16 | 1000 | co2EmaAlphaX1000 — EMA over accepted readings (1000 = off) |
 | 0x29 | u16 | 1200 | co2TriggerPpm — level at which the Co2Packet `trigger` flag rises (400–10000) |
@@ -477,6 +477,7 @@ TLV register and are persisted under their own NVS keys.
 | 0x2C | u8 | 0 | breathMetric — level the detector measures: 0 = RMS, 1 = peak (0–1) |
 | 0x2D | u8 | 0 | breathDetector — 0 = absolute (every 5 ms block, fires when **either** microphone passes the line), 1 = adaptive (every 3rd block, fast envelope − slow baseline of the louder microphone) (0–1) |
 | 0x2E | u8 | 6 | breathRearmDb — the detector re-arms once the level falls below `threshold × 10^(−this/20)`, whole dB (0–20) |
+| 0x2F | u16 | 50 | audioWindowMs — RMS and peak window of the microphone levels, ms (5–200), rounded to whole 5 ms I2S blocks; applied live. Firmware without this register has a fixed 20 ms window |
 | 0x30 | u8 | 2 | soundLedPin (valid output GPIOs only; 6–11 (flash) and nonexistent pins rejected) |
 | 0x31 | u8 | 4 | co2LedPin (same validation as 0x30) |
 | 0x32 | u16 | 2000 | co2AlertPpm |
@@ -512,7 +513,9 @@ atomically (one pin = one function). Reserved ids, never to be reused: 0x21 (was
 co2ChecksumVariant) and 0x27 (was co2Protocol) — both removed when the SC8-CO2-5K
 datasheet fixed the frame format; 0x33 (was statusLedPin; removed with the legacy
 LED command); 0x15 (was thresholdFixed, a u32 in RMS counts over the adaptive baseline;
-replaced by the dBFS threshold 0x2B — this is the TLV id, not the command opcode 0x15).
+replaced by the dBFS threshold 0x2B — this is the TLV id, not the command opcode 0x15);
+0x24 (was virtualDelayMs: the virtual CO2 pulse now starts on the breath itself, so the
+Co2Packet with the peak leaves on the same App loop).
 Like any unknown id, a write that contains one of them is rejected whole, and the lenient
 NVS load skips it; a 0x15 value saved by older firmware is **not** converted, 0x2B starts
 at its default. `0x35` is a read-only status register, not configuration: it has no NVS

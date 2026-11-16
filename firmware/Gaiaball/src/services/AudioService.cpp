@@ -21,6 +21,8 @@ constexpr int kSampleRate = 16000;
 // 80 frames = 5 ms per block: the envelope published on the orientation packet can
 // never be fresher than one block, and the notify rate goes up to 200 Hz.
 constexpr size_t kFrames = 80;
+static_assert(kFrames * 1000 / kSampleRate == AudioLevelWindow::kBlockMs,
+              "AudioLevelWindow counts its span in blocks of this size");
 // 8 buffers = 40 ms of DMA slack before an overrun if the task is held off (the old
 // 4 x 256 frames was 64 ms; 40 ms is still 8 blocks of headroom).
 constexpr int kDmaBufCount = 8;
@@ -89,6 +91,7 @@ void AudioService::applyConfig(const GaiaConfig &cfg) {
   hpQX100_.store(cfg.audioHpQX100);
   lpHz_.store(cfg.audioLpHz);
   lpQX100_.store(cfg.audioLpQX100);
+  windowMs_.store(cfg.audioWindowMs);
   cfgDirty_.store(true);
 }
 
@@ -155,6 +158,7 @@ void AudioService::taskLoop() {
       breathParams_ = bp;
       breathDirty_ = true;  // thresholdCounts is filled in once the levels are in
       bpfActive_ = bpfEnabled_.load();
+      window_.setBlocks(AudioLevelWindow::blocksForMs(windowMs_.load()));
       // Raw stream toggled: starting fresh keeps the first chunk after a pause from
       // mixing new samples with ones captured before it; stopping drops the chunk the
       // App task has not picked up yet.

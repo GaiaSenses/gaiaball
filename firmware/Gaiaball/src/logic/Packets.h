@@ -86,8 +86,8 @@ struct __attribute__((packed)) ImuPacket {
   int16_t accX, accY, accZ;  // mg (1 g = 1000 mg), converted from the sensor counts
   uint8_t flags;
   // Appended in v8 (packet grew 23 -> 31 B), shrunk to 4 B in protocol v2 (27 B): the
-  // microphone envelope, pooled over the 20 ms window that ended with this orientation
-  // sample. [0] = left, [1] = right.
+  // microphone envelope, pooled over the audioWindowMs window (TLV 0x2F, default
+  // 50 ms) that ended with this orientation sample. [0] = left, [1] = right.
   //
   // WHY it rides on the orientation packet instead of its own: at 100-200 Hz the cost
   // of a BLE notification is dominated by the packet slot, not by its length (a 27-byte

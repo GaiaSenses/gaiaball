@@ -32,7 +32,8 @@ void test_defaults_match_legacy() {
   TEST_ASSERT_EQUAL(0, c.breathMetric);
   TEST_ASSERT_EQUAL(0, c.breathDetector);
   TEST_ASSERT_EQUAL(6, c.breathRearmDb);
-  TEST_ASSERT_EQUAL(17000, c.virtualHoldMs);
+  TEST_ASSERT_EQUAL(10000, c.virtualHoldMs);
+  TEST_ASSERT_EQUAL(50, c.audioWindowMs);
   TEST_ASSERT_EQUAL(2, c.soundLedPin);
   TEST_ASSERT_EQUAL(4, c.co2LedPin);
   TEST_ASSERT_EQUAL(0, c.accelLpAlphaX1000);   // accel filter off = legacy raw
@@ -166,6 +167,9 @@ void test_reserved_ids_rejected() {
   // 0x15 (ex-thresholdFixed, replaced by the dB-based breath threshold).
   const uint8_t exThreshold[] = {0x15, 4, 0xA0, 0x86, 0x01, 0x00};
   assertRejected(exThreshold, sizeof exThreshold);
+  // 0x24 (ex-virtualDelayMs: the virtual CO2 pulse starts on the breath itself).
+  const uint8_t exDelay[] = {0x24, 2, 0xE8, 0x03};
+  assertRejected(exDelay, sizeof exDelay);
 }
 
 void test_filter_registers_and_band_rule() {
@@ -984,6 +988,39 @@ void test_breath_regs_serialized_and_0x15_absent() {
   TEST_ASSERT_NULL(findRec(buf, n, 0x15));
 }
 
+void test_audio_window_register() {
+  GaiaConfig c;
+  uint8_t b[8];
+  size_t n = putRec(b, 0x2F, 120, 2);
+  TEST_ASSERT_TRUE(tlvApply(c, b, n));
+  TEST_ASSERT_EQUAL(120, c.audioWindowMs);
+  n = putRec(b, 0x2F, 4, 2);  // below one 5 ms block
+  assertRejected(b, n);
+  n = putRec(b, 0x2F, 201, 2);
+  assertRejected(b, n);
+  uint8_t buf[384];
+  GaiaConfig d;
+  n = tlvSerialize(d, buf, sizeof buf);
+  size_t len = 0;
+  const uint8_t *p = findRec(buf, n, 0x2F, &len);
+  TEST_ASSERT_NOT_NULL(p);
+  TEST_ASSERT_EQUAL(2, len);
+  TEST_ASSERT_EQUAL(50, p[0] | (p[1] << 8));
+  TEST_ASSERT_NULL(findRec(buf, n, 0x24));
+}
+
+// A config saved by older firmware still carries 0x24: the load skips it and keeps the rest.
+void test_lenient_load_skips_retired_0x24() {
+  uint8_t b[32];
+  size_t n = putRec(b, 0x23, 2500, 2);
+  n += putRec(b + n, 0x24, 1000, 2);
+  n += putRec(b + n, 0x25, 17000, 2);
+  GaiaConfig c;
+  TEST_ASSERT_EQUAL(2, tlvApplyLenient(c, b, n));
+  TEST_ASSERT_EQUAL(2500, c.virtualPeakPpm);
+  TEST_ASSERT_EQUAL(17000, c.virtualHoldMs);
+}
+
 void test_default_serialized_length_fits_buffer() {
   GaiaConfig c;
   uint8_t buf[384];
@@ -1044,6 +1081,8 @@ int main(int, char **) {
   RUN_TEST(test_breath_regs_accept_range);
   RUN_TEST(test_breath_regs_reject_out_of_range);
   RUN_TEST(test_lenient_load_skips_retired_0x15);
+  RUN_TEST(test_lenient_load_skips_retired_0x24);
+  RUN_TEST(test_audio_window_register);
   RUN_TEST(test_breath_regs_serialized_and_0x15_absent);
   RUN_TEST(test_default_serialized_length_fits_buffer);
   return UNITY_END();

@@ -33,6 +33,21 @@ float dbfsToRmsCounts(float dbfs) { return dbfsToPeakCounts(dbfs) / 1.41421356f;
 
 float dbToAmplitudeRatio(float db) { return powf(10.0f, -db / 20.0f); }
 
+uint8_t AudioLevelWindow::blocksForMs(uint16_t ms) {
+  uint32_t n = ((uint32_t)ms + kBlockMs / 2) / kBlockMs;
+  if (n < 1) n = 1;
+  if (n > kMaxBlocks) n = kMaxBlocks;
+  return (uint8_t)n;
+}
+
+void AudioLevelWindow::setBlocks(uint8_t n) {
+  if (n < 1) n = 1;
+  if (n > kMaxBlocks) n = kMaxBlocks;
+  if (n == blocks_) return;
+  blocks_ = n;
+  reset();
+}
+
 void AudioLevelWindow::push(const float sumSq[2], const float peak[2], uint16_t frames) {
   if (frames == 0) return;
   Entry &e = ring_[next_];
@@ -41,14 +56,14 @@ void AudioLevelWindow::push(const float sumSq[2], const float peak[2], uint16_t 
     e.peak[c] = peak[c];
   }
   e.frames = frames;
-  next_ = (uint8_t)((next_ + 1) % kBlocks);
+  next_ = (uint8_t)((next_ + 1) % blocks_);
 }
 
 AudioLevels AudioLevelWindow::levels() const {
   AudioLevels out;
   float sum[2] = {0.0f, 0.0f};
   uint32_t frames = 0;
-  for (uint8_t i = 0; i < kBlocks; i++) {
+  for (uint8_t i = 0; i < blocks_; i++) {
     const Entry &e = ring_[i];
     if (e.frames == 0) continue;
     frames += e.frames;
@@ -63,7 +78,7 @@ AudioLevels AudioLevelWindow::levels() const {
 }
 
 void AudioLevelWindow::reset() {
-  for (uint8_t i = 0; i < kBlocks; i++) ring_[i] = Entry{};
+  for (uint8_t i = 0; i < kMaxBlocks; i++) ring_[i] = Entry{};
   next_ = 0;
 }
 

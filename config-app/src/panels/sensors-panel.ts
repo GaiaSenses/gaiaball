@@ -39,7 +39,9 @@ import {
   Y_RANGES,
   co2Meter,
   co2Range,
+  effectiveWindowMs,
   loadWindowS,
+  micNote,
   saveWindowS,
   thresholdRows,
   type Co2Levels,
@@ -70,6 +72,8 @@ interface ChartPalette {
   rms: string;
   spectrum: string;
   grid: string;
+  /** Light outline around each chart's plot area, a step stronger than the grid. */
+  frame: string;
   font: string;
 }
 const PALETTES: Record<'dark' | 'light', ChartPalette> = {
@@ -77,21 +81,25 @@ const PALETTES: Record<'dark' | 'light', ChartPalette> = {
     euler: ['#60a5fa', '#2563eb', '#bfdbfe'],
     acc: ['#fb923c', '#ea580c', '#fed7aa'],
     micL: '#4ade80', micR: '#2dd4bf', co2: '#c084fc', pot: '#f472b6', threshold: '#9ca3af', breath: '#38bdf8',
-    peak: '#f87171', rms: '#fbbf24', spectrum: '#eac23d', grid: '#27333f', font: '#8da0ab',
+    peak: '#f87171', rms: '#fbbf24', spectrum: '#eac23d', grid: '#27333f', frame: '#3e4c59', font: '#8da0ab',
   },
   light: {
     euler: ['#2563eb', '#1e3a8a', '#60a5fa'],
     acc: ['#ea580c', '#9a3412', '#fb923c'],
     micL: '#15803d', micR: '#0f766e', co2: '#7c3aed', pot: '#be185d', threshold: '#6b7280', breath: '#0369a1',
-    peak: '#dc2626', rms: '#b45309', spectrum: '#9a6a10', grid: '#d3dcd8', font: '#5a6c74',
+    peak: '#dc2626', rms: '#b45309', spectrum: '#9a6a10', grid: '#d3dcd8', frame: '#b3c0bb', font: '#5a6c74',
   },
 };
 const pal = (): ChartPalette => PALETTES[resolvedTheme()];
+/** Axis lines on all four sides (mirror) = a thin box around the plot area, so stacked charts read as separate. */
+const frameAxis = (p: ChartPalette): Record<string, unknown> => ({ showline: true, mirror: true, linecolor: p.frame, linewidth: 2 });
+/** Axis title in bold, so each chart's name reads at a glance. */
+const axisTitle = (text: string): Record<string, unknown> => ({ text, font: { size: 11, weight: 'bold' } });
 /** Line colors in trace order (must match the `traces` list below). */
 const traceColors = (p: ChartPalette): string[] => [
   p.euler[0], p.euler[1], p.euler[2],
   p.acc[0], p.acc[1], p.acc[2],
-  p.micL, p.threshold, p.micR, p.threshold,
+  p.micL, p.micR, p.threshold,
   p.peak, p.rms, p.threshold, p.breath, p.co2, p.pot,
 ];
 
@@ -125,9 +133,9 @@ const levelCard = (key: string, title: string, a: [string, string, string], b: [
           <div class="reading reading-${b[0]}"><dt>${b[1]}</dt><dd><span class="reading-num" data-el="${b[0]}-${key}">—</span><span class="reading-unit">${b[2]}</span></dd></div>
         </dl>
         <div class="meter${fader ? ' meter-fader' : ''}" aria-hidden="true"><span class="meter-fill" data-el="bar-${key}"></span>${fader ? '' : `<span class="meter-peak" data-el="tick-${key}" hidden></span>`}</div>
-        <small>${note}</small>
+        <small data-el="note-${key}">${note}</small>
       </div>`;
-const MIC_NOTE = 'RMS é a média de 20 ms; pico é a amostra mais alta. Escala de −90 a 0 dBFS.';
+const MIC_NOTE = micNote(null);
 /**
  * A card with three signed readings side by side (orientation, acceleration). Each value
  * sits right-aligned in a box as wide as the widest value it can take (`numCh` characters
@@ -234,9 +242,9 @@ export function mountSensorsPanel(
     const [lo, hi] = specXRange(s);
     return s === 'log'
       ? { type: 'log', range: [Math.log10(lo), Math.log10(hi)], tickmode: 'array',
-          tickvals: SPEC_TICKS_HZ, ticktext: SPEC_TICKS_HZ.map(String), title: { text: 'frequência (Hz, escala log)' } }
+          tickvals: SPEC_TICKS_HZ, ticktext: SPEC_TICKS_HZ.map(String), title: axisTitle('frequência (Hz, escala log)') }
       : { type: 'linear', range: [lo, hi], tickmode: 'auto', tickvals: null, ticktext: null,
-          title: { text: 'frequência (Hz, escala linear)' } };
+          title: axisTitle('frequência (Hz, escala linear)') };
   };
   client.addEventListener('audio', (ev) => {
     const c = (ev as CustomEvent<AudioChunkSample>).detail;
@@ -264,8 +272,8 @@ export function mountSensorsPanel(
       plot_bgcolor: 'rgba(0,0,0,0)',
       font: { color: p0.font, size: 11 },
       showlegend: false,
-      xaxis: { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font, ...xAxisFor(scale) },
-      yaxis: { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font, title: { text: 'nível (dBFS)' }, range: [-120, 0] },
+      xaxis: { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font, ...frameAxis(p0), ...xAxisFor(scale) },
+      yaxis: { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font, ...frameAxis(p0), title: axisTitle('nível (dBFS)'), range: [-120, 0] },
     },
     { responsive: true, displaylogo: false },
   );
@@ -389,48 +397,52 @@ export function mountSensorsPanel(
     line('acc X (mg)', p0.acc[0], 2),
     line('acc Y (mg)', p0.acc[1], 2),
     line('acc Z (mg)', p0.acc[2], 2),
-    line('mic E (dBFS)', p0.micL, 3),
+    // Both microphones share one RMS chart and one peak chart; the RMS lines take the
+    // colors of the microphone cards (left, right).
+    line('RMS E (dBFS)', p0.micL, 3),
+    line('RMS D (dBFS)', p0.micR, 3),
     line('limiar (dBFS)', p0.threshold, 3),
-    line('mic D (dBFS)', p0.micR, 4),
+    line('pico E (dBFS)', p0.peak, 4),
+    line('pico D (dBFS)', p0.rms, 4),
     line('limiar (dBFS)', p0.threshold, 4),
-    line('pico E (dBFS)', p0.peak, 5),
-    line('pico D (dBFS)', p0.rms, 5),
-    line('limiar (dBFS)', p0.threshold, 5),
-    { ...line('sopro (0/1)', p0.breath, 6, undefined, 'hv'), fill: 'tozeroy', fillcolor: p0.breath + '33' },
-    line('CO₂ (ppm)', p0.co2, 7),
-    line('pot (%)', p0.pot, 8),
+    { ...line('sopro (0/1)', p0.breath, 5, undefined, 'hv'), fill: 'tozeroy', fillcolor: p0.breath + '33' },
+    line('CO₂ (ppm)', p0.co2, 6),
+    line('pot (%)', p0.pot, 7),
   ];
 
-  const N_ROWS = 8;
+  const N_ROWS = 7;
+  const ROW_BREATH = 5;
+  const ROW_CO2 = 6;
   const yRanges: (readonly [number, number])[] = [
-    Y_RANGES.orientation, Y_RANGES.accel, Y_RANGES.micRms, Y_RANGES.micRms, Y_RANGES.micPeak,
+    Y_RANGES.orientation, Y_RANGES.accel, Y_RANGES.micRms, Y_RANGES.micPeak,
     Y_RANGES.breath, co2Range(0), Y_RANGES.pot,
   ];
-  const axisStyle = { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font };
+  const axisStyle = { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font, ...frameAxis(p0) };
   const layout: Record<string, unknown> = {
-    height: 1190,
+    // Taller than the plot rows need, to pay for the wider gap between the framed charts.
+    height: 1115,
     margin: { l: 56, r: 8, t: 8, b: 40 },
     paper_bgcolor: 'rgba(0,0,0,0)',
     plot_bgcolor: 'rgba(0,0,0,0)',
     font: { color: p0.font, size: 11 },
     showlegend: false,
-    grid: { rows: N_ROWS, columns: 1, pattern: 'independent', ygap: 0.08 },
+    grid: { rows: N_ROWS, columns: 1, pattern: 'independent', ygap: 0.18 },
   };
-  const rowTitles = ['Orientação (°)', 'Aceleração (mg)', 'Mic esquerdo (dBFS)', 'Mic direito (dBFS)', 'Pico por canal (dBFS)', 'Detecção de sopro', 'CO₂ (ppm)', 'Potenciômetro (%)'];
+  const rowTitles = ['Orientação (°)', 'Aceleração (mg)', 'Microfones - RMS (dBFS)', 'Microfones - Pico (dBFS)', 'Detecção de sopro', 'CO₂ (ppm)', 'Potenciômetro (%)'];
   for (let i = 1; i <= N_ROWS; i++) {
     const xk = i === 1 ? 'xaxis' : `xaxis${i}`;
     const yk = i === 1 ? 'yaxis' : `yaxis${i}`;
     layout[xk] = {
       ...axisStyle,
       // Every subplot follows the bottom axis: one shared X (time).
-      ...(i === N_ROWS ? { title: { text: 'tempo (s)' } } : { matches: `x${N_ROWS}`, showticklabels: false }),
+      ...(i === N_ROWS ? { title: axisTitle('tempo (s)') } : { matches: `x${N_ROWS}`, showticklabels: false }),
     };
     layout[yk] = {
       ...axisStyle,
-      title: { text: rowTitles[i - 1], font: { size: 11 } },
+      title: axisTitle(rowTitles[i - 1]),
       autorange: false,
       range: [...yRanges[i - 1]],
-      ...(i === 6 ? { tickvals: [0, 1], ticktext: ['0', '1'] } : {}),
+      ...(i === ROW_BREATH ? { tickvals: [0, 1], ticktext: ['0', '1'] } : {}),
     };
   }
   (layout[`xaxis${N_ROWS}`] as Record<string, unknown>).range = [-windowS, 0];
@@ -469,14 +481,15 @@ export function mountSensorsPanel(
         re[`${ax}.gridcolor`] = p.grid;
         re[`${ax}.zerolinecolor`] = p.grid;
         re[`${ax}.color`] = p.font;
+        re[`${ax}.linecolor`] = p.frame;
       }
     }
     void Plotly.relayout(chartEl, re);
     void Plotly.restyle(specEl, { 'line.color': p.spectrum }, [0]);
     void Plotly.relayout(specEl, {
       'font.color': p.font,
-      'xaxis.gridcolor': p.grid, 'xaxis.zerolinecolor': p.grid, 'xaxis.color': p.font,
-      'yaxis.gridcolor': p.grid, 'yaxis.zerolinecolor': p.grid, 'yaxis.color': p.font,
+      'xaxis.gridcolor': p.grid, 'xaxis.zerolinecolor': p.grid, 'xaxis.color': p.font, 'xaxis.linecolor': p.frame,
+      'yaxis.gridcolor': p.grid, 'yaxis.zerolinecolor': p.grid, 'yaxis.color': p.font, 'yaxis.linecolor': p.frame,
     });
     specShapesKey = ''; // force the HP/LP markers to redraw with the new colors
   };
@@ -509,7 +522,7 @@ export function mountSensorsPanel(
     const m = co2Meter(formCo2, deviceCo2);
     if (m.max !== co2Max) {
       co2Max = m.max;
-      void Plotly.relayout(chartEl, { 'yaxis7.range': [0, m.max] });
+      void Plotly.relayout(chartEl, { [`yaxis${ROW_CO2}.range`]: [0, m.max] });
     }
     const tick = q('[data-el=tick-co2]');
     tick.hidden = m.triggerPpm === null;
@@ -529,6 +542,9 @@ export function mountSensorsPanel(
     };
     deviceCo2 = { triggerPpm: u16(TLV.co2TriggerPpm), virtualPeakPpm: u16(TLV.virtualPeakPpm) };
     syncCo2Scale();
+    const note = micNote(effectiveWindowMs(u16(TLV.audioWindowMs)));
+    q('[data-el=note-micl]').textContent = note;
+    q('[data-el=note-micr]').textContent = note;
   });
   client.addEventListener('status', (ev) => {
     if ((ev as CustomEvent<{ connected: boolean }>).detail.connected) return;
@@ -553,7 +569,7 @@ export function mountSensorsPanel(
       q('[data-el=az]').textContent = formatSigned(imu.acc[2]);
     }
     if (sensors) {
-      // RMS and peak come from the orientation packet (firmware, 20 ms window at the
+      // RMS and peak come from the orientation packet (firmware, audioWindowMs window at the
       // full 16 kHz) when they are live; the 5 Hz sensors packet is the fallback and
       // still carries the threshold, the pot and the health flags.
       const live = imu !== null && imu.audioValid;
@@ -605,7 +621,7 @@ export function mountSensorsPanel(
   };
 
   // --- sampler: one tick plots every packet queued since the previous one ------
-  const NT = 16; // trace count (see `traces`)
+  const NT = 15; // trace count (see `traces`)
   // Every line keeps HISTORY_S seconds of packets here, whatever window is showing, so a
   // larger window has its past at once. Each redraw hands the chart only the visible part,
   // reduced to its min/max envelope when it is longer than MAX_DRAWN_POINTS: the cost of a
@@ -622,7 +638,7 @@ export function mountSensorsPanel(
     const xs: number[][] = Array.from({ length: NT }, () => []);
     const ys: (number | null)[][] = Array.from({ length: NT }, () => []);
     const add = (tr: number, x: number, y: number | null): void => { xs[tr].push(x); ys[tr].push(y); };
-    // The envelope is measured in the firmware: RMS over a 20 ms window and peak at the
+    // The envelope is measured in the firmware: RMS over the audioWindowMs window and peak at the
     // full 16 kHz; when it is not live the point is a gap.
     for (const { t: x, v: imu } of imus) {
       const e = imu.quatValid ? quatToEulerLegacy(imu.quat) : null;
@@ -634,20 +650,19 @@ export function mountSensorsPanel(
       add(5, x, imu.acc[2]);
       const live = imu.audioValid;
       add(6, x, live ? imu.audioRmsDbfs[0] : null);
-      add(8, x, live ? imu.audioRmsDbfs[1] : null);
-      add(10, x, live ? imu.audioPeakDbfs[0] : null);
-      add(11, x, live ? imu.audioPeakDbfs[1] : null);
-      add(13, x, imu.breath ? 1 : 0);
+      add(7, x, live ? imu.audioRmsDbfs[1] : null);
+      add(9, x, live ? imu.audioPeakDbfs[0] : null);
+      add(10, x, live ? imu.audioPeakDbfs[1] : null);
+      add(12, x, imu.breath ? 1 : 0);
     }
     for (const { t: x, v: s } of senss) {
       const thr = thresholdToDbfs(s);
       const rows = thresholdRows(s.metricPeak);
-      add(7, x, rows.rms ? thr : null);
-      add(9, x, rows.rms ? thr : null);
-      add(12, x, rows.peak ? thr : null);
-      add(15, x, (s.potRaw / 4095) * 100);
+      add(8, x, rows.rms ? thr : null);
+      add(11, x, rows.peak ? thr : null);
+      add(14, x, (s.potRaw / 4095) * 100);
     }
-    for (const { t: x, v: c } of co2s) add(14, x, c.ppm);
+    for (const { t: x, v: c } of co2s) add(13, x, c.ppm);
     if (!xs.some((a) => a.length > 0)) return; // nothing received since the last tick
     const viewX: number[][] = [];
     const viewY: (number | null)[][] = [];

@@ -5,6 +5,7 @@
 #include "../../Gaiaball/src/logic/AudioDecimator.h"
 #include "../../Gaiaball/src/logic/AudioFeatures.h"
 #include "../../Gaiaball/src/logic/BreathDetector.h"
+#include "../../Gaiaball/src/logic/GaiaConfig.h"
 
 using namespace gaia;
 
@@ -270,7 +271,7 @@ static void pushBlock(AudioLevelWindow &w, float ampL, float ampR, uint16_t fram
 
 void test_window_pools_blocks_into_one_rms() {
   AudioLevelWindow w;
-  for (int i = 0; i < AudioLevelWindow::kBlocks; i++) pushBlock(w, 100.f, 50.f, 80);
+  for (int i = 0; i < w.blocks(); i++) pushBlock(w, 100.f, 50.f, 80);
   AudioLevels l = w.levels();
   TEST_ASSERT_FLOAT_WITHIN(0.01f, 100.f, l.rms[0]);
   TEST_ASSERT_FLOAT_WITHIN(0.01f, 50.f, l.rms[1]);
@@ -279,17 +280,18 @@ void test_window_pools_blocks_into_one_rms() {
 
 void test_window_slides_oldest_block_out() {
   AudioLevelWindow w;
-  for (int i = 0; i < AudioLevelWindow::kBlocks; i++) pushBlock(w, 10.f, 10.f, 80);
-  pushBlock(w, 0.f, 0.f, 80);  // 5th block evicts the 1st
+  for (int i = 0; i < w.blocks(); i++) pushBlock(w, 10.f, 10.f, 80);
+  pushBlock(w, 0.f, 0.f, 80);  // one block past the span evicts the oldest
   AudioLevels l = w.levels();
-  // 3 blocks at 10 + 1 silent block -> sqrt(3/4) * 10
-  TEST_ASSERT_FLOAT_WITHIN(0.01f, 8.660f, l.rms[0]);
+  // (N-1) blocks at 10 + 1 silent block -> sqrt((N-1)/N) * 10
+  const float n = (float)w.blocks();
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, sqrtf((n - 1.f) / n) * 10.f, l.rms[0]);
 }
 
 void test_window_peak_ages_out() {
   AudioLevelWindow w;
   pushBlock(w, 1000.f, 1000.f, 80);
-  for (int i = 0; i < AudioLevelWindow::kBlocks - 1; i++) pushBlock(w, 10.f, 10.f, 80);
+  for (int i = 0; i < w.blocks() - 1; i++) pushBlock(w, 10.f, 10.f, 80);
   TEST_ASSERT_FLOAT_WITHIN(0.01f, 1000.f, w.levels().peak[0]);  // still inside the window
   pushBlock(w, 10.f, 10.f, 80);
   TEST_ASSERT_FLOAT_WITHIN(0.01f, 10.f, w.levels().peak[0]);  // evicted
@@ -306,6 +308,53 @@ void test_window_empty_and_reset() {
   w.reset();
   TEST_ASSERT_EQUAL_FLOAT(0.f, w.levels().rms[0]);
   TEST_ASSERT_EQUAL_FLOAT(0.f, w.levels().peak[0]);
+}
+
+// --- configurable span (TLV 0x2F) ------------------------------------------
+void test_window_default_is_50ms() {
+  AudioLevelWindow w;
+  TEST_ASSERT_EQUAL_UINT8(10, w.blocks());
+  TEST_ASSERT_EQUAL_UINT8(10, AudioLevelWindow::blocksForMs(GaiaConfig{}.audioWindowMs));
+}
+
+void test_window_ms_to_blocks_rounds_and_clamps() {
+  TEST_ASSERT_EQUAL_UINT8(1, AudioLevelWindow::blocksForMs(0));
+  TEST_ASSERT_EQUAL_UINT8(1, AudioLevelWindow::blocksForMs(5));
+  TEST_ASSERT_EQUAL_UINT8(1, AudioLevelWindow::blocksForMs(7));   // 1.4 blocks
+  TEST_ASSERT_EQUAL_UINT8(2, AudioLevelWindow::blocksForMs(8));   // 1.6 blocks
+  TEST_ASSERT_EQUAL_UINT8(4, AudioLevelWindow::blocksForMs(20));  // the old fixed window
+  TEST_ASSERT_EQUAL_UINT8(40, AudioLevelWindow::blocksForMs(200));
+  TEST_ASSERT_EQUAL_UINT8(40, AudioLevelWindow::blocksForMs(65535));
+}
+
+void test_window_span_follows_set_blocks() {
+  AudioLevelWindow w;
+  w.setBlocks(4);
+  pushBlock(w, 1000.f, 1000.f, 80);
+  for (int i = 0; i < 3; i++) pushBlock(w, 10.f, 10.f, 80);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 1000.f, w.levels().peak[0]);
+  pushBlock(w, 10.f, 10.f, 80);  // 5th block: out of a 20 ms window
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 10.f, w.levels().peak[0]);
+
+  w.setBlocks(40);  // a new span starts over
+  TEST_ASSERT_EQUAL_FLOAT(0.f, w.levels().rms[0]);
+  pushBlock(w, 1000.f, 1000.f, 80);
+  for (int i = 0; i < 39; i++) pushBlock(w, 10.f, 10.f, 80);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 1000.f, w.levels().peak[0]);  // still inside 200 ms
+  pushBlock(w, 10.f, 10.f, 80);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 10.f, w.levels().peak[0]);
+
+  w.setBlocks(0);  // clamped, never a zero-length ring
+  TEST_ASSERT_EQUAL_UINT8(1, w.blocks());
+  w.setBlocks(200);
+  TEST_ASSERT_EQUAL_UINT8(AudioLevelWindow::kMaxBlocks, w.blocks());
+}
+
+void test_window_same_span_keeps_contents() {
+  AudioLevelWindow w;
+  pushBlock(w, 100.f, 100.f, 80);
+  w.setBlocks(w.blocks());  // a config write that did not touch 0x2F
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 100.f, w.levels().rms[0]);
 }
 
 // --- decimator reset -------------------------------------------------------
@@ -339,6 +388,10 @@ int main() {
   RUN_TEST(test_window_slides_oldest_block_out);
   RUN_TEST(test_window_peak_ages_out);
   RUN_TEST(test_window_empty_and_reset);
+  RUN_TEST(test_window_default_is_50ms);
+  RUN_TEST(test_window_ms_to_blocks_rounds_and_clamps);
+  RUN_TEST(test_window_span_follows_set_blocks);
+  RUN_TEST(test_window_same_span_keeps_contents);
   RUN_TEST(test_decimator_reset_drops_partial_chunk);
   RUN_TEST(test_adaptive_fires_and_debounces);
   RUN_TEST(test_adaptive_rearm_db);

@@ -99,8 +99,9 @@ export interface ImuSample {
   nineAxis: boolean;
   moving: boolean;
   /**
-   * Microphone envelope measured in the firmware over the 20 ms window that ended
-   * with this sample, at the full 16 kHz rate (left, right).
+   * Microphone envelope measured in the firmware over the audioWindowMs window (TLV
+   * 0x2F, default 50 ms; 20 ms on older firmware) that ended with this sample, at the
+   * full 16 kHz rate (left, right).
    * RMS is AES17 dBFS (0 dBFS = full-scale sine); peak is amplitude dBFS (0 dBFS =
    * full-scale sample), so the same sine reads 3.01 dB lower on the peak scale.
    * Both read AUDIO_DB_FLOOR while audioValid is false.

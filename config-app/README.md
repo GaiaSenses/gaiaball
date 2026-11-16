@@ -69,7 +69,7 @@ correta e, abaixo, gráficos de linha empilhados verticalmente que **compartilha
 mesmo eixo X (tempo, em segundos)**, cada gráfico com uma cor própria. Cada cartão tem o
 fundo na cor da sua linha nos gráficos. Os cartões dos **microfones** mostram o RMS e o
 pico lado a lado, em dBFS inteiros, sobre um medidor de −90 a 0 dBFS: a barra é o RMS
-(média de 20 ms) e o traço é o pico (a amostra mais alta), e o desenho ao lado de cada
+(média da janela configurada, 50 ms por padrão) e o traço é o pico (a amostra mais alta), e o desenho ao lado de cada
 rótulo repete a parte do medidor que ele nomeia. O cartão do **potenciômetro** mostra a
 posição (%) e a sensibilidade correspondente (−60 a 0 dBFS) numa trilha de fader, e diz se
 o botão está em uso pelo detector. **Orientação** (roll, pitch e yaw, em graus) e **aceleração**
@@ -100,9 +100,9 @@ e o cabeçalho diz de onde vem o número (leitura real, pulso virtual, sem leitu
 |---|---|---|
 | Orientação (IMU ICM-20948 ou GY-91/MPU-9250) | graus (°) | fusão Madgwick no firmware → quaternion → Euler na convenção legada (mesma saída que o site entrega ao patch Pd) |
 | Aceleração (IMU) | mg | já chega em milli-g no pacote de movimento v2 (1000 mg = 1 g; fundo de escala ±4 g = ±4000 mg) |
-| Microfones esq./dir. (INMP441) | dBFS (AES17), em dB inteiros no cartão | **RMS e pico medidos no firmware** (janela de 20 ms; o pico amostrado no 16 kHz cheio) em passos de 0,5 dB (1 byte cada) e enviados em cada pacote de orientação — ou seja, na taxa de orientação, não a 5 Hz. 0 dBFS do RMS = seno de fundo de escala (AES17); 0 dBFS do pico = amostra de fundo de escala, 3,01 dB abaixo para a mesma senoide. |
+| Microfones esq./dir. (INMP441) | dBFS (AES17), em dB inteiros no cartão | **RMS e pico medidos no firmware** (janela configurável em Avançado → “Janela do RMS”, 50 ms por padrão; o pico amostrado no 16 kHz cheio) em passos de 0,5 dB (1 byte cada) e enviados em cada pacote de orientação — ou seja, na taxa de orientação, não a 5 Hz. 0 dBFS do RMS = seno de fundo de escala (AES17); 0 dBFS do pico = amostra de fundo de escala, 3,01 dB abaixo para a mesma senoide. |
 | CO₂ (SC8-CO2-5K) | ppm | o sensor emite 1 quadro/s sozinho por UART (9600 8N1); o firmware só escuta, nunca transmite (uma consulta pararia o fluxo do sensor). EMA opcional, TLV `0x28`. O pacote de CO₂ também traz o bit de **gatilho** (nível `0x29` com histerese `0x2A`) |
-| Potenciômetro | % do curso e dBFS | ADC filtrado 0–4095 → 0–100 % e −60…0 dBFS (a sensibilidade que o botão dá; o limiar efetivo aparece como linha contínua nos gráficos da medida ativa: RMS nos dos microfones, pico no "Pico por canal") |
+| Potenciômetro | % do curso e dBFS | ADC filtrado 0–4095 → 0–100 % e −60…0 dBFS (a sensibilidade que o botão dá; o limiar efetivo aparece como linha contínua nos gráficos da medida ativa: "Microfones - RMS" ou "Microfones - Pico"; cada um traz os dois microfones) |
 
 O nível efetivo de disparo do detector, o potenciômetro e as flags de saúde chegam num pacote
 próprio (`SensorsPacket`, 5 Hz, na característica de diagnóstico — ver

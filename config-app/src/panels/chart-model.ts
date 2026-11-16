@@ -159,3 +159,16 @@ export function formatDb(v: number): string {
   const n = Math.round(v) + 0;
   return (n < 0 ? MINUS : '') + String(Math.abs(n));
 }
+
+/**
+ * The microphone cards' footnote. The window is TLV 0x2F, read from the ball: firmware
+ * that does not report it still has the old fixed 20 ms window. null = nothing read yet.
+ */
+export const micNote = (windowMs: number | null): string =>
+  (windowMs === null
+    ? 'RMS é a média da janela configurada (50 ms por padrão)'
+    : `RMS é a média de ${windowMs} ms`) +
+  '; pico é a amostra mais alta na mesma janela. Escala de −90 a 0 dBFS.';
+/** Effective window for a register value: the firmware rounds to 5 ms blocks, 5..200 ms. */
+export const effectiveWindowMs = (reg: number | null): number =>
+  reg === null ? 20 : Math.min(200, Math.max(5, Math.round(reg / 5) * 5));

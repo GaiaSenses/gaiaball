@@ -129,45 +129,46 @@ void test_checksum_error_counts() {
   TEST_ASSERT_EQUAL_UINT16(301, p.ppm());
 }
 
+// No delay: the breath IS the event, so the pulse is active on the trigger's own tick.
 void test_pulse_timing() {
   VirtualCo2Pulse v;
-  v.configure(1500, 1000, 17000);
-  TEST_ASSERT_FALSE(v.pending(0));
+  v.configure(1500, 10000);
+  TEST_ASSERT_FALSE(v.active(0));
   v.trigger(0);
-  TEST_ASSERT_TRUE(v.pending(0));
-  TEST_ASSERT_TRUE(v.pending(999));
-  TEST_ASSERT_FALSE(v.active(999));
-  TEST_ASSERT_TRUE(v.active(1001));
-  TEST_ASSERT_FALSE(v.pending(1001));
-  TEST_ASSERT_TRUE(v.active(1000 + 16999));
-  TEST_ASSERT_FALSE(v.active(1000 + 17000));
-  TEST_ASSERT_FALSE(v.pending(1000 + 17000));
+  TEST_ASSERT_TRUE(v.active(0));
+  TEST_ASSERT_TRUE(v.active(9999));
+  TEST_ASSERT_FALSE(v.active(10000));
 }
 
 void test_pulse_retrigger_ignored_and_cancel() {
   VirtualCo2Pulse v;
-  v.configure(1500, 1000, 5000);
+  v.configure(1500, 5000);
   v.trigger(100);
-  v.trigger(500);  // ignored while pending
-  TEST_ASSERT_TRUE(v.active(1101));
-  v.trigger(2000);  // ignored while active
-  TEST_ASSERT_FALSE(v.active(1100 + 5000));
+  TEST_ASSERT_TRUE(v.active(100));
+  v.trigger(2000);  // ignored while active: the pulse does not stretch
+  TEST_ASSERT_TRUE(v.active(5099));
+  TEST_ASSERT_FALSE(v.active(5100));
   v.trigger(7000);  // allowed once finished
-  TEST_ASSERT_TRUE(v.pending(7500));
-  TEST_ASSERT_TRUE(v.active(8001));
+  TEST_ASSERT_TRUE(v.active(7000));
   v.cancel();
-  TEST_ASSERT_FALSE(v.active(8002));
-  TEST_ASSERT_FALSE(v.pending(8002));
+  TEST_ASSERT_FALSE(v.active(7001));
+}
+
+void test_pulse_zero_hold_never_activates() {
+  VirtualCo2Pulse v;
+  v.configure(1500, 0);
+  v.trigger(100);
+  TEST_ASSERT_FALSE(v.active(100));
 }
 
 void test_pulse_millis_wraparound() {
   VirtualCo2Pulse v;
-  v.configure(1500, 1000, 5000);
+  v.configure(1500, 5000);
   uint32_t t = 0xFFFFFF00u;
   v.trigger(t);
-  TEST_ASSERT_TRUE(v.pending(t + 10));
-  TEST_ASSERT_TRUE(v.active(t + 1001));  // wraps past 0
-  TEST_ASSERT_FALSE(v.active(t + 6001));
+  TEST_ASSERT_TRUE(v.active(t + 10));
+  TEST_ASSERT_TRUE(v.active(t + 4999));  // wraps past 0
+  TEST_ASSERT_FALSE(v.active(t + 5000));
 }
 
 void test_trigger_starts_off_and_hysteresis_band() {
@@ -234,6 +235,7 @@ int main() {
   RUN_TEST(test_checksum_error_counts);
   RUN_TEST(test_pulse_timing);
   RUN_TEST(test_pulse_retrigger_ignored_and_cancel);
+  RUN_TEST(test_pulse_zero_hold_never_activates);
   RUN_TEST(test_pulse_millis_wraparound);
   RUN_TEST(test_trigger_starts_off_and_hysteresis_band);
   RUN_TEST(test_trigger_stale_forces_off);

@@ -25,8 +25,8 @@ namespace gaia {
 //         GaiaConfig::audioRawStream is set, because this one stream used to be 53 %
 //         of all the BLE air time on the link;
 //     (b) optional breath band-pass (HP then LP biquads, config TLV 0x16..0x1A)
-//         -> per-channel sum of squares and max |sample| -> AudioLevelWindow (20 ms
-//            pooled energy, fresh every block) ->
+//         -> per-channel sum of squares and max |sample| -> AudioLevelWindow (audioWindowMs,
+//            TLV 0x2F, default 50 ms, pooled energy, fresh every block) ->
 //              - levels(), published on every ImuPacket (RMS + peak per channel) and
 //                on the 5 Hz SensorsPacket;
 //              - BreathDetector fed with both channels of the configured metric
@@ -67,7 +67,7 @@ class AudioService {
   void applyConfig(const GaiaConfig &cfg);
 
   bool ok() const { return ok_; }
-  // Latest pooled envelope (20 ms window), in 24-bit sample units. Safe from any task.
+  // Latest pooled envelope (audioWindowMs window, default 50 ms), in 24-bit sample units. Safe from any task.
   AudioLevels levels() const;
   float lastRmsLeft() const { return rmsL_.load(); }
   float lastRmsRight() const { return rmsR_.load(); }
@@ -109,6 +109,7 @@ class AudioService {
   std::atomic<bool> bpfEnabled_{true};
   std::atomic<bool> rawStreamEnabled_{false};
   std::atomic<uint16_t> hpHz_{10}, hpQX100_{500}, lpHz_{200}, lpQX100_{500};
+  std::atomic<uint16_t> windowMs_{50};
   std::atomic<bool> cfgDirty_{true};
 
   std::atomic<float> rmsL_{0.0f};
