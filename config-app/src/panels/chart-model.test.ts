@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_WINDOW_S,
+  activeMetricPeak,
   effectiveWindowMs,
   micNote,
   HISTORY_S,
@@ -189,5 +190,17 @@ describe('microphone window footnote (TLV 0x2F)', () => {
 
   it('before any read it names the default instead of a number it does not know', () => {
     expect(micNote(null)).toMatch(/50 ms por padrão/);
+  });
+});
+
+describe('threshold line follows the RMS/Pico switch', () => {
+  it('the form wins over the ball, so a click moves the line before Aplicar', () => {
+    expect(activeMetricPeak(true, false)).toBe(true);
+    expect(activeMetricPeak(false, true)).toBe(false);
+  });
+
+  it('without a form value it follows the ball, and RMS before anything is known', () => {
+    expect(activeMetricPeak(null, true)).toBe(true);
+    expect(activeMetricPeak(null, null)).toBe(false);
   });
 });

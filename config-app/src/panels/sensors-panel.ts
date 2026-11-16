@@ -25,7 +25,7 @@ import {
 } from '../protocol/packets.ts';
 import { TLV } from '../protocol/tlv.ts';
 import { renderSwitch } from '../ui/switch.ts';
-import type { BandSource, Co2Source, FormBand } from './config-panel.ts';
+import type { BandSource, Co2Source, FormBand, MetricSource } from './config-panel.ts';
 import {
   HISTORY_S,
   MAX_DRAWN_POINTS,
@@ -44,6 +44,7 @@ import {
   micNote,
   saveWindowS,
   thresholdRows,
+  activeMetricPeak,
   type Co2Levels,
   type WindowS,
 } from './chart-model.ts';
@@ -164,6 +165,8 @@ export interface SensorsPanelOptions {
   band?: BandSource;
   /** CO2 trigger and virtual peak as the form shows them; without it the meter uses what the ball reports. */
   co2?: Co2Source;
+  /** RMS/Pico switch as the form shows it; without it the threshold line follows the ball's metric. */
+  metric?: MetricSource;
 }
 
 export function mountSensorsPanel(
@@ -554,6 +557,24 @@ export function mountSensorsPanel(
   syncCo2Scale();
   opts.co2?.subscribe((c) => { formCo2 = c; syncCo2Scale(); });
 
+  // The threshold line sits on the chart of the active metric only: RMS (trace 8) or peak
+  // (trace 11). It follows the form's RMS/Pico switch as soon as it is clicked, like the
+  // band and the CO2 mark; without a form, the metric the ball reports.
+  const THR_RMS = 8;
+  const THR_PEAK = 11;
+  let formMetricPeak: boolean | null = null;
+  let deviceMetricPeak: boolean | null = null;
+  let shownPeak: boolean | null = null;
+  const syncThresholdRows = (): void => {
+    const peak = activeMetricPeak(formMetricPeak, deviceMetricPeak);
+    if (peak === shownPeak) return;
+    shownPeak = peak;
+    const rows = thresholdRows(peak);
+    void Plotly.restyle(chartEl, { visible: [rows.rms, rows.peak] }, [THR_RMS, THR_PEAK]);
+  };
+  syncThresholdRows();
+  opts.metric?.subscribe((m) => { formMetricPeak = m; syncThresholdRows(); });
+
   const renderCards = (): void => {
     const { imu, sensors, co2 } = latest;
     if (imu) {
@@ -657,9 +678,11 @@ export function mountSensorsPanel(
     }
     for (const { t: x, v: s } of senss) {
       const thr = thresholdToDbfs(s);
-      const rows = thresholdRows(s.metricPeak);
-      add(8, x, rows.rms ? thr : null);
-      add(11, x, rows.peak ? thr : null);
+      // Both threshold traces always get the data; which one shows is a visibility switch
+      // (syncThresholdRows), so flipping RMS/Pico moves the whole line at once, history included.
+      add(THR_RMS, x, thr);
+      add(THR_PEAK, x, thr);
+      if (deviceMetricPeak !== s.metricPeak) { deviceMetricPeak = s.metricPeak; syncThresholdRows(); }
       add(14, x, (s.potRaw / 4095) * 100);
     }
     for (const { t: x, v: c } of co2s) add(13, x, c.ppm);

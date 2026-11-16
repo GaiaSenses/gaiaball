@@ -139,16 +139,17 @@ mountPdChip(app.querySelector<HTMLElement>('#pd-chip')!, bridge);
 mountConnectionPanel(app.querySelector<HTMLElement>('#panel-conexao')!, client);
 mountPdBlock(app.querySelector<HTMLElement>('#panel-conexao')!, bridge, pdPrefs, syncPd);
 syncPd();
-const { advancedSections, band, co2 } = mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client);
+const { advancedSections, band, co2, metric } = mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client);
 // Magnetometer calibration and metrics are bench tools: they live in the Avançado tab,
 // below its fields, instead of under the configuration for everyone to scroll past.
 advancedSections.innerHTML = '<section id="panel-magcal"></section><section id="panel-metricas"></section>';
 const pausable = [
   mountMagCalPanel(app.querySelector<HTMLElement>('#panel-magcal')!, client),
   mountMetricsPanel(app.querySelector<HTMLElement>('#panel-metricas')!, client, stats),
-  // The spectrum shades the band-pass and the CO2 meter marks the trigger as the form shows
-  // them, so editing a cutoff or the trigger moves them at once (also in the demo).
-  mountSensorsPanel(app.querySelector<HTMLElement>('#panel-sensores')!, client, { band, co2 }),
+  // The spectrum shades the band-pass, the CO2 meter marks the trigger and the threshold line
+  // sits on the RMS or the peak chart as the form shows them, so editing a cutoff, the trigger
+  // or the RMS/Pico switch moves them at once (also in the demo).
+  mountSensorsPanel(app.querySelector<HTMLElement>('#panel-sensores')!, client, { band, co2, metric }),
 ];
 
 // 3D view of the treated quaternion exactly as received over BLE (no UI smoothing:
