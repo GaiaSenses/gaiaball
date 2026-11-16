@@ -405,7 +405,8 @@ A orientação da bola, a aceleração, o som dos microfones e o sopro, todos do
   (±4 g, 8192 por g, nos dois chips) com `round(contagens × 1000 / 8192)`, então ±4 g
   lê ±4000. Os filtros de aceleração (registradores `0x04` e `0x1D`) agem antes do envio,
   na mesma escala.
-- **Som.** Medido no firmware numa janela de 20 ms que termina nesta amostra (o pico é
+- **Som.** Medido no firmware numa janela de `audioWindowMs` (registrador `0x2F`, padrão
+  50 ms; 20 ms fixos em firmware sem ele) que termina nesta amostra (o pico é
   acompanhado nos 16 kHz completos). RMS em dBFS AES17 (0 dBFS = senoide de fundo de escala);
   pico em dBFS de amplitude (0 dBFS = amostra de fundo de escala). A mesma senoide aparece
   3,01 dB mais baixa no pico. Cada nível é um byte em passos de **0,5 dB**:
@@ -443,8 +444,8 @@ A orientação da bola, a aceleração, o som dos microfones e o sopro, todos do
   padrão 2100). Fora dele, é a leitura real se o sensor está habilitado (`co2Enabled` ≠ 0); com
   o sensor desabilitado (`co2Enabled` = 0), é a constante **600** (o valor "normal" do
   firmware original), e `valid` fica desligado.
-- **O pulso virtual.** Um sopro agenda o pulso para daqui a `virtualDelayMs` (padrão
-  1000 ms); ele dura `virtualHoldMs` (padrão 17000 ms).
+- **O pulso virtual.** Começa no próprio sopro, sem atraso: o pacote de CO₂ com o pico sai
+  na mesma volta do laço do App. Ele dura `virtualHoldMs` (padrão 10000 ms = 10 s).
 - **O gatilho (`trigger`).** É um nível com histerese calculado **na bola**, sobre o ppm
   informado (o pulso virtual conta). Ele **liga** quando `ppm > co2TriggerPpm` (padrão 1200) e
   **desliga** quando `ppm ≤ co2TriggerPpm − co2TriggerHystPpm` (padrão 1200 − 50 = 1150; se a
@@ -906,6 +907,7 @@ e [`GaiaConfig.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gai
 | `0x2C` | `breathMetric` | u8 | 0–1 | 0 | O que o detector mede: 0 = RMS, 1 = pico |
 | `0x2D` | `breathDetector` | u8 | 0–1 | 0 | 0 = absoluto (a cada bloco de 5 ms, dispara se **qualquer** microfone passar da linha); 1 = adaptativo (a cada 3 blocos, envelope rápido menos linha de base, do microfone mais alto) |
 | `0x2E` | `breathRearmDb` | u8 | 0–20 | 6 | O detector rearma quando o nível cai abaixo de `limiar × 10^(−valor/20)`; dB inteiros |
+| `0x2F` | `audioWindowMs` | u16 | 5–200 | 50 | Janela do RMS (e do pico) de cada microfone, ms, arredondada para blocos de 5 ms; vale na hora. Firmware sem este registrador usa 20 ms fixos |
 
 **CO₂**
 
@@ -914,8 +916,7 @@ e [`GaiaConfig.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gai
 | `0x20` | `co2Enabled` | u8 | 0–255 | 1 | 0 = sensor desabilitado (o pacote informa 600 ppm) |
 | `0x22` | `co2StaleTimeoutMs` | u16 | 0–65535 | 5000 | Sem leitura há mais que isso → `stale` |
 | `0x23` | `virtualPeakPpm` | u16 | 0–65535 | 2100 | ppm informado durante o pulso virtual |
-| `0x24` | `virtualDelayMs` | u16 | 0–65535 | 1000 | Atraso entre o sopro e o pulso, ms |
-| `0x25` | `virtualHoldMs` | u16 | 0–65535 | 17000 | Duração do pulso, ms |
+| `0x25` | `virtualHoldMs` | u16 | 0–65535 | 10000 | Duração do pulso, ms (a config-app mostra em segundos); 0 = sem pulso. O pulso começa no próprio sopro, sem atraso |
 | `0x26` | `co2RawLogMode` | u8 | 0–255 | 0 | ≠ 0: imprime os bytes do sensor na serial |
 | `0x28` | `co2EmaAlphaX1000` | u16 | 1–1000 | 1000 | Suavização das leituras; 1000 = sem suavização |
 | `0x29` | `co2TriggerPpm` | u16 | 400–10000 | 1200 | Nível em que o gatilho (`trigger`) liga |
@@ -952,6 +953,7 @@ e [`GaiaConfig.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gai
 CO₂), `0x33` (pino do LED de status, removido com o comando de LED antigo) e `0x15` (era o
 `thresholdFixed`, em contagens de RMS; foi trocado pelo limiar em dBFS `0x2B`). Este é o id
 do **registrador**, não o do comando `0x15` (captura do magnetômetro), que continua valendo.
+Também `0x24` (era o `virtualDelayMs`: o pulso virtual agora começa no próprio sopro).
 Uma escrita que contenha um id reservado é rejeitada inteira. Um valor de `0x15` salvo por
 firmware antigo **não** é convertido: o `0x2B` começa no padrão.
 
@@ -1776,7 +1778,7 @@ está na **versão 2**. Uma versão só muda quando a mudança deixa de ser **ad
 6. **Registradores TLV novos** ganham ids novos. Ao **ler**, pule ids desconhecidos pelo `len`.
    Ao **escrever**, mande só ids que a bola conhece (confira numa leitura antes): um id
    desconhecido derruba a escrita inteira.
-7. **Ids aposentados não voltam:** registradores `0x15`, `0x21`, `0x27` e `0x33`, opcodes
+7. **Ids aposentados não voltam:** registradores `0x15`, `0x21`, `0x24`, `0x27` e `0x33`, opcodes
    `0x00` e `0x01`. (O registrador `0x15` é o antigo `thresholdFixed`; não confunda com o
    comando `0x15`, que continua valendo.)
 8. **Mudança incompatível = versão nova, só do tipo afetado.** Se for preciso mudar o

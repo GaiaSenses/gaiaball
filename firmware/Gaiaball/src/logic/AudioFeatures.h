@@ -48,19 +48,27 @@ float dbfsToPeakCounts(float dbfs);
 // 10^(-db/20): amplitude ratio of a drop of `db` dB (3 dB -> 0.7079).
 float dbToAmplitudeRatio(float db);
 
-// Sliding energy window over the last kBlocks I2S blocks.
+// Sliding energy window over the last blocks() I2S blocks (configurable, TLV 0x2F).
 //
 // WHY pool blocks instead of reporting the bare block: at 200 Hz the I2S block is 5 ms,
 // shorter than one period of the low end of the breath band (10 ms at 100 Hz), so a
 // single block measures instantaneous amplitude rather than energy and the value would
-// wobble with the waveform. Pooling four 5 ms blocks keeps a 20 ms energy window while
-// still publishing a fresh value every block (75 % overlap). The peak is the maximum
-// over the same span, which is what "peak of the last 20 ms" should mean.
+// wobble with the waveform. Pooling N 5 ms blocks gives an N x 5 ms energy window while
+// still publishing a fresh value every block. The peak is the maximum over the same
+// span, so peak/RMS stays a meaningful crest factor.
 //
-// Not thread-safe: push() and levels() belong to the audio task.
+// The span is GaiaConfig::audioWindowMs (default 50 ms = 10 blocks, was fixed at 20 ms):
+// longer = steadier level, slower to rise and to fall.
+//
+// Not thread-safe: push(), levels() and setBlocks() belong to the audio task.
 class AudioLevelWindow {
  public:
-  static constexpr uint8_t kBlocks = 4;
+  static constexpr uint16_t kBlockMs = 5;      // 80 frames at 16 kHz (AudioService)
+  static constexpr uint8_t kMaxBlocks = 40;    // 200 ms
+  static constexpr uint8_t kDefaultBlocks = 10;  // 50 ms
+
+  // Window length in ms -> blocks, rounded to the nearest block, clamped to 1..kMaxBlocks.
+  static uint8_t blocksForMs(uint16_t ms);
 
   // sumSq = sum of squared samples of this block per channel, peak = max |sample| per
   // channel, frames = samples per channel in the block. frames == 0 is ignored.
@@ -68,6 +76,10 @@ class AudioLevelWindow {
   // Pooled RMS and windowed peak. All-zero while the window holds no samples.
   AudioLevels levels() const;
   void reset();
+  // Changes the span (clamped to 1..kMaxBlocks). A different span starts the window
+  // over: it refills within the new span, levels() averaging only what it holds.
+  void setBlocks(uint8_t n);
+  uint8_t blocks() const { return blocks_; }
 
  private:
   struct Entry {
@@ -75,7 +87,8 @@ class AudioLevelWindow {
     float peak[2] = {0.0f, 0.0f};
     uint16_t frames = 0;
   };
-  Entry ring_[kBlocks] = {};
+  Entry ring_[kMaxBlocks] = {};
+  uint8_t blocks_ = kDefaultBlocks;
   uint8_t next_ = 0;
 };
 

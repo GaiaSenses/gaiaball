@@ -3,27 +3,24 @@
 
 namespace gaia {
 
-// Synthetic CO2 event: trigger() schedules activation after delayMs; it stays
-// active for holdMs. Re-trigger while pending or active is ignored.
+// Synthetic CO2 event: trigger() activates it at once (the breath itself is the
+// event, so the Co2Packet with the peak leaves on the same App loop) and it stays
+// active for holdMs. Re-trigger while active is ignored.
 // Timestamps are millis(); comparisons are wrap-safe.
 class VirtualCo2Pulse {
  public:
-  void configure(uint16_t peakPpm, uint32_t delayMs, uint32_t holdMs) {
-    peakPpm_ = peakPpm; delayMs_ = delayMs; holdMs_ = holdMs;
+  void configure(uint16_t peakPpm, uint32_t holdMs) {
+    peakPpm_ = peakPpm; holdMs_ = holdMs;
   }
   void trigger(uint32_t nowMs);
-  void cancel() { state_ = Idle; }
+  void cancel() { holding_ = false; }
   bool active(uint32_t nowMs);
-  // True while scheduled but not yet active. Test-only observability (the timing
-  // tests assert the Waiting state through it); no production caller.
-  bool pending(uint32_t nowMs) const;
   uint16_t peakPpm() const { return peakPpm_; }
 
  private:
-  enum State : uint8_t { Idle, Waiting, Holding };
-  State state_ = Idle;
+  bool holding_ = false;
   uint16_t peakPpm_ = 0;
-  uint32_t delayMs_ = 0, holdMs_ = 0;
+  uint32_t holdMs_ = 0;
   uint32_t startMs_ = 0;  // activation time
 
   void update(uint32_t nowMs);

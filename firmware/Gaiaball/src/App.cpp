@@ -222,7 +222,7 @@ void App::applySnapshot(const GaiaConfig &cfg) {
   breathAdaptive_ = cfg.breathDetector != 0;
   audioHpHz_ = cfg.audioHpHz;
   audioLpHz_ = cfg.audioLpHz;
-  virtualPulse_.configure(cfg.virtualPeakPpm, cfg.virtualDelayMs, cfg.virtualHoldMs);
+  virtualPulse_.configure(cfg.virtualPeakPpm, cfg.virtualHoldMs);
   co2Trigger_.configure(cfg.co2TriggerPpm, cfg.co2TriggerHystPpm);
   // Acts only on real changes: a new navMode or reference point resets the globe;
   // joystick and settle parameters apply live; imuNotifyHz / navNotifyHz re-time the

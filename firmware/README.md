@@ -170,8 +170,9 @@ config write that lands both LED functions on the same GPIO is rejected atomical
   It streams one 16-byte `42 4D` frame per second on its own; the firmware listens
   only (never transmits — a query would halt the stream until power-up) and resyncs
   on the header after any byte loss.
-- A sound peak triggers the virtual CO2 pulse: after `virtualDelayMs` (1 s) the reported
-  ppm becomes `virtualPeakPpm` (2100) for `virtualHoldMs` (17 s).
+- A sound peak triggers the virtual CO2 pulse at once (no delay): the reported ppm
+  becomes `virtualPeakPpm` (2100) for `virtualHoldMs` (10 s), and the Co2Packet carrying
+  it leaves on the same App loop.
 
 ## BLE byte budget
 
@@ -342,7 +343,7 @@ carries it as milli-g, converted in `makeImuPacket`), gyro full scale selectable
         │          │
         │     [3] per-block sum of squares + max |sample| (16 kHz, float)
         │          │
-        │     [4] AudioLevelWindow: 20 ms pooled energy, fresh every block
+        │     [4] AudioLevelWindow: audioWindowMs (50 ms) pooled energy, fresh every block
         │          │
         │          ├──> [5] RMS + peak per channel ──> every ImuPacket (half-dB, u8)
         │          │                                   and the 5 Hz SensorsPacket
@@ -364,7 +365,7 @@ carries it as milli-g, converted in `makeImuPacket`), gyro full scale selectable
 | 1 | 24-bit extraction + DC removal | The INMP441 pushes 24-bit data inside 32-bit slots and carries a DC offset that would bias every RMS value. | A zero-mean signal, so RMS measures sound and not the offset. The 5 ms block exists because the envelope published on the orientation packet can never be fresher than one block, and that packet goes out at up to 200 Hz. |
 | 2 | Breath band-pass (`audioBpfEnabled`, HP/LP + Q) | Handling noise and table thumps live below the breath band; speech and room tone above it. Both fire the detector. | Only the breath band reaches the detector. The cut-offs are tuned against the live spectrum in the config-app, which is what the opt-in raw stream is for. |
 | 3 | Sum of squares + peak, in `float` | Instantaneous amplitude swings sample to sample; a threshold on it would chatter. A peak measured on the decimated stream (as the browser used to) is averaged over 8 samples, so it under-reads every transient. | Energy and the true 16 kHz peak of the same signal, so peak/RMS is a meaningful crest factor. `float`, not `double`: the Xtensa LX6 FPU is single-precision, so every double operation here was emulated in software — more cycles than the rest of the audio front end put together, for an error of 1e-4 dB. |
-| 4 | Pooled 20 ms window (`src/logic/AudioFeatures.*`) | At 200 Hz a block is 5 ms — shorter than one period of the low end of the breath band (10 ms at 100 Hz) — so a single block measures instantaneous amplitude, not energy, and the value wobbles with the waveform. | A 20 ms energy window that still refreshes every block (75 % overlap): a stable number at a fast rate, instead of having to choose. |
+| 4 | Pooled window, `audioWindowMs` (TLV 0x2F, default 50 ms; `src/logic/AudioFeatures.*`) | At 200 Hz a block is 5 ms — shorter than one period of the low end of the breath band (10 ms at 100 Hz) — so a single block measures instantaneous amplitude, not energy, and the value wobbles with the waveform. | An energy window (50 ms by default, 5–200 ms configurable live) that still refreshes every block: a stable number at a fast rate, instead of having to choose. Longer = steadier, slower to rise and fall. |
 | 5 | Envelope on the wire (`audioRmsHalfDb`, `audioPeakHalfDb`) | The envelope used to reach the host at 5 Hz (SensorsPacket) or had to be re-derived in the browser from the decimated stream — a 200 ms-old number, or a wrong one. | The signal the application actually uses as a control arrives at the orientation rate (up to 200 Hz), with the same timestamp, for 4 bytes on a packet that was already being sent. |
 | 6 | Breath detector (`src/logic/BreathDetector.*`), absolute or adaptive (TLV `0x2D`), on RMS or peak (TLV `0x2C`) | A threshold in raw counts means nothing to the person tuning it, and one detector does not fit every room: a fixed line is predictable in a quiet hall but fires constantly in a noisy one, while an adaptive line follows the room but is harder to read. | The threshold is set in dBFS (potentiometer −60…0 dBFS, or TLV `0x2B`) and converted to counts of the chosen metric on the audio task. **Absolute** (default) runs on every 5 ms block and fires when either microphone passes the line, so what the chart shows is what fires. **Adaptive** compares the fast envelope of the louder microphone against a slow envelope (the room's own noise floor) plus the threshold; it runs every 3rd block (15 ms) on purpose: its EMA coefficients (`0x11`/`0x12`) are per update and were tuned against the old 16 ms block, so keeping the cadence keeps the stored alphas meaningful. Both re-arm once the level falls `breathRearmDb` (TLV `0x2E`, default 6 dB) below the line, and debounce (`0x13`) turns one long breath into exactly one event. The state "breath recognized" rides on every ImuPacket as flags bit 4, latched until sent. |
 | 7 | Decimation to 2 kHz, opt-in (`audioRawStream`) | Streaming 16 kHz audio over BLE would eat the notify budget the orientation stream needs. Streaming even the decimated version *all the time* costs more air time than every other packet put together. | ~4.3 kB/s instead of ~32 kB/s while it is on, and nothing at all while it is off — which is the default, because only the spectrum view needs it. Average-of-8 is the anti-alias filter for that decimation. |
@@ -467,8 +468,9 @@ persisted only by command `0x11`. Full table with types: [`docs/protocol.md`](do
 | `0x2B`–`0x2E` | breath: threshold as −dBFS ×100 (0–9000), metric (0 RMS / 1 peak), detector (0 absolute / 1 adaptive), re-arm dB (0–20) | 3550 (−35.5 dBFS), 0, 0, 6 |
 | `0x16`–`0x1A` | breath band-pass: enabled, HP Hz, HP Q×100, LP Hz, LP Q×100 (LP > HP enforced) | 1, 10, 500, 200, 500 |
 | `0x1F` | audioRawStream — raw 2 kHz stream on/off (costs ~4.3 kB/s; only the spectrum view needs it) | 0 |
+| `0x2F` | audioWindowMs — RMS/peak window, ms (5–200, whole 5 ms blocks, applied live) | 50 |
 | `0x1B` | potEmaAlphaX1000 (the pot maps 0…4095 to −60…0 dBFS, 0.5 dB hysteresis) | 300 |
-| `0x20`, `0x22`–`0x26` | CO2: enabled, stale timeout, virtual peak/delay/hold, raw log | 1, 5000, 2100, 1000, 17000, 0 |
+| `0x20`, `0x22`, `0x23`, `0x25`, `0x26` | CO2: enabled, stale timeout, virtual peak, virtual hold (ms), raw log (`0x24`, the old delay, is retired) | 1, 5000, 2100, 10000, 0 |
 | `0x28` | co2EmaAlphaX1000 (1000 = off) | 1000 |
 | `0x29`–`0x2A` | CO2 trigger flag: co2TriggerPpm (400–10000), co2TriggerHystPpm (0–2000) | 1200, 50 |
 | `0x30`–`0x32` | sound LED pin, CO2 LED pin (pins distinct), co2AlertPpm | 2, 4, 2000 |

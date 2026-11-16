@@ -86,6 +86,9 @@ struct GaiaConfig {
   // tune the band-pass against the live spectrum, and while on it costs ~45 ms/s of
   // BLE air time -- more than every other packet on the link put together.
   uint8_t audioRawStream = 0;
+  // RMS (and peak) window of the microphone levels, ms (TLV 0x2F, 5..200, applied live).
+  // Rounded to whole 5 ms I2S blocks. Was fixed at 20 ms before this register existed.
+  uint16_t audioWindowMs = 50;
   uint16_t audioHpHz = 10;      // 1..7000
   uint16_t audioHpQX100 = 500;  // 10..2000
   uint16_t audioLpHz = 200;     // 1..7000
@@ -98,8 +101,9 @@ struct GaiaConfig {
   uint8_t co2Enabled = 1;
   uint16_t co2StaleTimeoutMs = 5000;
   uint16_t virtualPeakPpm = 2100;
-  uint16_t virtualDelayMs = 1000;
-  uint16_t virtualHoldMs = 17000;
+  // The virtual pulse starts on the breath itself (no delay: TLV 0x24 is retired) and
+  // lasts virtualHoldMs.
+  uint16_t virtualHoldMs = 10000;
   uint8_t co2RawLogMode = 0;
   // EMA over accepted CO2 readings, alpha x1000. 1000 = no smoothing (legacy).
   uint16_t co2EmaAlphaX1000 = 1000;
