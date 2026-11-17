@@ -12,14 +12,19 @@ export const PKT_AUDIO = 0x05;
 export const PKT_MAG = 0x06;
 export const PKT_NAV = 0x07;
 
-export const IMU_PACKET_SIZE = 27;
-export const CO2_PACKET_SIZE = 12;
-export const DIAG_PACKET_SIZE = 34;
-export const SENSORS_PACKET_SIZE = 23;
-export const AUDIO_PACKET_SIZE = 208;
+// Sizes are MINIMUMS: the protocol is append-only (new fields go at the end, the version
+// byte stays), so a decoder accepts a longer packet and ignores the bytes it does not know.
+// The encoders write exactly these sizes.
+export const IMU_PACKET_MIN_SIZE = 27;
+export const CO2_PACKET_MIN_SIZE = 12;
+export const DIAG_PACKET_MIN_SIZE = 34;
+export const SENSORS_PACKET_MIN_SIZE = 23;
+export const AUDIO_PACKET_MIN_SIZE = 208;
 export const AUDIO_CHUNK_SAMPLES = 96;
-export const NAV_PACKET_SIZE = 22;
-export const MAG_PACKET_SIZE = 106;
+/** 22 bytes = firmware without the 0x17 anchor command; 23 adds anchorSeq (byte 22). */
+export const NAV_PACKET_MIN_SIZE = 22;
+export const NAV_ANCHOR_SEQ_OFFSET = 22;
+export const MAG_PACKET_MIN_SIZE = 106;
 export const MAG_CHUNK_MAX_SAMPLES = 16;
 /** Magnetometer capture wire scale: int16 in 0.1 uT. */
 export const MAG_LSB_PER_UT = 10;
@@ -182,6 +187,11 @@ export interface NavSample {
   bearingDeg: number;
   /** Globe angular speed, deg/s. */
   speedDegS: number;
+  /**
+   * Anchors (command 0x17) the ball has applied since boot, wrapping at 255. Absent on
+   * 22-byte packets: that firmware has no 0x17.
+   */
+  anchorSeq?: number;
 }
 
 export interface MagChunkSample {
@@ -227,8 +237,9 @@ export interface AudioChunkSample {
   lpHz: number;
 }
 
-function header(dv: DataView, size: number, type: number, version = PROTOCOL_VERSION): boolean {
-  return dv.byteLength === size && dv.getUint8(0) === version && dv.getUint8(1) === type;
+/** Minimum size (append-only protocol: longer packets are accepted), then version and type. */
+function header(dv: DataView, minSize: number, type: number, version = PROTOCOL_VERSION): boolean {
+  return dv.byteLength >= minSize && dv.getUint8(0) === version && dv.getUint8(1) === type;
 }
 
 /** True for an IMU packet from firmware that still speaks version 1 (31 B, acceleration in LSB). */
@@ -237,7 +248,7 @@ export function isLegacyImuPacket(dv: DataView): boolean {
 }
 
 export function decodeImuPacket(dv: DataView): ImuSample | null {
-  if (!header(dv, IMU_PACKET_SIZE, PKT_IMU, IMU_PACKET_VERSION)) return null;
+  if (!header(dv, IMU_PACKET_MIN_SIZE, PKT_IMU, IMU_PACKET_VERSION)) return null;
   const q = (o: number) => dv.getInt16(o, true) / QUAT_SCALE;
   const flags = dv.getUint8(22);
   // u8 half-dB: 0 = floor (-120 dBFS), 1 step = 0.5 dB.
@@ -259,7 +270,7 @@ export function decodeImuPacket(dv: DataView): ImuSample | null {
 }
 
 export function decodeCo2Packet(dv: DataView): Co2Sample | null {
-  if (!header(dv, CO2_PACKET_SIZE, PKT_CO2)) return null;
+  if (!header(dv, CO2_PACKET_MIN_SIZE, PKT_CO2)) return null;
   const flags = dv.getUint8(10);
   return {
     seq: dv.getUint16(2, true),
@@ -275,7 +286,7 @@ export function decodeCo2Packet(dv: DataView): Co2Sample | null {
 }
 
 export function decodeSensorsPacket(dv: DataView): SensorsSample | null {
-  if (!header(dv, SENSORS_PACKET_SIZE, PKT_SENSORS)) return null;
+  if (!header(dv, SENSORS_PACKET_MIN_SIZE, PKT_SENSORS)) return null;
   const flags = dv.getUint8(22);
   return {
     seq: dv.getUint16(2, true),
@@ -295,7 +306,7 @@ export function decodeSensorsPacket(dv: DataView): SensorsSample | null {
 }
 
 export function decodeAudioChunkPacket(dv: DataView): AudioChunkSample | null {
-  if (!header(dv, AUDIO_PACKET_SIZE, PKT_AUDIO)) return null;
+  if (!header(dv, AUDIO_PACKET_MIN_SIZE, PKT_AUDIO)) return null;
   const count = dv.getUint8(10);
   if (count !== AUDIO_CHUNK_SAMPLES) return null;
   const flags = dv.getUint8(11);
@@ -314,7 +325,7 @@ export function decodeAudioChunkPacket(dv: DataView): AudioChunkSample | null {
 }
 
 export function decodeDiagPacket(dv: DataView): DiagSample | null {
-  if (!header(dv, DIAG_PACKET_SIZE, PKT_DIAG)) return null;
+  if (!header(dv, DIAG_PACKET_MIN_SIZE, PKT_DIAG)) return null;
   const flags = dv.getUint8(22);
   const ahrsFlags = dv.getUint8(23);
   return {
@@ -352,7 +363,7 @@ export function decodeDiagPacket(dv: DataView): DiagSample | null {
 
 /** Raw magnetometer capture (diag characteristic, only while a calibration runs). */
 export function decodeMagChunkPacket(dv: DataView): MagChunkSample | null {
-  if (!header(dv, MAG_PACKET_SIZE, PKT_MAG)) return null;
+  if (!header(dv, MAG_PACKET_MIN_SIZE, PKT_MAG)) return null;
   const count = dv.getUint8(8);
   if (count > MAG_CHUNK_MAX_SAMPLES) return null;
   const samples: [number, number, number][] = [];
@@ -369,7 +380,7 @@ export function decodeMagChunkPacket(dv: DataView): MagChunkSample | null {
 
 /** Globe navigation (nav characteristic, optional in older firmware). */
 export function decodeNav(dv: DataView): NavSample | null {
-  if (!header(dv, NAV_PACKET_SIZE, PKT_NAV)) return null;
+  if (!header(dv, NAV_PACKET_MIN_SIZE, PKT_NAV)) return null;
   const flags = dv.getUint8(9);
   return {
     seq: dv.getUint16(2, true),
@@ -383,5 +394,6 @@ export function decodeNav(dv: DataView): NavSample | null {
     lon: dv.getInt32(14, true) / 1e7,
     bearingDeg: dv.getInt16(18, true) / 100,
     speedDegS: dv.getUint16(20, true) / 10,
+    ...(dv.byteLength > NAV_ANCHOR_SEQ_OFFSET ? { anchorSeq: dv.getUint8(NAV_ANCHOR_SEQ_OFFSET) } : {}),
   };
 }
