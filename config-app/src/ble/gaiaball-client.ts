@@ -81,6 +81,8 @@ export class GaiaballClient extends EventTarget {
   private isConnected = false;
   private outdatedReported = false;
   private hasNav = false;
+  /** Tail of the GATT operation chain: the link handles one operation at a time. */
+  private gattQueue: Promise<unknown> = Promise.resolve();
   private readonly onDisconnected = (): void => {
     this.cleanup();
     this.emitStatus();
@@ -97,6 +99,18 @@ export class GaiaballClient extends EventTarget {
 
   get deviceName(): string | null {
     return this.device?.name ?? null;
+  }
+
+  /**
+   * Runs one GATT operation (read, write, start/stop notifications) after every earlier one
+   * has settled. Web Bluetooth fails or misbehaves with two operations in flight, and several
+   * callers can overlap (automatic config read, stage mode pausing the diag stream, the stage
+   * bar). A failing operation rejects only its own caller; the chain always moves on.
+   */
+  private gatt<T>(op: () => Promise<T>): Promise<T> {
+    const run = this.gattQueue.then(op);
+    this.gattQueue = run.then(() => undefined, () => undefined);
+    return run;
   }
 
   async connect(): Promise<void> {
@@ -133,13 +147,13 @@ export class GaiaballClient extends EventTarget {
       this.subscribe(imu, 'imu');
       this.subscribe(co2, 'co2');
       this.subscribe(diag, 'diag');
-      await imu.startNotifications();
-      await co2.startNotifications();
-      await diag.startNotifications();
+      await this.gatt(() => imu.startNotifications());
+      await this.gatt(() => co2.startNotifications());
+      await this.gatt(() => diag.startNotifications());
       if (nav) {
         this.subscribe(nav, 'nav');
         try {
-          await nav.startNotifications();
+          await this.gatt(() => nav.startNotifications());
           this.hasNav = true;
         } catch {
           this.hasNav = false;
@@ -175,16 +189,16 @@ export class GaiaballClient extends EventTarget {
   }
 
   async sendCommand(opcode: number, arg?: Uint8Array): Promise<void> {
-    await this.requireChar(this.cmdChar).writeValue(buildCommand(opcode, arg));
+    await this.gatt(() => this.requireChar(this.cmdChar).writeValue(buildCommand(opcode, arg)));
   }
 
   async readConfig(): Promise<Map<number, DataView>> {
-    return decodeTlv(await this.requireChar(this.cfgChar).readValue());
+    return this.gatt(async () => decodeTlv(await this.requireChar(this.cfgChar).readValue()));
   }
 
   /** Writes only; the firmware cannot report rejections, so the caller must read back. */
   async writeConfig(regs: TlvWrite[]): Promise<void> {
-    await this.requireChar(this.cfgChar).writeValue(encodeTlv(regs));
+    await this.gatt(() => this.requireChar(this.cfgChar).writeValue(encodeTlv(regs)));
   }
 
   private requireChar(c: BtCharacteristic | null): BtCharacteristic {
@@ -194,11 +208,15 @@ export class GaiaballClient extends EventTarget {
 
   /** Pauses the diagnostic stream (heavy audio/mag chunks) without touching the orientation streams. */
   async pauseDiag(): Promise<void> {
-    if (this.diagChar && this.isConnected) await this.diagChar.stopNotifications();
+    await this.gatt(async () => {
+      if (this.diagChar && this.isConnected) await this.diagChar.stopNotifications();
+    });
   }
 
   async resumeDiag(): Promise<void> {
-    if (this.diagChar && this.isConnected) await this.diagChar.startNotifications();
+    await this.gatt(async () => {
+      if (this.diagChar && this.isConnected) await this.diagChar.startNotifications();
+    });
   }
 
   /** Receives a copy of the raw bytes of every IMU, CO2 and nav packet, before anything is decoded. */

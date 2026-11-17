@@ -4,6 +4,9 @@ import { decodeNavRef, encodeNavRef, encodeTlv, navRefToString, parseNavRefStrin
 import { potRawToDbfs, type SensorsSample } from '../protocol/packets.ts';
 import { isToggleOn, renderSwitch, renderToggle, setSwitchValue, setToggleValue, type SwitchOptions } from '../ui/switch.ts';
 import { infoDot } from './info.ts';
+import type { ConfigReadDetail, ConfigReadState } from '../ble/auto-read.ts';
+import { applyLabel, populatePlan } from './config-sync.ts';
+import { stripView } from './config-status.ts';
 import type { Co2Levels } from './chart-model.ts';
 
 type Kind = 'number' | 'range' | 'checkbox' | 'select' | 'text' | 'pin' | 'navref' | 'switch';
@@ -114,6 +117,18 @@ export function imuStatusText(detected: number | undefined, selected: number): s
   if (boot === 0) return 'não configurado';
   if (!found) return `${IMU_NAMES[boot]} selecionado, não encontrado`;
   return mag ? `${IMU_NAMES[boot]} ok` : `${IMU_NAMES[boot]} ok (sem magnetômetro)`;
+}
+
+/**
+ * Name of the IMU actually running, for the status strip: the chip at boot (imuDetected bits
+ * 0-1), with a note when it was not found. Without 0x35 it falls back to what imuStatusText says
+ * for the stored selection ("não configurado" when none).
+ */
+export function imuInUseName(detected: number | undefined, selected: number): string {
+  if (detected === undefined) return imuStatusText(undefined, selected);
+  const boot = detected & 0x03;
+  if (boot === 0) return imuStatusText(detected, boot);
+  return (detected & 0x04) !== 0 ? IMU_NAMES[boot] : `${IMU_NAMES[boot]} (não encontrado)`;
 }
 
 const isJoystick = (cfg: Map<number, unknown>): boolean => Number(cfg.get(TLV.navMode)) === 2;
@@ -432,6 +447,21 @@ function decodeValue(f: Field, dv: DataView): number | string | null {
   }
 }
 
+/** A value read from the ball, written the way its field shows values ("na bola: X"); selects use the option label. */
+export function formatBallValue(f: Field, v: number | string, cfg: Map<number, unknown> = new Map()): string {
+  if (f.kind === 'navref') {
+    const r = parseNavRefString(String(v));
+    return r ? `${r.lat.toFixed(6)}, ${r.lon.toFixed(6)}` : String(v);
+  }
+  if (f.kind === 'text' || f.kind === 'pin') return String(v);
+  if (f.offValue !== undefined && Number(v) === f.offValue) return 'desligado';
+  if (f.kind === 'checkbox') return Number(v) !== 0 ? 'ligado' : 'desligado';
+  if (f.kind === 'switch') return f.switchOptions!.find((o) => o.value === Number(v))?.label ?? String(v);
+  if (f.kind === 'select') return resolveOptions(f, cfg).find(([o]) => o === Number(v))?.[1] ?? String(v);
+  if (f.scale || f.negate) return toDisplay(f, Number(v)).toFixed(f.decimals ?? (f.scale ? Math.round(Math.log10(f.scale)) : 0));
+  return String(v);
+}
+
 /** Register values as the form holds them -> what goes on the wire (navRef: "lat,lon" -> 8 bytes). */
 export function toWireRegs(regs: TlvWrite[]): TlvWrite[] {
   return regs.map((r) => {
@@ -498,9 +528,12 @@ const ADVANCED_TAB_INFO = 'Ajustes da cadeia de sinais: faixa e filtro da IMU, g
  */
 export function mountConfigPanel(
   root: HTMLElement, client: GaiaballClient, store: PresetStore = new PresetStore(),
+  /** demo: no real link, but the form behaves as connected (main.ts fakes the device). */
+  opts: { demo?: boolean } = {},
 ): { advancedSections: HTMLElement; band: BandSource; co2: Co2Source; metric: MetricSource } {
   root.innerHTML = `
     <h2>Configuração</h2>
+    <div data-el="strip" role="status"></div>
     <div class="row">
       <button type="button" data-act="read">Ler do dispositivo</button>
       <button type="button" data-act="apply" class="primary">Aplicar</button>
@@ -551,7 +584,9 @@ export function mountConfigPanel(
   /** On/off toggles of the on/off fields (kind 'checkbox'); the value lives in a hidden input. */
   const onOff = new Map<number, HTMLButtonElement>();
   /** Connection state: every control is disabled while there is no device. */
-  let connected = client.connected;
+  let connected = client.connected || opts.demo === true;
+  /** "na bola: X" / "não informado por este firmware" under each row (the PIN has none). */
+  const balls = new Map<number, HTMLElement>();
   /** The row element of every field, so `visible` can hide it. */
   const rows = new Map<number, HTMLElement>();
   /** Second input (longitude) of the navRef field; the first one lives in `inputs`. */
@@ -705,6 +740,16 @@ export function mountConfigPanel(
         if (d) label.append(d);
       }
       fs.append(label);
+      if (f.id !== TLV.pin) {
+        // After the row, not inside it: a label's text is the control's accessible name.
+        const ball = document.createElement('p');
+        ball.className = 'cfg-ball';
+        ball.id = `cfg-ball-${f.id}`;
+        ball.hidden = true;
+        fs.append(ball);
+        balls.set(f.id, ball);
+        if (el.type !== 'hidden') el.setAttribute('aria-describedby', ball.id);
+      }
       inputs.set(f.id, el);
       if (f.id === TLV.imuChip) {
         // Visible (not tooltip-only) because a switch silently does nothing until the ball reboots.
@@ -728,9 +773,8 @@ export function mountConfigPanel(
   /** Fields the user (or a loaded preset) touched that the device never reported. */
   const dirty = new Set<number>();
   for (const [id, el] of inputs) {
-    el.addEventListener('input', () => { dirty.add(id); refreshAdvCount(); });
+    el.addEventListener('input', () => { dirty.add(id); refreshForm(); });
     el.addEventListener('change', () => {
-      refreshAdvCount();
       if (id === TLV.imuChip) { refreshDependentOptions(); refreshImuBanner(); }
       if (id === TLV.navMode || id === TLV.breathDetector || id === TLV.potControlsThreshold) refreshVisibility();
       if (GOVERNORS.has(id)) applyEnabled();
@@ -738,13 +782,14 @@ export function mountConfigPanel(
       if (CO2_IDS.has(id)) emitCo2();
       if (id === TLV.breathMetric) emitMetric();
       refreshDescribe();
+      refreshForm();
     });
     if (BAND_IDS.has(id)) el.addEventListener('input', () => emitBand());
     if (CO2_IDS.has(id)) el.addEventListener('input', () => emitCo2());
   }
-  navLon.addEventListener('input', () => { dirty.add(TLV.navRef); refreshAdvCount(); });
-  navLon.addEventListener('change', () => refreshAdvCount());
-  for (const [id, tg] of toggles) tg.addEventListener('change', () => { dirty.add(id); refreshAdvCount(); applyEnabled(); });
+  navLon.addEventListener('input', () => { dirty.add(TLV.navRef); refreshForm(); });
+  navLon.addEventListener('change', () => refreshForm());
+  for (const [id, tg] of toggles) tg.addEventListener('change', () => { dirty.add(id); refreshForm(); applyEnabled(); });
 
   const getValue = (f: Field): number | string | null => {
     const el = inputs.get(f.id)!;
@@ -798,6 +843,7 @@ export function mountConfigPanel(
     emitMetric();
     refreshDescribe();
     refreshPotLabel();
+    refreshMarkers();
   };
   /**
    * Which controls take input. Nothing does without a device; a field governed by an on/off
@@ -905,12 +951,23 @@ export function mountConfigPanel(
     if (!confirm('Reiniciar o dispositivo? A conexão será perdida.')) return;
     void client.sendCommand(0x13).then(() => say('Reiniciar: enviado.'), fail);
   });
-  const populate = (regs: Map<number, DataView>): void => {
+  /** Maps already handed to publishExplicit: a read the person asked for, which discards edits. */
+  const explicitReads = new WeakSet<Map<number, DataView>>();
+  /** Preset loaded into the form and not yet applied or discarded (for the preset message). */
+  let loadedPreset: string | null = null;
+  /**
+   * Shows what the ball reports. keepEdits (automatic read on connect, the stage bar's read-back):
+   * snapshot and reported ids are refreshed and every field the person has NOT edited takes the
+   * ball's value, while edited fields (typed, or set by a preset, since the last explicit read or
+   * apply) keep their value and stay marked as differing from the ball. Otherwise (explicit read,
+   * read-back of Aplicar) every edit is discarded.
+   */
+  const populate = (regs: Map<number, DataView>, keepEdits: boolean): void => {
     snapshot = new Map();
     reportedIds = new Set(regs.keys());
     const det = regs.get(TLV.imuDetected);
     imuDetected = det && det.byteLength === 1 ? det.getUint8(0) : undefined;
-    dirty.clear();
+    const fieldOf = new Map<number, Field>();
     for (const f of FIELDS) {
       if (f.id === TLV.pin) continue; // firmware never sends the PIN
       const dv = regs.get(f.id);
@@ -918,14 +975,31 @@ export function mountConfigPanel(
       const v = decodeValue(f, dv);
       if (v === null) continue;
       snapshot.set(f.id, v);
-      setValue(f, v);
+      fieldOf.set(f.id, f);
     }
-    (inputs.get(TLV.pin) as HTMLInputElement).value = '';
+    const plan = populatePlan(snapshot.keys(), dirty, keepEdits);
+    for (const id of plan.overwrite) setValue(fieldOf.get(id)!, snapshot.get(id)!);
+    dirty.clear();
+    for (const id of plan.edited) dirty.add(id);
+    if (!keepEdits) (inputs.get(TLV.pin) as HTMLInputElement).value = '';
     refreshDependentOptions();
+    // An edit that now equals the ball needs no protection from the next automatic read.
+    for (const id of [...dirty]) {
+      const f = fieldOf.get(id);
+      if (f && getValue(f) === snapshot.get(id)) dirty.delete(id);
+    }
     refreshVisibility();
     refreshImuBanner();
-    hint.textContent = 'Lido do dispositivo. Aplicar envia só o que mudou, confere a aceitação e grava de forma permanente.';
-    refreshAdvCount();
+    const kept = pendingCount();
+    if (keepEdits && kept > 0) {
+      hint.textContent = `Lido do dispositivo. ${kept} campo(s) editado(s) foram mantidos e estão marcados com o valor que a bola tem. Aplicar envia só o que mudou, confere a aceitação e grava de forma permanente.`;
+      if (loadedPreset) pmsg.textContent = `Preset "${loadedPreset}" mantido no formulário depois da leitura da bola. Clique em Aplicar para enviar.`;
+    } else {
+      hint.textContent = 'Lido do dispositivo. Aplicar envia só o que mudou, confere a aceitação e grava de forma permanente.';
+      if (loadedPreset) pmsg.textContent = `Preset "${loadedPreset}" não está mais no formulário: ele mostra os valores da bola.`;
+      loadedPreset = null;
+    }
+    refreshForm();
   };
 
   /** Fills every field with the firmware default. Does NOT mark anything dirty, so a
@@ -1020,10 +1094,12 @@ export function mountConfigPanel(
     return null;
   };
 
-  /** Collect only fields that differ from the snapshot (PIN: only when typed), minus the
-   *  registers this firmware did not report (returned as `skipped`, see splitUnknownIds). */
-  const collectChanged = (): { regs: TlvWrite[]; skipped: TlvWrite[]; error: string | null } => {
-    const regs: TlvWrite[] = [];
+  /**
+   * Fields that differ from the ball (PIN: only when typed; a field the ball never reported:
+   * only when edited), with the form's value, before validation or the unknown-id filter.
+   */
+  const changedFields = (): { f: Field; v: number | string | null }[] => {
+    const out: { f: Field; v: number | string | null }[] = [];
     for (const f of FIELDS) {
       const v = getValue(f);
       if (hasPin(f)) {
@@ -1031,6 +1107,16 @@ export function mountConfigPanel(
       } else if (snapshot.has(f.id)) {
         if (snapshot.get(f.id) === v) continue;
       } else if (!dirty.has(f.id)) continue; // never reported by the device and untouched
+      out.push({ f, v });
+    }
+    return out;
+  };
+
+  /** Collect only fields that differ from the snapshot (see changedFields), minus the
+   *  registers this firmware did not report (returned as `skipped`, see splitUnknownIds). */
+  const collectChanged = (): { regs: TlvWrite[]; skipped: TlvWrite[]; error: string | null } => {
+    const regs: TlvWrite[] = [];
+    for (const { f, v } of changedFields()) {
       const err = validate(f, v);
       if (err) return { regs: [], skipped: [], error: err };
       regs.push({ id: f.id, value: v as number | string });
@@ -1043,8 +1129,40 @@ export function mountConfigPanel(
     return { regs: send, skipped, error: null };
   };
 
+  /** How many fields Aplicar would send, counted before validation (an invalid one is still pending). */
+  const pendingCount = (): number => {
+    if (snapshot.size === 0) return 0;
+    const regs = changedFields().map(({ f, v }) => ({ id: f.id, value: v as number | string }));
+    return splitUnknownIds(regs, reportedIds).send.length;
+  };
+
+  const applyBtn = q<HTMLButtonElement>('[data-act=apply]');
+  /**
+   * Marks, while a read from the ball exists, every field whose form value is not the ball's
+   * ("na bola: X") and every field this firmware did not report; the Aplicar label carries the
+   * number of fields it would send.
+   */
+  const refreshMarkers = (): void => {
+    const view = snapshot.size > 0 ? formView() : null;
+    for (const f of FIELDS) {
+      const el = balls.get(f.id);
+      if (!el) continue;
+      let text = '';
+      if (view) {
+        if (!reportedIds.has(f.id)) text = 'não informado por este firmware';
+        else if (snapshot.has(f.id) && getValue(f) !== snapshot.get(f.id)) text = `na bola: ${formatBallValue(f, snapshot.get(f.id)!, view)}`;
+      }
+      el.textContent = text;
+      el.hidden = text === '' || rows.get(f.id)!.hidden;
+    }
+    applyBtn.textContent = applyLabel(pendingCount());
+  };
+  /** Everything derived from the form's current values. */
+  const refreshForm = (): void => { refreshAdvCount(); refreshMarkers(); };
+
   /** Single path for every configuration read (button, Aplicar, connect): the panels listen to 'config'. */
   const publish = (regs: Map<number, DataView>): void => {
+    explicitReads.add(regs); // the person asked for this one (button, Aplicar): it discards edits
     client.dispatchEvent(new CustomEvent('config', { detail: regs }));
   };
   const doRead = async (): Promise<void> => {
@@ -1075,6 +1193,7 @@ export function mountConfigPanel(
         const got = dv ? decodeValue(f, dv) : null;
         if (got !== r.value) rejected.push(f.label);
       }
+      if (loadedPreset) { pmsg.textContent = `Preset "${loadedPreset}" enviado com Aplicar.`; loadedPreset = null; }
       publish(back);
       const pinNote = regs.some((r) => r.id === TLV.pin) ? ' Novo PIN enviado (não verificável).' : '';
       if (rejected.length > 0) {
@@ -1101,7 +1220,7 @@ export function mountConfigPanel(
   // is readable before anything has been read from the device.
   seedDefaults();
   selectTab('basico');
-  refreshAdvCount();
+  refreshForm();
 
   q('[data-act=psave]').addEventListener('click', () => {
     const name = pname.value.trim();
@@ -1129,7 +1248,9 @@ export function mountConfigPanel(
       // part of a preset, even one saved by an older version that did include them.
       if (f && !isPerBall(f) && typeof r.value !== 'object') { setValue(f, r.value); dirty.add(f.id); }
     }
+    loadedPreset = p.name;
     refreshVisibility();
+    refreshForm();
     pmsg.textContent = `Preset "${p.name}" carregado no formulário. Clique em Aplicar para enviar.`;
   });
   q('[data-act=pdel]').addEventListener('click', () => {
@@ -1158,6 +1279,32 @@ export function mountConfigPanel(
     }, () => { pmsg.textContent = 'Não foi possível ler o arquivo.'; }).finally(() => { pfile.value = ''; });
   });
 
+  // ---- status strip: what the automatic read is doing, and when the values were taken ----
+  const strip = q('[data-el=strip]');
+  let readState: ConfigReadState | null = null;
+  let okAt: Date | null = null;
+  const renderStrip = (): void => {
+    const sel = snapshot.get(TLV.imuChip);
+    const view = stripView({
+      connected, read: readState, okAt,
+      chip: imuInUseName(imuDetected, typeof sel === 'number' ? sel : 0),
+    });
+    strip.replaceChildren();
+    strip.className = view ? 'cfg-strip' : '';
+    if (!view) return;
+    const text = document.createElement('span');
+    text.textContent = view.text;
+    strip.append(text);
+    if (view.retry) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.act = 'retry';
+      b.textContent = 'Tentar de novo';
+      b.addEventListener('click', () => client.dispatchEvent(new CustomEvent('config-retry')));
+      strip.append(b);
+    }
+  };
+
   // ---- connection gating (presets stay usable offline) ----
   const actions = [q<HTMLButtonElement>('[data-act=read]'), q<HTMLButtonElement>('[data-act=apply]')];
   const render = (d: StatusDetail): void => {
@@ -1165,11 +1312,29 @@ export function mountConfigPanel(
     for (const el of actions) el.disabled = !d.connected;
     // Re-applies the enabled state of every field: connection, on/off sections and own rules.
     refreshVisibility();
-    if (!d.connected) { snapshot = new Map(); reportedIds = new Set(); imuDetected = undefined; refreshImuBanner(); }
+    if (!d.connected) {
+      if (snapshot.size > 0) hint.textContent = 'Desconectado. Os campos mostram a última leitura da bola; conecte para ver e aplicar o estado atual.';
+      snapshot = new Map(); reportedIds = new Set(); imuDetected = undefined; refreshImuBanner();
+    }
+    refreshForm();
+    renderStrip();
   };
   client.addEventListener('status', (ev) => render((ev as CustomEvent<StatusDetail>).detail));
-  client.addEventListener('config', (ev) => populate((ev as CustomEvent<Map<number, DataView>>).detail));
-  render({ connected: client.connected, name: null });
+  client.addEventListener('config', (ev) => {
+    const regs = (ev as CustomEvent<Map<number, DataView>>).detail;
+    populate(regs, !explicitReads.has(regs));
+    // Any read from the ball, whoever asked for it, is a fresh set of values.
+    readState = 'ok';
+    okAt = new Date();
+    renderStrip();
+  });
+  client.addEventListener('config-read', (ev) => {
+    const d = (ev as CustomEvent<ConfigReadDetail>).detail;
+    readState = d.state;
+    if (d.state === 'ok' && d.at) okAt = d.at;
+    renderStrip();
+  });
+  render({ connected: client.connected || opts.demo === true, name: null });
   // Descriptions under the switches must read right from the first paint, connected or not (also in demo mode).
   refreshDescribe();
   return {

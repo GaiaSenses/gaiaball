@@ -143,6 +143,7 @@ export function mountStageBar(
         msgEl.textContent = LOCK_HINT;
         return;
       }
+      // A plain 'config' event is the keep-edits path of the panel: unapplied form edits survive it.
       client.dispatchEvent(new CustomEvent('config', { detail: regs }));
       lastGood = sensEl.value;
       msgEl.textContent = 'Gravado.';

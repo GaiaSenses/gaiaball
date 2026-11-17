@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BASIC_FIELD_IDS, CONFIG_FIELDS, FIELD_DEFAULTS, GOVERNORS, dlpfOptions, governedOff, imuRebootPending, imuStatusText, isPerBall, navRefError, resolveOptions,
+  BASIC_FIELD_IDS, CONFIG_FIELDS, FIELD_DEFAULTS, GOVERNORS, dlpfOptions, formatBallValue, governedOff, imuInUseName, imuRebootPending, imuStatusText, isPerBall, navRefError, resolveOptions,
   splitUnknownIds, stopRuleError, toWireRegs, fromDisplay, toDisplay,
 } from './config-panel';
 import { decodeNavRef, decodeTlv, encodeTlv, navRefToString, parseNavRefString, TLV } from '../protocol/tlv';
@@ -443,5 +443,50 @@ describe('RMS window field (TLV 0x2F)', () => {
     const out = decodeTlv(new DataView(encodeTlv([{ id: TLV.audioWindowMs, value: 50 }]).buffer));
     expect(out.get(TLV.audioWindowMs)!.getUint16(0, true)).toBe(50);
     expect(governedOff(TLV.audioWindowMs, new Map([[TLV.audioEnabled, 0]]))).toBe(false);
+  });
+});
+
+describe('formatBallValue ("na bola: X")', () => {
+  const field = (id: number) => CONFIG_FIELDS.find((f) => f.id === id)!;
+
+  it('shows a select by its option label', () => {
+    expect(formatBallValue(field(TLV.navMode), 2)).toBe('Joystick');
+    // DLPF labels follow the chip in the form.
+    expect(formatBallValue(field(TLV.imuDlpfMode), 3, new Map([[TLV.imuChip, 2]]))).toBe('41 Hz');
+  });
+
+  it('shows a switch by its label and an on/off field as ligado/desligado', () => {
+    const sw = field(TLV.breathDetector);
+    expect(formatBallValue(sw, sw.switchOptions![1].value)).toBe(sw.switchOptions![1].label);
+    expect(formatBallValue(field(TLV.audioEnabled), 1)).toBe('ligado');
+    expect(formatBallValue(field(TLV.audioEnabled), 0)).toBe('desligado');
+  });
+
+  it('shows scaled and negated numbers the way the input does', () => {
+    expect(formatBallValue(field(TLV.joyCurveX10), 25)).toBe('2.5');
+    expect(formatBallValue(field(TLV.breathThresholdNegDbX100), 3550)).toBe('-35.50');
+    expect(formatBallValue(field(TLV.imuNotifyHz), 50)).toBe('50');
+  });
+
+  it('shows a filter that is off as desligado, and text and reference as they read', () => {
+    const f = CONFIG_FIELDS.find((x) => x.offValue !== undefined)!;
+    expect(formatBallValue(f, f.offValue!)).toBe('desligado');
+    expect(formatBallValue(field(TLV.bleName), 'Gaiaball')).toBe('Gaiaball');
+    expect(formatBallValue(field(TLV.navRef), '-22.905556,-47.060833')).toBe('-22.905556, -47.060833');
+  });
+});
+
+describe('imuInUseName (status strip)', () => {
+  it('names the chip running since boot', () => {
+    expect(imuInUseName(0x01 | 0x04 | 0x08, 1)).toBe('ICM-20948');
+    expect(imuInUseName(0x02 | 0x04, 2)).toBe('GY-91 (MPU-9250)');
+  });
+  it('flags a chip that was not found, and an IMU that is off', () => {
+    expect(imuInUseName(0x01, 1)).toBe('ICM-20948 (não encontrado)');
+    expect(imuInUseName(0x00, 0)).toBe('não configurado');
+  });
+  it('without 0x35 says what the stored selection says', () => {
+    expect(imuInUseName(undefined, 1)).toBe('ICM-20948 selecionado');
+    expect(imuInUseName(undefined, 0)).toBe('não configurado');
   });
 });
