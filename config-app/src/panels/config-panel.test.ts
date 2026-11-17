@@ -47,10 +47,11 @@ describe('config fields', () => {
     // 20, not 16: three joystick fields (max speed, full-scale angle, curve) are only visible in joystick mode.
     // 23: +4 campos do detector de sopro, −1 limiar fixo em contagens.
     // 22: −1 atraso do pulso virtual (TLV 0x24 aposentado; o pulso sai no próprio sopro).
-    expect(basic.length).toBeLessThanOrEqual(22);
-    expect(BASIC_FIELD_IDS.size).toBe(22);
+    // 21: −1 "Modo" (Quat6/Quat9): the app only offers Quat6, see the Quat9 notice in the DOM test.
+    expect(basic.length).toBeLessThanOrEqual(21);
+    expect(BASIC_FIELD_IDS.size).toBe(21);
     // Operating the globe must not require the advanced tab.
-    for (const id of [TLV.orientationMode, TLV.imuNotifyHz, TLV.breathThresholdNegDbX100, TLV.bleName, TLV.pin]) {
+    for (const id of [TLV.imuNotifyHz, TLV.breathThresholdNegDbX100, TLV.bleName, TLV.pin]) {
       expect(BASIC_FIELD_IDS.has(id)).toBe(true);
     }
     // Signal-chain tuning must not clutter the first screen.
@@ -64,45 +65,34 @@ describe('config fields', () => {
     expect([...BASIC_FIELD_IDS].filter((id) => !ids.has(id))).toEqual([]);
   });
 
-  it('lists imuChip in Básico and magAxisRemap in Avançado, both with a tooltip', () => {
+  it('lists imuChip in Básico with a tooltip, and no magnetometer or Quat9 field exists', () => {
     expect(BASIC_FIELD_IDS.has(TLV.imuChip)).toBe(true);
-    expect(BASIC_FIELD_IDS.has(TLV.magAxisRemap)).toBe(false);
-    for (const id of [TLV.imuChip, TLV.magAxisRemap]) {
-      const f = CONFIG_FIELDS.find((x) => x.id === id)!;
-      expect(f.kind).toBe('select');
-      expect(f.info.length).toBeGreaterThan(40);
+    const f = CONFIG_FIELDS.find((x) => x.id === TLV.imuChip)!;
+    expect(f.kind).toBe('select');
+    expect(f.info.length).toBeGreaterThan(40);
+    for (const id of [TLV.orientationMode, TLV.magAxisRemap, TLV.magRejectionDeg, TLV.magCal]) {
+      expect(CONFIG_FIELDS.some((x) => x.id === id)).toBe(false);
+      expect(FIELD_DEFAULTS.has(id)).toBe(false);
     }
-    expect(CONFIG_FIELDS.find((x) => x.id === TLV.magAxisRemap)!.info).toMatch(/calibra/i);
   });
 
-  it('FIELD_DEFAULTS has an entry for every new Field (factory ball: IMU off, remap +Y +X -Z)', () => {
+  it('FIELD_DEFAULTS has an entry for every new Field (factory ball: IMU off)', () => {
     expect(FIELD_DEFAULTS.get(TLV.imuChip)).toBe(0);
-    expect(FIELD_DEFAULTS.get(TLV.magAxisRemap)).toBe(8);
     expect(FIELD_DEFAULTS.has(TLV.imuDetected)).toBe(false); // read-only, never a Field
     expect(CONFIG_FIELDS.some((f) => f.id === TLV.imuDetected)).toBe(false);
   });
 
-  it('offers 24 magnetometer axis options matching MagAxisRemap.cpp anchors', () => {
-    const f = CONFIG_FIELDS.find((x) => x.id === TLV.magAxisRemap)!;
-    const o = resolveOptions(f, new Map());
-    expect(o).toHaveLength(24);
-    const at = (i: number) => o.find(([v]) => v === i)![1];
-    expect(at(0)).toBe('+X +Y +Z');
-    expect(at(1)).toBe('+X -Y -Z');
-    expect(at(4)).toBe('+X +Z -Y');
-    expect(at(8)).toBe('+Y +X -Z');
-    expect(at(12)).toBe('+Y +Z +X');
-    expect(at(23)).toBe('-Z -Y -X');
+  it('never mentions the magnetometer in a tooltip (the app is Quat6 only)', () => {
+    for (const f of CONFIG_FIELDS) expect(f.info, f.label).not.toMatch(/magnet|quat9/i);
   });
 });
 
 describe('presets', () => {
   const field = (id: number) => CONFIG_FIELDS.find((f) => f.id === id)!;
-  it('keeps per-ball registers out of presets (PIN, mag calibration, imuChip, magAxisRemap)', () => {
+  it('keeps per-ball registers out of presets (PIN, imuChip, navRef)', () => {
     expect(isPerBall(field(TLV.imuChip))).toBe(true);
-    expect(isPerBall(field(TLV.magAxisRemap))).toBe(true);
     expect(isPerBall(field(TLV.pin))).toBe(true);
-    expect(isPerBall({ id: TLV.magCal, label: 'x', kind: 'number', info: 'x' })).toBe(true);
+    expect(isPerBall(field(TLV.navRef))).toBe(true);
     expect(isPerBall(field(TLV.imuNotifyHz))).toBe(false);
     expect(isPerBall(field(TLV.imuDlpfMode))).toBe(false);
   });
@@ -143,10 +133,10 @@ describe('IMU status line', () => {
     [undefined, 0, 'não configurado'],
     [0x0E, 2, 'GY-91 (MPU-9250) ok'],
     [0x0D, 1, 'ICM-20948 ok'],
-    [0x05, 1, 'ICM-20948 ok (sem magnetômetro)'], // chip found, AK09916 not
-    [0x06, 2, 'GY-91 (MPU-9250) ok (sem magnetômetro)'],
+    [0x05, 1, 'ICM-20948 ok'], // magnetometer bit (3) is no longer reported on
+    [0x06, 2, 'GY-91 (MPU-9250) ok'],
     [0x01, 1, 'ICM-20948 selecionado, não encontrado'],
-    [0x09, 1, 'ICM-20948 selecionado, não encontrado'], // mag bit without chip: the chip verdict wins
+    [0x09, 1, 'ICM-20948 selecionado, não encontrado'], // bit 3 without bit 2: the chip verdict wins
     [0x05, 2, 'trocado, aguardando reinício'], // boot = ICM + found, current selection = GY-91
   ])('descreve o estado do IMU (%s, %s)', (detected, selected, want) => {
     expect(imuStatusText(detected, selected)).toBe(want);

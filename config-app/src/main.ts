@@ -10,7 +10,6 @@ import { demoConfigRegs, demoWrite } from './demo-config.ts';
 import { mountConnectionPanel } from './panels/connection-panel.ts';
 import { StreamStats } from './metrics/stream-stats.ts';
 import { mountConfigPanel } from './panels/config-panel.ts';
-import { mountMagCalPanel } from './panels/magcal-panel.ts';
 import { mountMetricsPanel } from './panels/metrics-panel.ts';
 import { mountSensorsPanel } from './panels/sensors-panel.ts';
 import { decorateInfo } from './panels/info.ts';
@@ -137,11 +136,10 @@ mountConnectionPanel(app.querySelector<HTMLElement>('#panel-conexao')!, client);
 mountPdBlock(app.querySelector<HTMLElement>('#panel-conexao')!, bridge, pdPrefs, syncPd);
 syncPd();
 const { advancedSections, band, co2, metric } = mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client, undefined, { demo: isDemo });
-// Magnetometer calibration and metrics are bench tools: they live in the Avançado tab,
+// The metrics are a bench tool: they live in the Avançado tab,
 // below its fields, instead of under the configuration for everyone to scroll past.
-advancedSections.innerHTML = '<section id="panel-magcal"></section><section id="panel-metricas"></section>';
+advancedSections.innerHTML = '<section id="panel-metricas"></section>';
 const pausable = [
-  mountMagCalPanel(app.querySelector<HTMLElement>('#panel-magcal')!, client),
   mountMetricsPanel(app.querySelector<HTMLElement>('#panel-metricas')!, client, stats),
   // The spectrum shades the band-pass, the CO2 meter marks the trigger and the threshold line
   // sits on the RMS or the peak chart as the form shows them, so editing a cutoff, the trigger
