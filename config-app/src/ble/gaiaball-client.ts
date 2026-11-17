@@ -261,6 +261,8 @@ export class GaiaballClient extends EventTarget {
   }
 
   private cleanup(): void {
+    // An operation in flight on a dead link may never settle; the next connection starts a fresh chain.
+    this.gattQueue = Promise.resolve();
     this.isConnected = false;
     this.outdatedReported = false;
     this.hasNav = false;

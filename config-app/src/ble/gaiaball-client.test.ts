@@ -111,6 +111,22 @@ describe('GaiaballClient GATT queue', () => {
     await expect(write).resolves.toBeUndefined();
   });
 
+  it('a link drop resets the queue: an operation stuck on the dead link never blocks the next connection', async () => {
+    const { c, log } = rig();
+    const priv = c as unknown as Record<string, unknown>;
+    const cfg = priv.cfgChar;
+    void c.readConfig(); // never settles: the link died with it in flight
+    await new Promise((r) => setTimeout(r, 0));
+    expect(log).toEqual(['start read']);
+    (priv.onDisconnected as () => void)();
+    // The next connect() re-attaches the characteristics; its first operation must start at once.
+    priv.cfgChar = cfg;
+    priv.isConnected = true;
+    void c.writeConfig([{ id: 0x01, value: 7 }]);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(log).toEqual(['start read', 'start write']);
+  });
+
   it('checks the connection when the operation runs, not when it is queued', async () => {
     const { c, release } = rig();
     const first = c.readConfig();

@@ -452,9 +452,9 @@ describe('formatBallValue ("na bola: X")', () => {
     expect(formatBallValue(field(TLV.audioEnabled), 0)).toBe('desligado');
   });
 
-  it('shows scaled and negated numbers the way the input does', () => {
-    expect(formatBallValue(field(TLV.joyCurveX10), 25)).toBe('2.5');
-    expect(formatBallValue(field(TLV.breathThresholdNegDbX100), 3550)).toBe('-35.50');
+  it('shows scaled and negated numbers with the input decimals and a pt-BR comma', () => {
+    expect(formatBallValue(field(TLV.joyCurveX10), 25)).toBe('2,5');
+    expect(formatBallValue(field(TLV.breathThresholdNegDbX100), 3550)).toBe('-35,50');
     expect(formatBallValue(field(TLV.imuNotifyHz), 50)).toBe('50');
   });
 
@@ -462,7 +462,8 @@ describe('formatBallValue ("na bola: X")', () => {
     const f = CONFIG_FIELDS.find((x) => x.offValue !== undefined)!;
     expect(formatBallValue(f, f.offValue!)).toBe('desligado');
     expect(formatBallValue(field(TLV.bleName), 'Gaiaball')).toBe('Gaiaball');
-    expect(formatBallValue(field(TLV.navRef), '-22.905556,-47.060833')).toBe('-22.905556, -47.060833');
+    // pt-BR decimal commas, so the two coordinates are separated by a semicolon.
+    expect(formatBallValue(field(TLV.navRef), '-22.905556,-47.060833')).toBe('-22,905556; -47,060833');
   });
 });
 

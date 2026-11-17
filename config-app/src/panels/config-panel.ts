@@ -431,18 +431,21 @@ function decodeValue(f: Field, dv: DataView): number | string | null {
   }
 }
 
-/** A value read from the ball, written the way its field shows values ("na bola: X"); selects use the option label. */
+/**
+ * A value read from the ball, written the way its field shows values ("na bola: X"); selects use the option label.
+ * Decimals use the pt-BR comma, like the rest of the app ("2,5"; the reference point is "lat; lon").
+ */
 export function formatBallValue(f: Field, v: number | string, cfg: Map<number, unknown> = new Map()): string {
   if (f.kind === 'navref') {
     const r = parseNavRefString(String(v));
-    return r ? `${r.lat.toFixed(6)}, ${r.lon.toFixed(6)}` : String(v);
+    return r ? `${r.lat.toFixed(6).replace('.', ',')}; ${r.lon.toFixed(6).replace('.', ',')}` : String(v);
   }
   if (f.kind === 'text' || f.kind === 'pin') return String(v);
   if (f.offValue !== undefined && Number(v) === f.offValue) return 'desligado';
   if (f.kind === 'checkbox') return Number(v) !== 0 ? 'ligado' : 'desligado';
   if (f.kind === 'switch') return f.switchOptions!.find((o) => o.value === Number(v))?.label ?? String(v);
   if (f.kind === 'select') return resolveOptions(f, cfg).find(([o]) => o === Number(v))?.[1] ?? String(v);
-  if (f.scale || f.negate) return toDisplay(f, Number(v)).toFixed(f.decimals ?? (f.scale ? Math.round(Math.log10(f.scale)) : 0));
+  if (f.scale || f.negate) return toDisplay(f, Number(v)).toFixed(f.decimals ?? (f.scale ? Math.round(Math.log10(f.scale)) : 0)).replace('.', ',');
   return String(v);
 }
 
