@@ -131,7 +131,8 @@ silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen b
   each RAW magnetometer triplet into a depth-32 queue (drop-oldest, so a stalled reader
   cannot stall the capture) and the App task batches 16 per `MagChunkPacket`. The
   capture stops on `0x16` or after 180 s, whichever comes first. Nothing is fitted on
-  the device: the config-app solves the ellipsoid and writes back TLV `0x1E`.
+  the device: a host solves the ellipsoid and writes back TLV `0x1E` (the config-app no
+  longer offers this calibration; the firmware still supports it via the TLV registers).
 
 ### App task loop
 

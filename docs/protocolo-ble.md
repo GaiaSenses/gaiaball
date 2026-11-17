@@ -549,9 +549,11 @@ cerca de 4,3 kB/s, mais que todo o resto junto.
 
 ### Magnetômetro cru — tipo `0x06`, 106 bytes (característica 5, só durante a captura)
 
-Amostras **sem calibração** do magnetômetro, para a config-app calcular a calibração
-(*hard/soft iron*). Só saem entre os comandos `0x15` (iniciar) e `0x16` (parar), param
-sozinhas depois de 180 s e só existem no modo Quat9 (no Quat6 o magnetômetro não é lido).
+Amostras **sem calibração** do magnetômetro, para um programa no computador calcular a
+calibração (*hard/soft iron*). A config-app não oferece mais essa calibração nem o Quat9;
+o firmware continua com os dois, por escrita TLV crua (`0x01`, `0x1E`). Só saem entre os
+comandos `0x15` (iniciar) e `0x16` (parar), param sozinhas depois de 180 s e só existem no
+modo Quat9 (no Quat6 o magnetômetro não é lido).
 
 | Offset | Tam. | Tipo | Campo | Unidade / escala | Significado |
 |---|---|---|---|---|---|
@@ -800,8 +802,8 @@ Argumento (depois do opcode), *little-endian*:
 
 - **10 bytes**, ou **8** (sem rumo: rumo 0). Outro tamanho ou um valor fora da faixa é
   recusado em silêncio (só um aviso no log serial).
-- **Não precisa de PIN.** É o único comando aceito numa conexão travada; todos os outros
-  continuam pedindo o PIN.
+- **Não precisa de PIN.** Fora o próprio desbloqueio (`0x20`), é o único comando aceito
+  numa conexão travada; todos os outros continuam pedindo o PIN.
 - **Só na RAM:** não é um registrador, o `0x11` e o `0x14` não a gravam, e ao religar a bola
   a referência volta a ser o `navRef`.
 - **O que acontece:** a bola zera a orientação naquele instante (como o `0x10`) e a
@@ -809,7 +811,10 @@ Argumento (depois do opcode), *little-endian*:
   mostra exatamente a vista mandada** (até o arredondamento do *float*, uns 0,00001° longe
   dos polos), no modo espelho e no joystick, com o `anchorSeq` uma unidade acima. Esse
   pacote sai na hora, sem esperar a vez do divisor de taxa. Amostras do IMU que já estavam
-  na fila antes do zero continuam com a referência antiga.
+  na fila antes do zero continuam com a referência antiga. Com a navegação desligada
+  (`navMode` = 0), o zero acontece na hora, mas a âncora (e a mudança do `anchorSeq`) só
+  vale quando a navegação volta a rodar; no modo espelho, esse primeiro pacote já mostra
+  o quanto a bola girou desde o zero.
 - **Quanto dura:** um `0x10` depois mantém a âncora (o globo volta para ela); trocar o
   `navMode` também. Escrever um `navRef` **diferente** (`0x62`) apaga a âncora (a
   referência explícita ganha); reescrever o mesmo valor não apaga. Religar apaga.
@@ -1962,8 +1967,9 @@ ou de escrever um `navRef` diferente, a âncora some e vale de novo o `navRef`.
 **Mandei a âncora (`0x17`) e o `anchorSeq` não mudou.**
 Confira o tamanho (opcode + 8 ou 10 bytes) e as faixas: um comando fora delas é ignorado. Com
 `navMode` = 0 ou sem amostras do IMU, a âncora fica esperando e só é aplicada quando a
-navegação volta a rodar. Se o pacote de navegação tem 22 bytes, o firmware não tem o `0x17`:
-grave o firmware atual.
+navegação volta a rodar (o zero, esse, acontece na hora; no modo espelho, o primeiro pacote
+depois disso já mostra o quanto a bola girou desde o zero). Se o pacote de navegação tem 22
+bytes, o firmware não tem o `0x17`: grave o firmware atual.
 
 **Depois de religar a bola, o globo aponta torto.**
 A referência é a postura em que a bola liga. Ligue-a apoiada numa superfície plana e

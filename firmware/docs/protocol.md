@@ -184,8 +184,9 @@ number caps every notify rate above ~60 Hz.
 ## MagChunkPacket (106 bytes, type 0x06, ~3 Hz while calibrating, diag characteristic)
 
 RAW (uncalibrated) magnetometer samples, streamed only between commands `0x15` and
-`0x16`. The hard/soft-iron fit runs in the config-app: the ESP32 would need hundreds of
-samples in RAM plus a least-squares solve, for no better result.
+`0x16`. The hard/soft-iron fit runs on a host: the ESP32 would need hundreds of
+samples in RAM plus a least-squares solve, for no better result. The config-app no
+longer offers this calibration (nor Quat9); the firmware still supports both via TLV.
 
 | Offset | Size | Type | Field |
 |---|---|---|---|
@@ -248,7 +249,7 @@ bit2 `moving`.
 
 ### Frames and conventions
 
-- Reference frame = the pose at power-on (or at the last zero, command `0x10`): **X = the
+- Reference frame = the pose at power-on (or at the last zero, command `0x10` or `0x17`): **X = the
   horizontal direction the board's X axis (the nose of the plane in the config-app 3D
   view) pointed to at that moment**; Z = up; **Y = X rotated 90° to the left**
   (right-handed). The ball has no marked "front": the motion is relative to that pose, and
@@ -326,20 +327,23 @@ globe jump to the configured reference point. Argument after the opcode, little-
 - 10 argument bytes, or 8 (no bearing: bearing 0). Any other length or a value out of
   range is rejected (warning in the serial log, no effect).
 - **No PIN**: it is accepted on a locked connection (every other command in the table
-  below still needs the unlock). It is volatile: **RAM only**, not a config register,
-  never persisted by `0x11` or `0x14`, gone after a reboot.
+  below, except the unlock `0x20` itself, still needs the unlock). It is volatile:
+  **RAM only**, not a config register, never persisted by `0x11` or `0x14`, gone after a
+  reboot.
 - Effect: it zeroes the orientation at that instant (same as `0x10`) and the reference
   becomes (lat, lon, bearing). The anchor applies together with that zero: IMU samples
   already queued from before the zero keep the old reference, and the **first NavPacket
   after the zero takes effect shows the anchor** at the screen centre with the anchor's
   bearing, in mirror and joystick mode (up to float rounding, ~1e-5° away from the
   poles), with `anchorSeq` incremented. That packet is sent at once, whatever the phase
-  of the `navNotifyHz` divisor.
+  of the `navNotifyHz` divisor. With navigation off (`navMode` 0) the zero still happens
+  at once, but the anchor (and the `anchorSeq` change) only applies when navigation runs
+  again; in mirror mode that first packet then also reflects any motion since the zero.
 - Lifetime: a later zero (`0x10`) keeps the anchor (the globe returns to it); a
   `navMode` change keeps it; a write that **changes** `navRef` (TLV 0x62) drops it
   (active or still pending) — the explicit reference wins; rewriting the same `navRef`
   does not. A reboot drops it. With navigation off (`navMode` 0) or no IMU samples, the
-  anchor waits and applies once navigation runs again.
+  anchor waits and applies once navigation runs again (the zero itself is not delayed).
 
 Golden vectors (full command writes, opcode first):
 

@@ -144,11 +144,13 @@ config write that lands both LED functions on the same GPIO is rejected atomical
   event) / (interval). The central may refuse, so the granted interval is reported in
   the diag packet and shown in the config-app's metrics panel.
 - Per-sensor filters, all configurable from the config-app and persisted: the IMU
-  anti-alias filter and gyro range, the AHRS gain and its acceleration/magnetic
-  rejection, the gyro-bias tracker, orientation smoothing (fixed slerp or the 1-euro
+  anti-alias filter and gyro range, the AHRS gain and its acceleration rejection, the
+  gyro-bias tracker, orientation smoothing (fixed slerp or the 1-euro
   filter), the accel spike filter and EMA, the breath band-pass on the mics (HP 10 Hz /
   LP 200 Hz, Q 5.00 default — tune against the live spectrum), the potentiometer EMA and
   the CO2 EMA. See [Signal processing chains](#signal-processing-chains).
+  The magnetic rejection (TLV `0x09`, Quat9 only) is no longer offered by the
+  config-app; the firmware still supports it, and Quat9, through raw TLV writes.
 - Wi-Fi is explicitly stopped at boot (BLE/Wi-Fi coexistence would wreck notify pacing).
 - USB serial logging is OFF by default (TLV `0x50`); the boot sequence (including the
   I2C identity probe below) always prints, the switch takes over afterwards.
@@ -163,8 +165,9 @@ config write that lands both LED functions on the same GPIO is rejected atomical
   by this firmware. The earlier claim that every ball carries a GY-91 was wrong: see
   [`docs/hardware-pinout.md`](docs/hardware-pinout.md) finding 2 for the evidence.
 - The magnetometer needs a one-off hard/soft-iron calibration before Quat9 is worth
-  using: command `0x15` streams raw samples, the config-app fits the ellipsoid and
-  writes the result back as TLV `0x1E`.
+  using: command `0x15` streams raw samples, a host fits the ellipsoid and writes the
+  result back as TLV `0x1E`. The config-app no longer offers this calibration (nor
+  Quat9); the firmware still supports both through the TLV registers.
 - Sound LED (GPIO2): 100 ms flash per detected sound peak, held on while the virtual CO2
   pulse is active. Nothing else drives it.
 - CO2 LED (GPIO4): on while the real (non-stale) reading exceeds `co2AlertPpm` (default 2000).
@@ -310,7 +313,7 @@ and is noted where it matters.
 | 1 | On-chip DLPF, auto-matched to the rate (`imuDlpfMode`) | The internal rate is 1 kHz and `SMPLRT_DIV` only **decimates** it — no averaging. Anything the DLPF passes above half the output rate folds back into the band and is then indistinguishable from real motion. | Vibration and tapping stop appearing as slow tremble. At 50 Hz the auto mode picks 20 Hz instead of the old fixed 41 Hz, which was above Nyquist. |
 | — | Gyro full scale (`gyroFsSel`) | ±2000 dps quantises to 0.061 °/s per bit, and that quantisation is integrated straight into orientation drift. | ±1000 dps halves the noise floor while still leaving ~2.8 rev/s of headroom for a spun ball; the gyro never reaches the wire, so no decoder cares. |
 | 2 | Gyro bias tracker (`src/logic/GyroBias.*`) | The zero-rate offset is integrated: 1 °/s is 60° of heading per minute, and in Quat6 nothing pulls the heading back. The MPU-9250 is specified at ±5 °/s. | Rest is detected from the **deviation** of the rate around its own mean (offset-independent), gated by a plausibility bound and the accelerometer. The previous design tested the *corrected* rate against 2 °/s, so a unit whose real offset exceeded that never looked still and never got corrected — the worse the part, the less the correction worked. |
-| 3 | Hard/soft-iron calibration (`src/logic/MagCalibration.h`) | The speaker magnet, battery and board currents add a constant field (tens of µT against an earth field of 25–65 µT) and surrounding ferrous material stretches the field sphere into an ellipsoid. | Heading errors of tens of degrees disappear. Without it, 9-axis can be **worse** than magnetometer-free fusion. The fit itself runs in the config-app (command `0x15` streams raw samples). |
+| 3 | Hard/soft-iron calibration (`src/logic/MagCalibration.h`) | The speaker magnet, battery and board currents add a constant field (tens of µT against an earth field of 25–65 µT) and surrounding ferrous material stretches the field sphere into an ellipsoid. | Heading errors of tens of degrees disappear. Without it, 9-axis can be **worse** than magnetometer-free fusion. The fit itself runs on a host (command `0x15` streams raw samples, the result goes back as TLV `0x1E`); the config-app no longer offers it, the firmware still does. |
 | 4 | AHRS fusion (`src/logic/Ahrs.*`) | Gyro-only integration drifts without bound; accelerometer-only tilt is unusable during motion; magnetometer-only heading is unusable near metal. | A complementary filter whose corner frequency is the `gain`. The rejection features make it survive the two things a *ball* does constantly: being accelerated (the accelerometer stops pointing down) and being carried past metal. Prolonged disagreement triggers recovery, so a long disturbance cannot strand the filter on the gyroscope. The startup ramp converges from an unknown orientation in about a second. |
 | 5 | Mounting quaternion, then zero | The chip sits at a small angle to the board, the board at an angle to the ball, and the ball rests however it rests. All three appear as a permanent tilt. | `0x14` absorbs the whole chain into `qMount` (persisted in NVS); `0x10` sets the session datum. Roll/pitch survive a reboot; in Quat6 the heading datum is arbitrary by construction, which is what `0x10` is for. |
 | 6 | Output smoothing (`src/logic/QuatSmoother.*`) | The fused quaternion still carries the gyro noise floor: a fine tremble in a 3D view, a dithering control signal in a sound patch. | The legacy fixed slerp costs ~190 ms of lag at its heaviest. The 1-euro filter moves its cut-off with the angular speed — hard filtering while the ball is still, almost none while it moves — so the tremble goes without the rubbery response. |
@@ -437,8 +440,9 @@ that connection's unlock for 30 s. Unlock lasts until disconnect.
 | `0x17` + 8/10 bytes | anchor: `i32 latE6`, `i32 lonE6`, optional `i16 bearingX100` (little-endian) becomes the navigation reference and the orientation is zeroed; RAM only, never saved | **no** |
 | `0x20` + PIN | unlock this connection | — |
 
-Locked or unknown commands are ignored and logged on the serial console. `0x17` is the
-one opcode accepted on a locked connection: the GaiaSenses site sends it on connect so
+Locked or unknown commands are ignored and logged on the serial console. Besides the
+unlock itself (`0x20`), `0x17` is the only opcode accepted on a locked connection: the
+GaiaSenses site sends it on connect so
 the globe starts where the map already is. Details:
 [`docs/protocol.md`](docs/protocol.md#anchor-command-0x17).
 
