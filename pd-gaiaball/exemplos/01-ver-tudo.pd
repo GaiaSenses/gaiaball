@@ -1,4 +1,4 @@
-#N canvas 40 40 1020 1000 12;
+#N canvas 40 40 1020 1040 12;
 #X text 20 12 EXEMPLO 1 - VER TUDO. Este patch mostra todos os dados que o [gaiaball] publica. Conecte a bola na config-app (com a chave Enviar ao Pd ligada) e veja os números mudarem. Nada aqui faz som: é um painel para conhecer os dados. O que é cada um está no TUTORIAL.md da pasta pd-gaiaball (a pasta logo acima desta). Sem bola? Abra a config-app com ?demo=1 no fim do endereço: ela manda dados de mentira., f 135;
 #X text 20 84 CONEXÃO, f 20;
 #X obj 20 108 gaiaball;
@@ -68,7 +68,7 @@
 #X floatatom 330 914 6 0 0 0 - - -;
 #X obj 450 914 tgl 20 0 empty empty empty 0 -8 0 12 -262144 -1 -1 0 1;
 #X text 20 940 lat / lon em graus - velocidade em graus por segundo - rumo em graus - parado, f 80;
-#X text 600 886 gaia.lat e gaia.lon: o ponto para onde o globo virtual aponta. Na posição de referência: Campinas (-22.9 e -47.06). gaia.speed: o giro do globo em graus por segundo. gaia.bearing: o rumo do mapa \, de -180 a 180 graus. gaia.settled: 1 quando o globo parou., f 56;
+#X text 600 886 gaia.lat e gaia.lon: o ponto para onde o globo virtual aponta. Na posição de referência: Campinas (-22.9 e -47.06). Se o site do GaiaSenses estiver conectado à bola \, a conexão dele também zera a bola e o globo passa a começar no ponto que o mapa do site mostra. gaia.speed: o giro do globo em graus por segundo. gaia.bearing: o rumo do mapa \, de -180 a 180 graus. gaia.settled: 1 quando o globo parou., f 56;
 #X connect 2 0 3 0;
 #X connect 3 0 4 0;
 #X connect 3 1 5 0;

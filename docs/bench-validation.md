@@ -378,9 +378,9 @@ mostra "sem dados" e continua atualizando uma vez por segundo, sem pose.
 o pacote de CO₂ ganhou o bit 3 (`0x08`) das flags. O painel Métricas o mostra na linha
 CO₂ ("gatilho: ligado/desligado"); um cliente BLE genérico o lê na característica `…0003`
 (byte 10, bit 3). Dê uma
-palma a ~1 m: o pulso virtual (2100 ppm, ~1 s depois) deve ligar o bit; ele só desliga quando o
+palma a ~1 m: o pulso virtual (2100 ppm, na hora) deve ligar o bit; ele só desliga quando o
 ppm reportado cair a 1150 ppm ou menos (ou o sensor ficar "stale" sem pulso ativo), isto é,
-no fim do pulso de ~17 s. Soprar perto do sensor real (acima de 1200 ppm) liga o bit do mesmo
+no fim do pulso de 10 s (`virtualHoldMs`). Soprar perto do sensor real (acima de 1200 ppm) liga o bit do mesmo
 modo.
 
 ## 5. CO₂: validar o SC8-CO2-5K
@@ -412,7 +412,9 @@ alimentação** (datasheet SC8-CO2-5K V1.4, seção 8). Detalhes e o quadro-dour
    `0x26` = 0). Aplique e salve de novo.
 
 Também verifique o CO₂ virtual (item 10): uma palma a ~1 m faz o LED de som piscar na hora; o
-CO₂ virtual (2100 ppm) chega ~1 s depois e dura ~17 s. A taxa da IMU não pode cair.
+CO₂ virtual sobe na mesma hora, num degrau constante até 2100 ppm (`virtualPeakPpm`), e fica
+assim por 10 s (`virtualHoldMs`; outro sopro durante o pulso não o reinicia). A taxa da IMU
+não pode cair.
 
 ## 6. Teste simultâneo: site + config-app
 

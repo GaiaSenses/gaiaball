@@ -1,4 +1,4 @@
-#N canvas 40 40 980 850 12;
+#N canvas 40 40 980 870 12;
 #X text 20 12 EXEMPLO 5 - O GLOBO VIRA MÚSICA. Girar a bola move o globo virtual. A latitude (norte-sul) escolhe a nota \, a longitude (leste-oeste) leva o som da esquerda para a direita e \, quando o globo para \, toca um sino. Precisa da navegação ligada na bola (Espelho \, o padrão \, ou Joystick)., f 130;
 #X text 20 70 1) Ligue o som do Pd: clique em dsp 1 (atalho Ctrl+/). Para desligar \, clique em dsp 0 ao lado. Comece com o volume do computador baixo., f 52;
 #X msg 20 130 \; pd dsp 1;
@@ -60,7 +60,7 @@
 #X obj 700 650 dac~;
 #X text 760 620 o sino tem volume fixo, f 24;
 #X text 760 650 vários [dac~] se somam, f 24;
-#X text 470 744 Na posição de referência o globo mostra Campinas (lat -22.9 e lon -47.06). Sem bola: no modo demo (?demo=1) a latitude e a longitude passeiam devagar e o globo para a cada 10 segundos., f 70;
+#X text 470 744 Na posição de referência o globo mostra Campinas (lat -22.9 e lon -47.06). Se o site do GaiaSenses estiver conectado à bola \, a conexão dele também zera a bola e o globo passa a começar no ponto que o mapa do site mostra. Sem bola: no modo demo (?demo=1) a latitude e a longitude passeiam devagar e o globo para a cada 10 segundos., f 70;
 #X connect 4 0 5 0;
 #X connect 5 0 6 0;
 #X connect 10 0 11 0;

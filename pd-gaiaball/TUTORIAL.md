@@ -198,10 +198,12 @@ ou globo.
    reiniciar a bola."*
 4. Clique em **Reiniciar agora** e confirme. A conexão cai; isso é normal.
 5. Com a bola parada na superfície, clique em **Conectar** de novo.
-6. Para conferir: em **Configuração → Avançado → Métricas**, a linha **Estado do IMU** deve
-   começar com `ICM-20948 ok` (um "(sem magnetômetro)" no fim não atrapalha: o modo padrão
-   não usa a bússola). Se disser `selecionado, não encontrado`, o modelo escolhido não é o
-   da sua bola: volte ao item 2 e escolha o outro.
+6. Para conferir: o jeito mais fácil é a linha no topo do painel **Configuração**, que
+   deve dizer "Valores lidos da bola às HH:MM:SS · IMU em uso: ICM-20948". Em
+   **Configuração → Avançado → Métricas**, a linha **Estado do IMU** deve dizer
+   `ICM-20948 ok`. Se disser `selecionado, não encontrado` (ou a linha do topo mostrar
+   "(não encontrado)"), o modelo escolhido não é o da sua bola: volte ao item 2 e escolha
+   o outro.
 
 A escolha fica gravada na bola: você não precisa repetir isto.
 
@@ -392,7 +394,10 @@ trocados (`−w −x −y −z`) descreve a mesma posição.
 (magnetômetro). Por isso não há "norte": o zero é a posição em que a bola foi ligada, ou a
 posição no momento em que você clica em **Zerar orientação** (config-app, painel Conexão,
 com o PIN). O zero não é gravado: a cada vez que liga, a bola volta a usar a posição do
-momento em que foi ligada.
+momento em que foi ligada. Atenção: se o site do GaiaSenses estiver conectado à bola, a
+conexão dele também zera a bola (para todos, inclusive o Pd: `gaia.quat` e os ângulos de
+`gaia.sensors` voltam ao neutro naquele instante) e o globo passa a começar no ponto que o
+mapa do site mostra.
 
 **Ideia musical.** Para a maioria dos usos, os ângulos de `gaia.sensors` ou a aceleração
 são mais fáceis. Um truque simples com o quatérnio: `1 − |w|` (um menos o valor de `w` sem
@@ -527,7 +532,10 @@ quando alguém sopra).
 - `gaia.lat` e `gaia.lon`: o ponto que fica no centro da tela, em graus. Latitude de −90
   (polo sul) a 90 (polo norte); longitude de −180 a 180 (oeste negativo). Na posição de
   referência, o globo mostra **Campinas (SP)**: `gaia.lat` perto de −22,9 e `gaia.lon`
-  perto de −47,06. Esse ponto de referência se muda na config-app.
+  perto de −47,06. Esse ponto de referência se muda na config-app. Se o site do
+  GaiaSenses se conectou à bola, `gaia.lat` e `gaia.lon` passam a começar no ponto que o
+  mapa do site mostrava naquele momento, e não em Campinas, até a bola reiniciar ou alguém
+  mudar o ponto de referência.
 - `gaia.speed`: a velocidade do giro do globo, em graus por segundo. No Espelho, é a
   velocidade medida (sem teto fixo). No Joystick, vai de 0 até a velocidade máxima
   configurada (padrão 90, no máximo 720) e fica 0 com o globo parado.
@@ -885,7 +893,9 @@ enviando e use o modo palco.
 ### Os ângulos parecem tortos, ou o zero está no lugar errado
 
 O zero é a posição em que a bola foi ligada. Com a bola parada na posição que você quer
-como zero, clique em **Zerar orientação** (painel Conexão, com o PIN). Para os nomes
+como zero, clique em **Zerar orientação** (painel Conexão, com o PIN). Se o site do
+GaiaSenses estiver conectado à bola, a conexão dele também zera a bola, na posição em que
+ela estava naquele instante: zere de novo depois que o site conectar. Para os nomes
 trocados de roll e pitch, veja [Ângulos e mais](#ângulos-e-mais-gaiasensors).
 
 ### Abri duas abas da config-app
