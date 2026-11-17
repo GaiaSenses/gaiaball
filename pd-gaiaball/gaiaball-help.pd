@@ -86,6 +86,7 @@
 #X text 12 90 AUTHOR GaiaSenses;
 #X text 12 115 LICENSE GPL-3.0;
 #X restore 890 1280 pd META;
+#X text 20 1290 APRENDER MAIS: o TUTORIAL.md ensina passo a passo \, para quem nunca programou \, o que é cada dado (unidade \, faixa e quantas vezes por segundo chega) \, traz receitas e resolve os problemas comuns. A pasta exemplos/ tem seis patches prontos (ver tudo \, sopro \, inclinação \, CO2 \, globo e estado da conexão). Os dois ficam na pasta pd-gaiaball do repositório: https://github.com/GaiaSenses/gaiaball/tree/main/pd-gaiaball, f 110;
 #X connect 3 0 4 0;
 #X connect 10 0 11 0;
 #X connect 11 0 12 0;

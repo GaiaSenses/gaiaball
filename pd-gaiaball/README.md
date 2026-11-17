@@ -6,6 +6,11 @@ pacotes ao objeto `[gaiaball]`, que publica cada valor num nome: no seu patch, b
 `[r gaia.lat]`, `[r gaia.co2]`, `[r gaia.breath]`… Não há terminal, Python nem programa
 extra: só o Pd e o navegador. Nada é escrito na bola; o objeto só escuta.
 
+> **Primeira vez com a bola ou com o Pd?** Comece pelo [`TUTORIAL.md`](TUTORIAL.md): um
+> passo a passo para músicos, sem jargão, com todos os dados (o que são, unidade, faixa e
+> quantas vezes por segundo chegam), receitas e seis patches prontos na pasta
+> [`exemplos/`](exemplos/).
+
 ```
 ┌──────────┐  Bluetooth  ┌───────────────────┐  WebSocket local   ┌────────────┐
 │ Gaiaball │ ──────────> │ config-app        │ ─────────────────> │ [gaiaball] │──> [r gaia.*]
