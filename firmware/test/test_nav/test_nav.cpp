@@ -89,6 +89,84 @@ void test_ref_maps_local_basis() {
   }
 }
 
+// Bearing 0 is bit-identical to the reference rotation before the bearing parameter
+// existed: these quaternions were captured (%a) from that implementation, so a
+// regression in the default path shows up here even within float tolerance.
+void test_ref_bearing_zero_bit_identical_to_original() {
+  const float refs[][2] = {{kCampLat, kCampLon}, {0.f, 0.f},     {0.f, 180.f},
+                           {89.9f, -179.99f},   {-90.f, 135.f}, {45.f, -135.f}};
+  const float golden[][4] = {
+      {0x1.cc1454p-1f, -0x1.44b31ap-4f, -0x1.74d66ep-3f, 0x1.90ad6cp-2f},
+      {0x1p+0f, -0x0p+0f, 0x0p+0f, -0x0p+0f},
+      {0x1.777a5cp-25f, 0x0p+0f, 0x0p+0f, 0x1p+0f},
+      {0x1.02e5a8p-14f, 0x1.69b8fep-1f, 0x1.027214p-14f, 0x1.6a5acp-1f},
+      {0x1.1517a8p-2f, 0x1.4e7aecp-1f, -0x1.1517aap-2f, -0x1.4e7aeap-1f},
+      {0x1.6a09e4p-2f, 0x1.6a09e4p-2f, 0x1.2bec32p-3f, 0x1.b504f4p-1f},
+  };
+  for (size_t i = 0; i < sizeof refs / sizeof refs[0]; i++) {
+    const Quat two = navRefRotation(refs[i][0], refs[i][1]);
+    const Quat three = navRefRotation(refs[i][0], refs[i][1], 0.f);
+    const float got2[4] = {two.w, two.x, two.y, two.z};
+    const float got3[4] = {three.w, three.x, three.y, three.z};
+    TEST_ASSERT_EQUAL_MEMORY(golden[i], got2, sizeof got2);
+    TEST_ASSERT_EQUAL_MEMORY(golden[i], got3, sizeof got3);
+  }
+}
+
+// Wrapped difference a - b in (-180, 180].
+static float wrapDiff(double a, double b) {
+  double d = std::fmod(a - b, 360.0);
+  if (d > 180.0) d -= 360.0;
+  if (d <= -180.0) d += 360.0;
+  return (float)d;
+}
+
+// The anchor's reference: identity G shows (lat, lon) at the centre with the given
+// Mapbox bearing. Cases cover the poles, the antimeridian, bearings near +-180 and
+// every branch of the matrix-to-quaternion conversion (the bearing makes the
+// y-dominant one reachable: (0, 180, 180) has the largest diagonal entry at [1][1]).
+void test_ref_with_bearing_round_trip() {
+  const float cases[][3] = {
+      {-23.550520f, -46.633308f, 12.34f},  // the Sao Paulo golden vector
+      {48.856600f, 2.352200f, -90.f},      // the Paris golden vector
+      {kCampLat, kCampLon, 0.01f},     {0.f, 0.f, 45.f},        {0.f, 180.f, 180.f},
+      {0.f, 180.f, 179.99f},           {0.f, -179.99f, -179.99f}, {10.f, 170.f, -135.f},
+      {89.9f, 30.f, 60.f},             {-89.9f, -120.f, -179.99f}, {89.9f, 180.f, 179.99f},
+      {-89.9f, -179.99f, 90.f},        {-60.f, 120.f, -0.01f},   {45.f, -135.f, 120.f},
+  };
+  for (const auto &c : cases) {
+    const NavPose p = navPoseFromGlobe(kId, navRefRotation(c[0], c[1], c[2]));
+    // Near the poles the float pose loses precision as 1 / cos(lat): asin of the
+    // centre's z for the latitude, atan2 of tiny x / y for the longitude and bearing
+    // (~0.003 deg at 89.9; Mapbox clamps its centre at 85.05 anyway).
+    const bool polar = std::fabs(c[0]) > 89.f;
+    const float angTol = polar ? 1e-2f : 1e-4f;
+    TEST_ASSERT_FLOAT_WITHIN(angTol, c[0], p.latDeg);
+    TEST_ASSERT_FLOAT_WITHIN(angTol, 0.f, wrapDiff(p.lonDeg, c[1]));
+    TEST_ASSERT_FLOAT_WITHIN(angTol, 0.f, wrapDiff(p.bearingDeg, c[2]));
+    TEST_ASSERT_TRUE(p.bearingDeg > -180.f && p.bearingDeg <= 180.f);
+  }
+}
+
+// The bearing is a turn about the screen-centre axis: R0(b) = Rx(b) (x) R0(0), so the
+// point stays at +X, and local north lands on the screen at bearing b.
+void test_ref_bearing_turns_about_screen_centre() {
+  const Quat r0 = navRefRotation(kCampLat, kCampLon);
+  const Quat rb = navRefRotation(kCampLat, kCampLon, 30.f);
+  float p[3], n[3], out[3];
+  pointOf(kCampLat, kCampLon, p);
+  northOf(kCampLat, kCampLon, n);
+  quatRotateVector(rb, p, out);
+  assertVec(1.f, 0.f, 0.f, out, 1e-5f);
+  // Screen up shows the direction 30 deg clockwise from north, so north itself sits
+  // 30 deg counter-clockwise from up: toward screen left (-Y).
+  quatRotateVector(rb, n, out);
+  assertVec(0.f, (float)-std::sin(30.0 * kD2R), (float)std::cos(30.0 * kD2R), out, 1e-5f);
+  // angularSpeedDegS over 1 s is the precise angle (quatAngleDeg's float acos reads
+  // ~0.04 deg for two equal rotations).
+  TEST_ASSERT_FLOAT_WITHIN(1e-3f, 0.f, angularSpeedDegS(quatMultiply(rotX(30.0), r0), rb, 1.f));
+}
+
 // ------------------------------------------------------------ navPoseFromGlobe
 
 void test_pose_rz_moves_longitude_negative() {
@@ -366,6 +444,9 @@ int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_ref_origin_is_identity);
   RUN_TEST(test_ref_maps_local_basis);
+  RUN_TEST(test_ref_bearing_zero_bit_identical_to_original);
+  RUN_TEST(test_ref_with_bearing_round_trip);
+  RUN_TEST(test_ref_bearing_turns_about_screen_centre);
   RUN_TEST(test_pose_rz_moves_longitude_negative);
   RUN_TEST(test_pose_ry_moves_latitude_positive);
   RUN_TEST(test_pose_rx_sets_bearing);

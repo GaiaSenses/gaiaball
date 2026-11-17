@@ -31,7 +31,8 @@ MagChunkPacket makeMagChunkPacket(uint16_t seq, uint32_t tMs, const int16_t *sam
 
 // Pure packing of a navigation pose; the caller supplies already-converted integers.
 NavPacket makeNavPacket(uint16_t seq, uint32_t tUs, uint8_t mode, uint8_t flags, int32_t latE7,
-                        int32_t lonE7, int16_t bearingX100, uint16_t speedDegSX10);
+                        int32_t lonE7, int16_t bearingX100, uint16_t speedDegSX10,
+                        uint8_t anchorSeq);
 
 // Conversions from float degrees to the NavPacket integer units: rounded, saturated,
 // and NaN/inf encode as 0 (speed: negative also 0). Latitude clamps to +-90; longitude

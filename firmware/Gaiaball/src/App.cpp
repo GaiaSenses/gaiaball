@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <esp_system.h>
 
+#include "logic/AnchorCommand.h"
 #include "logic/ImuStatus.h"
 #include "logic/PacketCodec.h"
 #include "logic/Packets.h"
@@ -29,15 +30,6 @@ constexpr uint32_t kSoundLedHoldMs = 100;                // legacy peak flash
 // Legacy CO2_NORMAL_VALUE: reported when the sensor is disabled so the site's Pd
 // patch still receives a plausible baseline (documented in docs/protocol.md).
 constexpr uint16_t kCo2FallbackPpm = 600;
-
-// Gated command opcodes (see docs/protocol.md).
-constexpr uint8_t kCmdZero = 0x10;
-constexpr uint8_t kCmdSave = 0x11;
-constexpr uint8_t kCmdFactoryReset = 0x12;
-constexpr uint8_t kCmdReboot = 0x13;
-constexpr uint8_t kCmdMountCal = 0x14;
-constexpr uint8_t kCmdMagCalStart = 0x15;
-constexpr uint8_t kCmdMagCalStop = 0x16;
 
 inline bool elapsed(uint32_t nowMs, uint32_t sinceMs, uint32_t periodMs) {
   return (uint32_t)(nowMs - sinceMs) >= periodMs;
@@ -375,29 +367,21 @@ void App::drainCommands() {
 }
 
 void App::dispatch(const BleCommand &cmd) {
-  switch (cmd.opcode) {
-    // 0x00/0x01 (legacy LED command) are reserved and ignored: no client ever sent
-    // them (the site declares the characteristic but never writes it), and the board
-    // has no LED for them. They fall through to "unknown opcode" below.
-    case kCmdZero:
-    case kCmdSave:
-    case kCmdFactoryReset:
-    case kCmdReboot:
-    case kCmdMountCal:
-    case kCmdMagCalStart:
-    case kCmdMagCalStop:
-      break;
-    default:
-      GB_LOGW(kTag, "unknown opcode 0x%02X (slot %u)", cmd.opcode, cmd.connSlot);
-      return;
+  // Policy in CommandGate.h: 0x00/0x01 (the legacy LED command, never sent by any
+  // client) are unknown; 0x17 (anchor) is the one opcode that needs no PIN.
+  if (commandAccess(cmd.opcode) == CommandAccess::Unknown) {
+    GB_LOGW(kTag, "unknown opcode 0x%02X (slot %u)", cmd.opcode, cmd.connSlot);
+    return;
   }
-
-  if (!cmd.unlockedAtEnqueue) {
+  if (!commandAllowed(cmd.opcode, cmd.unlockedAtEnqueue != 0)) {
     GB_LOGW(kTag, "opcode 0x%02X refused: slot %u locked", cmd.opcode, cmd.connSlot);
     return;
   }
 
   switch (cmd.opcode) {
+    case kCmdAnchor:
+      anchorNavigation(cmd);
+      break;
     case kCmdZero:
       GB_LOGI(kTag, "zero orientation requested");
       imu_.requestZeroOrientation();
@@ -432,6 +416,22 @@ void App::dispatch(const BleCommand &cmd) {
       imu_.stopMagCapture();
       break;
   }
+}
+
+// 0x17: the client's map view becomes the navigation reference, RAM only. Staged
+// BEFORE the zero request: NavEngine applies it on the zero's new epoch (both run on
+// this task), so IMU samples still queued from the old epoch keep the old reference.
+void App::anchorNavigation(const BleCommand &cmd) {
+  NavAnchor a;
+  if (!parseAnchorArgs(cmd.arg, cmd.argLen, &a)) {
+    GB_LOGW(kTag, "anchor rejected: %u arg bytes or a value out of range (slot %u)",
+            (unsigned)cmd.argLen, cmd.connSlot);
+    return;
+  }
+  GB_LOGI(kTag, "anchor lat %ld lon %ld (x1e6) bearing %d (x100)", (long)a.latE6,
+          (long)a.lonE6, (int)a.bearingX100);
+  nav_.stageAnchor(a);
+  imu_.requestZeroOrientation();
 }
 
 void App::persistCapturedMounting() {

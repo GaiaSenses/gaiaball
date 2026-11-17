@@ -54,6 +54,8 @@ void NavEngine::configure(const GaiaConfig &cfg) {
   cfg_ = next;
   configured_ = true;
   if (refChanged) {
+    // The configured reference wins over an anchor, active (it lives in r0_) or pending.
+    anchorPending_ = false;
     r0_ = navRefRotation((float)((double)cfg_.refLatE6 * 1e-6),
                          (float)((double)cfg_.refLonE6 * 1e-6));
   }
@@ -87,6 +89,20 @@ void NavEngine::resetMotion() {
   haveSettlePose_ = false;  // captured on the next mirror sample
 }
 
+void NavEngine::stageAnchor(const NavAnchor &a) {
+  pendingAnchor_ = a;
+  anchorPending_ = true;
+}
+
+void NavEngine::applyAnchor() {
+  anchorPending_ = false;
+  r0_ = navRefRotation((float)((double)pendingAnchor_.latE6 * 1e-6),
+                       (float)((double)pendingAnchor_.lonE6 * 1e-6),
+                       (float)pendingAnchor_.bearingX100 / 100.f);
+  ++anchorSeq_;  // u8: wraps 255 -> 0
+  count_ = 0;    // this sample's packet is due: the client sees its anchor at once
+}
+
 float NavEngine::mirrorSpeedDegS(uint32_t tUs) {
   ring_[ringHead_] = PoseSample{g_, tUs};
   ringHead_ = (uint8_t)((ringHead_ + 1u) % kMirrorRingSize);
@@ -112,6 +128,9 @@ bool NavEngine::update(uint32_t tUs, const Quat &q, bool quatValid, uint32_t zer
     haveEpoch_ = true;
     epoch_ = zeroEpoch;
     resetMotion();
+    // A staged anchor takes effect with the zero requested after it: never on a sample
+    // from the old epoch.
+    if (anchorPending_) applyAnchor();
   }
   const float dtS = haveT_ ? (float)(uint32_t)(tUs - lastTUs_) * 1e-6f : 0.f;
   haveT_ = true;
@@ -161,11 +180,11 @@ uint8_t NavEngine::flags() const {
 NavPacket NavEngine::packet(uint16_t seq) const {
   const NavPose p = navPoseFromGlobe(g_, r0_);
   return makeNavPacket(seq, lastTUs_, cfg_.mode, flags(), navLatE7(p.latDeg), navLonE7(p.lonDeg),
-                       navBearingX100(p.bearingDeg), navSpeedX10(speed_));
+                       navBearingX100(p.bearingDeg), navSpeedX10(speed_), anchorSeq_);
 }
 
 NavPacket NavEngine::keepalivePacket(uint16_t seq, uint32_t tUs) const {
-  return makeNavPacket(seq, tUs, cfg_.mode, 0, 0, 0, 0, 0);
+  return makeNavPacket(seq, tUs, cfg_.mode, 0, 0, 0, 0, 0, anchorSeq_);
 }
 
 bool NavEngine::keepaliveDue(uint32_t nowMs) const {

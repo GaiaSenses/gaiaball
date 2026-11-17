@@ -87,7 +87,8 @@ MagChunkPacket makeMagChunkPacket(uint16_t seq, uint32_t tMs, const int16_t *sam
 }
 
 NavPacket makeNavPacket(uint16_t seq, uint32_t tUs, uint8_t mode, uint8_t flags, int32_t latE7,
-                        int32_t lonE7, int16_t bearingX100, uint16_t speedDegSX10) {
+                        int32_t lonE7, int16_t bearingX100, uint16_t speedDegSX10,
+                        uint8_t anchorSeq) {
   NavPacket p{};
   p.version = kProtocolVersion;
   p.type = kTypeNav;
@@ -99,6 +100,7 @@ NavPacket makeNavPacket(uint16_t seq, uint32_t tUs, uint8_t mode, uint8_t flags,
   p.lonE7 = lonE7;
   p.bearingX100 = bearingX100;
   p.speedDegSX10 = speedDegSX10;
+  p.anchorSeq = anchorSeq;
   return p;
 }
 

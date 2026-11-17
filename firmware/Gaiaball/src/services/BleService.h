@@ -22,7 +22,8 @@ class CommandGate;
 constexpr uint8_t kCmdUnlock = 0x20;  // executed inline: CommandGate::unlock(slot, PIN)
 
 // One command-characteristic write, as handed to the App task.
-// connSlot is the CommandGate connId (0/1) of the writer. arg excludes the opcode.
+// connSlot is the CommandGate connId (0/1) of the writer. arg excludes the opcode; its
+// 10 bytes fit the longest argument (0x17 anchor), and a longer one drops the write.
 // unlockedAtEnqueue (0/1) is CommandGate::isUnlocked(connSlot) sampled when the write
 // arrived: the App task MUST authorize gated opcodes with this field, not by
 // re-querying the gate (the slot may have been re-locked or reused by another
@@ -31,7 +32,7 @@ struct BleCommand {
   uint8_t opcode;
   uint8_t connSlot;
   uint8_t argLen;
-  uint8_t arg[8];
+  uint8_t arg[10];
   uint8_t unlockedAtEnqueue;
 };
 
@@ -71,7 +72,8 @@ struct BleCommand {
 // takes effect after reboot (no runtime re-init).
 //
 // The App task executes queued commands and enforces the PIN for sensitive opcodes
-// using BleCommand::unlockedAtEnqueue; 0x00/0x01 are ungated. The 0x20 unlock itself
+// using BleCommand::unlockedAtEnqueue (policy: commandAccess() in CommandGate.h; 0x17
+// anchor is the one open opcode, 0x00/0x01 are unknown). The 0x20 unlock itself
 // is rate-limited by CommandGate (5 consecutive failures -> 30 s lockout per slot).
 class BleService {
  public:

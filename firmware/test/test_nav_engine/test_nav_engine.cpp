@@ -615,6 +615,254 @@ void test_reference_change_moves_identity_pose() {
   TEST_ASSERT_INT_WITHIN(1, 0, p.bearingX100);
 }
 
+// --- anchor (command 0x17) -------------------------------------------------------
+
+static const NavAnchor kSaoPaulo{-23550520, -46633308, 1234};  // bearing 12.34
+static const NavAnchor kParis{48856600, 2352200, -9000};       // bearing -90.00
+
+// The packet shows the anchor: E7 = E6 x 10 within float rounding (0.0002 deg, the
+// same tolerance as the configured reference point above), bearing within 0.01 deg.
+static void assertShowsAnchor(const NavPacket &p, const NavAnchor &a) {
+  TEST_ASSERT_INT32_WITHIN(2000, a.latE6 * 10, p.latE7);
+  TEST_ASSERT_INT32_WITHIN(2000, a.lonE6 * 10, p.lonE7);
+  TEST_ASSERT_INT_WITHIN(1, a.bearingX100, p.bearingX100);
+}
+
+static void assertShowsCampinas(const NavPacket &p) {
+  TEST_ASSERT_INT32_WITHIN(2000, -229055560, p.latE7);
+  TEST_ASSERT_INT32_WITHIN(2000, -470608330, p.lonE7);
+  TEST_ASSERT_INT_WITHIN(1, 0, p.bearingX100);
+}
+
+void test_anchor_first_packet_mirror() {
+  NavEngine e;
+  e.configure(mirrorCfg());
+  Feed f(e);
+  for (int i = 0; i < 10; i++) f.step(rotZ(3.0 * i));  // the ball turning
+  TEST_ASSERT_EQUAL_UINT8(0, e.anchorSeq());
+  e.stageAnchor(kSaoPaulo);
+  f.epoch = 1;  // the zero that 0x17 requests: the IMU output restarts at identity
+  TEST_ASSERT_TRUE(f.step(kId));
+  const NavPacket p = e.packet(0);
+  assertShowsAnchor(p, kSaoPaulo);
+  TEST_ASSERT_EQUAL_UINT8(1, p.anchorSeq);
+  TEST_ASSERT_EQUAL_UINT8(1, e.anchorSeq());
+  TEST_ASSERT_EQUAL_HEX8(kNavValid | kNavSettled, p.flags);
+  TEST_ASSERT_EQUAL_UINT16(0, p.speedDegSX10);
+}
+
+void test_anchor_first_packet_joystick() {
+  NavEngine e;
+  e.configure(joyCfg());
+  Feed f(e);
+  moveAway(e, f);  // the globe integrated away from the reference
+  e.stageAnchor(kParis);
+  f.epoch = 1;
+  // Still tilted on the first sample of the new epoch: the globe restarts at identity
+  // with dt = 0, so this packet is exactly the anchor.
+  TEST_ASSERT_TRUE(f.step(rotY(30)));
+  const NavPacket p = e.packet(0);
+  assertShowsAnchor(p, kParis);
+  TEST_ASSERT_EQUAL_UINT8(1, p.anchorSeq);
+  // The joystick then steers away from the anchor as usual.
+  f.step(rotY(30));
+  TEST_ASSERT_TRUE(angleDeg(kId, e.globe()) > 0.1f);
+}
+
+// IMU samples still queued from the old epoch keep the old reference: no packet mixes
+// the old orientation with the new reference.
+void test_anchor_waits_for_the_new_epoch() {
+  NavEngine e;
+  e.configure(mirrorCfg());
+  Feed f(e);
+  f.step(kId);
+  e.stageAnchor(kSaoPaulo);
+  for (int i = 0; i < 3; i++) {
+    f.step(kId);  // epoch 0: queued before the zero took effect
+    const NavPacket p = e.packet(0);
+    assertShowsCampinas(p);
+    TEST_ASSERT_EQUAL_UINT8(0, p.anchorSeq);
+  }
+  f.epoch = 1;
+  f.step(kId);
+  assertShowsAnchor(e.packet(0), kSaoPaulo);
+  TEST_ASSERT_EQUAL_UINT8(1, e.anchorSeq());
+}
+
+// The latest anchor staged before the epoch changes wins, and is applied once.
+void test_anchor_restaged_before_epoch_applies_latest_once() {
+  NavEngine e;
+  e.configure(mirrorCfg());
+  Feed f(e);
+  f.step(kId);
+  e.stageAnchor(kSaoPaulo);
+  e.stageAnchor(kParis);
+  f.epoch = 1;
+  f.step(kId);
+  assertShowsAnchor(e.packet(0), kParis);
+  TEST_ASSERT_EQUAL_UINT8(1, e.anchorSeq());
+}
+
+// The first packet after the anchor is due at once, whatever the divisor's phase.
+void test_anchor_sample_is_due_regardless_of_divisor() {
+  GaiaConfig c = mirrorCfg();
+  c.imuNotifyHz = 200;
+  c.navNotifyHz = 50;  // one packet every 4 samples
+  NavEngine e;
+  e.configure(c);
+  Feed f(e);
+  TEST_ASSERT_TRUE(f.step(kId));
+  TEST_ASSERT_FALSE(f.step(kId));  // count at 2 of 4
+  e.stageAnchor(kSaoPaulo);
+  f.epoch = 1;
+  TEST_ASSERT_TRUE(f.step(kId));
+  assertShowsAnchor(e.packet(0), kSaoPaulo);
+  // ... and the cadence restarts from there.
+  TEST_ASSERT_FALSE(f.step(kId));
+  TEST_ASSERT_FALSE(f.step(kId));
+  TEST_ASSERT_FALSE(f.step(kId));
+  TEST_ASSERT_TRUE(f.step(kId));
+}
+
+// A later zero (0x10: epoch change, nothing staged) returns to the anchor, not to the
+// configured reference.
+void test_anchor_survives_a_later_zero() {
+  for (int mode = 1; mode <= 2; mode++) {
+    GaiaConfig c = mode == 1 ? mirrorCfg() : joyCfg();
+    NavEngine e;
+    e.configure(c);
+    Feed f(e);
+    f.step(kId);
+    e.stageAnchor(kParis);
+    f.epoch = 1;
+    f.step(kId);
+    for (int i = 0; i < 20; i++) f.step(rotY(30));
+    TEST_ASSERT_TRUE(angleDeg(kId, e.globe()) > 1.f);
+    f.epoch = 2;
+    f.step(kId);
+    const NavPacket p = e.packet(0);
+    assertShowsAnchor(p, kParis);
+    TEST_ASSERT_EQUAL_UINT8(1, p.anchorSeq);  // no new anchor applied
+  }
+}
+
+// A real change of the configured reference (TLV 0x62) wins over the anchor: both the
+// active and a pending one are dropped.
+void test_anchor_cleared_by_reference_change() {
+  GaiaConfig c = mirrorCfg();
+  NavEngine e;
+  e.configure(c);
+  Feed f(e);
+  f.step(kId);
+  e.stageAnchor(kSaoPaulo);
+  f.epoch = 1;
+  f.step(kId);
+  assertShowsAnchor(e.packet(0), kSaoPaulo);
+  c.navRefLatE6 = 10000000;  // 10 N
+  c.navRefLonE6 = 20000000;  // 20 E
+  e.configure(c);
+  f.step(kId);
+  NavPacket p = e.packet(0);
+  TEST_ASSERT_INT32_WITHIN(2000, 100000000, p.latE7);
+  TEST_ASSERT_INT32_WITHIN(2000, 200000000, p.lonE7);
+  TEST_ASSERT_INT_WITHIN(1, 0, p.bearingX100);
+  f.epoch = 2;  // a later zero keeps the configured reference
+  f.step(kId);
+  TEST_ASSERT_INT32_WITHIN(2000, 100000000, e.packet(0).latE7);
+
+  // Pending: staged, then the reference changes before the zero takes effect.
+  e.stageAnchor(kParis);
+  c.navRefLatE6 = -22905556;
+  c.navRefLonE6 = -47060833;
+  e.configure(c);
+  f.epoch = 3;
+  f.step(kId);
+  p = e.packet(0);
+  assertShowsCampinas(p);
+  TEST_ASSERT_EQUAL_UINT8(1, p.anchorSeq);  // Paris was never applied
+}
+
+// configure() runs on every config apply: anything but a reference change keeps the
+// anchor, including a navMode change (which only restarts the globe).
+void test_anchor_kept_by_other_config_changes() {
+  GaiaConfig c = mirrorCfg();
+  NavEngine e;
+  e.configure(c);
+  Feed f(e);
+  f.step(kId);
+  e.stageAnchor(kSaoPaulo);
+  f.epoch = 1;
+  f.step(kId);
+  e.configure(c);  // same config re-applied
+  c.co2AlertPpm = 1500;
+  c.navStartDegS = 25;
+  c.navNotifyHz = 25;
+  e.configure(c);
+  f.step(kId);
+  assertShowsAnchor(e.packet(0), kSaoPaulo);
+  c.navMode = 2;  // mirror -> joystick
+  e.configure(c);
+  f.step(rotY(30));  // first sample after the mode reset: G = identity
+  assertShowsAnchor(e.packet(0), kSaoPaulo);
+  // The same reference written again is not a change either.
+  c.navRefLatE6 = -22905556;
+  c.navRefLonE6 = -47060833;
+  e.configure(c);
+  f.step(kId);
+  TEST_ASSERT_EQUAL_UINT8(1, e.anchorSeq());
+  c.navMode = 1;
+  e.configure(c);
+  f.step(kId);
+  assertShowsAnchor(e.packet(0), kSaoPaulo);
+}
+
+void test_anchor_seq_counts_and_wraps() {
+  NavEngine e;
+  e.configure(mirrorCfg());
+  Feed f(e);
+  f.step(kId);
+  for (int i = 1; i <= 257; i++) {
+    e.stageAnchor(i % 2 ? kSaoPaulo : kParis);
+    f.epoch = (uint32_t)i;
+    f.step(kId);
+    TEST_ASSERT_EQUAL_UINT8((uint8_t)i, e.anchorSeq());  // ... 255, 0, 1
+    TEST_ASSERT_EQUAL_UINT8((uint8_t)i, e.packet(0).anchorSeq);
+  }
+}
+
+// Navigation off: nothing is applied until it is back on; the zero that came with the
+// anchor is then the epoch change that applies it.
+void test_anchor_staged_while_off_applies_when_on() {
+  GaiaConfig c = mirrorCfg();
+  NavEngine e;
+  e.configure(c);
+  Feed f(e);
+  f.step(kId);
+  c.navMode = 0;
+  e.configure(c);
+  e.stageAnchor(kSaoPaulo);
+  f.epoch = 1;
+  f.step(kId);
+  TEST_ASSERT_EQUAL_UINT8(0, e.anchorSeq());
+  c.navMode = 1;
+  e.configure(c);
+  f.step(kId);
+  assertShowsAnchor(e.packet(0), kSaoPaulo);
+  TEST_ASSERT_EQUAL_UINT8(1, e.anchorSeq());
+}
+
+void test_keepalive_carries_anchor_seq() {
+  NavEngine e;
+  e.configure(mirrorCfg());
+  Feed f(e);
+  f.step(kId);
+  TEST_ASSERT_EQUAL_UINT8(0, e.keepalivePacket(0, 0).anchorSeq);
+  e.stageAnchor(kSaoPaulo);
+  f.epoch = 1;
+  f.step(kId);
+  TEST_ASSERT_EQUAL_UINT8(1, e.keepalivePacket(0, 0).anchorSeq);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_divisor_rounds_and_never_exceeds_imu_rate);
@@ -643,5 +891,16 @@ int main() {
   RUN_TEST(test_mode_change_resets_motion);
   RUN_TEST(test_unrelated_config_changes_keep_state);
   RUN_TEST(test_reference_change_moves_identity_pose);
+  RUN_TEST(test_anchor_first_packet_mirror);
+  RUN_TEST(test_anchor_first_packet_joystick);
+  RUN_TEST(test_anchor_waits_for_the_new_epoch);
+  RUN_TEST(test_anchor_restaged_before_epoch_applies_latest_once);
+  RUN_TEST(test_anchor_sample_is_due_regardless_of_divisor);
+  RUN_TEST(test_anchor_survives_a_later_zero);
+  RUN_TEST(test_anchor_cleared_by_reference_change);
+  RUN_TEST(test_anchor_kept_by_other_config_changes);
+  RUN_TEST(test_anchor_seq_counts_and_wraps);
+  RUN_TEST(test_anchor_staged_while_off_applies_when_on);
+  RUN_TEST(test_keepalive_carries_anchor_seq);
   return UNITY_END();
 }
