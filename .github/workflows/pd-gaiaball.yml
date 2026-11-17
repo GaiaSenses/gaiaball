@@ -135,7 +135,8 @@ jobs:
 
       - name: Assemble the gaiaball/ folder
         run: |
-          cp pd-gaiaball/gaiaball-help.pd pd-gaiaball/README.md pd-gaiaball/gaiaball.c pd-gaiaball/Makefile gaiaball/
+          cp pd-gaiaball/gaiaball-help.pd pd-gaiaball/README.md pd-gaiaball/TUTORIAL.md pd-gaiaball/gaiaball.c pd-gaiaball/Makefile gaiaball/
+          cp -r pd-gaiaball/exemplos gaiaball/exemplos
           cp LICENSE gaiaball/LICENSE
           mkdir -p gaiaball/src gaiaball/pd-lib-builder
           cp pd-gaiaball/src/*.c pd-gaiaball/src/*.h gaiaball/src/

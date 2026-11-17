@@ -732,10 +732,10 @@ só, com os três valores novos, quando chega o `aceX` na entrada da esquerda.
 
 ## 10. Exemplos prontos
 
-Os exemplos ficam na pasta [`exemplos/`](exemplos/), ao lado deste tutorial. Se você
-instalou pelo Deken, os exemplos e este tutorial não vêm junto: baixe-os da pasta
-[`pd-gaiaball`](https://github.com/GaiaSenses/gaiaball/tree/main/pd-gaiaball) do
-repositório.
+Os exemplos ficam na pasta [`exemplos/`](exemplos/), ao lado deste tutorial. Quem
+instalou pelo Deken encontra os dois dentro da pasta `gaiaball` instalada; eles também
+estão na pasta [`pd-gaiaball`](https://github.com/GaiaSenses/gaiaball/tree/main/pd-gaiaball)
+do repositório.
 
 Para abrir: no Pd, **Arquivo → Abrir** e escolha o arquivo `.pd`. Cada exemplo tem o seu
 `[gaiaball]`; com vários abertos, os de depois avisam "porta em uso" no console, e tudo
