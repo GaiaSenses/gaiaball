@@ -113,11 +113,8 @@ de na taxa configurada. Compare, em Métricas, **Taxa** e Firmware › **IMU** c
 configurada (ex.: 50 Hz). Se estiverem muito acima, pare: nenhuma medição de latência, jitter
 ou deriva vale até isso ser resolvido.
 
-**Ordem do magnetômetro: remap antes de calibrar.** O campo **Eixos do magnetômetro**
-(Avançado) vale na hora, sem reiniciar, mas **invalida a calibração magnética existente**: o
-firmware publica as amostras da captura já remapeadas e o ajuste hard/soft-iron do navegador é
-feito sobre elas. Portanto: (1) escolha os eixos certos (confira o rumo em Quat9 girando a bola
-sobre a mesa), (2) só então rode a seção 4.2. Trocou os eixos depois? Recalibre.
+**Magnetômetro.** O config-app não oferece mais o modo Quat9 nem os eixos/calibração do
+magnetômetro; o firmware ainda os suporta via escrita TLV crua (ver `docs/protocolo-ble.md`).
 
 ```sh
 cd config-app
@@ -287,9 +284,8 @@ debounce 3 s.
    ficam em **Avançado**) e aplique: a vista 3D mostra o quaternion exatamente como chega da bola,
    então o efeito do slerp — e o atraso que ele adiciona — aparece na própria vista.
    Lembre que o site também suaviza por conta própria (mediana + EMA); evite exagerar.
-4. Deriva (item 08): em modo **Quat6 (relativo)**, deixe a bola parada por 5 min e anote a
-   deriva do yaw. Aproxime um ímã ou celular: em Quat6 nada deve mudar. Compare com
-   **Quat9 (absoluto)**.
+4. Deriva (item 08): em modo Quat6 (relativo), deixe a bola parada por 5 min e anote a
+   deriva do yaw. Aproxime um ímã ou celular: em Quat6 nada deve mudar.
 
 ## 4.1 Pipeline do IMU (firmware v7)
 
@@ -301,22 +297,16 @@ Tudo aqui se observa em Métricas › Firmware, que agora publica o estado inter
 | Bias com offset grande | Compare o bias estimado com a leitura crua do giroscópio parado (log serial) | O firmware aprende o offset mesmo acima de 2 °/s — era exatamente o caso que a versão anterior nunca corrigia |
 | Rejeição de aceleração | Dê um tranco lateral na bola, mantendo-a nivelada | “Estado da fusão” mostra **accel ignorado** durante o tranco e o modelo 3D não tomba |
 | Recuperação | Mantenha a bola acelerada/inclinada por mais de 5 s | O selo **accel ignorado** desaparece (o firmware volta a confiar no sensor) |
-| Rejeição magnética (Quat9) | Aproxime um ímã do globo | “Estado da fusão” mostra **mag ignorado** e o rumo não gira atrás do ímã |
 | Saturação do giroscópio | Gire a bola o mais rápido que conseguir | Com faixa ±1000 °/s o selo **saturação** deve ser raro; se aparecer com frequência, suba para ±2000 |
 | Anti-serrilhamento | Em “Filtro anti-serrilhamento (DLPF)” deixe em automático e apoie a bola sobre algo que vibre | Menos tremor do que forçando 41 Hz a 50 Hz de taxa |
 | Filtro 1€ | Modo **filtro 1€**; compare com **slerp fixo** em 100 | Parada: ambos ficam quietos. Em movimento rápido: o 1€ acompanha, o slerp fixo “borracha” (~190 ms) |
 | Espícula da aceleração | Ligue o filtro de espícula (k 3,0) e observe o gráfico de aceleração | Picos isolados desaparecem sem atraso visível; movimento real passa intacto |
 
-## 4.2 Calibração do magnetômetro (Configuração › Avançado › Magnetômetro)
+## 4.2 Calibração do magnetômetro
 
-1. Desbloqueie com o PIN e afaste a bola de metal, caixas de som e computadores.
-2. **Iniciar calibração** e gire devagar desenhando um 8 até os **8 setores** acenderem.
-3. Confira: campo entre 22 e 28 µT (Brasil) e resíduo **abaixo de 3 %**.
-4. **Gravar calibração na bola** (já persiste na NVS) — em Métricas a linha “Calibração
-   magnética” passa a **calibrado**.
-5. Em Quat9, gire a bola 360° sobre a mesa: o rumo deve voltar ao mesmo valor
-   (±5°). Antes da calibração esse erro chega a dezenas de graus.
-6. **Remover calibração** volta ao magnetômetro cru, para comparar.
+Não é mais oferecida pelo config-app (a bola é usada só em Quat6). O firmware mantém o
+Quat9 e a calibração (TLV `0x1E`), acessíveis por escrita TLV crua.
+
 5. Para persistir ajustes, **Salvar no dispositivo** (`0x11`). "Aplicar" vale só até reiniciar.
 
 ## 4.3 Navegação do globo e gatilho de CO₂ (firmware v9)
@@ -368,7 +358,7 @@ N = máx(1, arred(taxa do IMU ÷ taxa de navegação))); o painel Métricas e o 
 mesma sequência.
 
 **Reset do globo:** trocar o modo, trocar o ponto de referência, **Zerar orientação**,
-**Calibrar montagem** ou alternar Quat6 ↔ Quat9 levam o globo ao ponto de referência. Mexer
+**Calibrar montagem** levam o globo ao ponto de referência. Mexer
 nos demais parâmetros de navegação não.
 
 **Keepalive:** com Modo de navegação = Desligado (ou com o IMU parado/desconfigurado), a linha Navegação

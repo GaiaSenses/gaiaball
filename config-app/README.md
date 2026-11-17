@@ -43,9 +43,11 @@ A chave **Modo ajuste ⟷ Modo palco** fica no topo.
 
 O painel **Configuração** tem duas abas. **Básico** traz o que se muda para operar o globo
 (detector de sopro, navegação, CO₂, nome e PIN). **Avançado** traz o ajuste da cadeia de
-sinais e, abaixo dos campos, a **calibração do magnetômetro** e as **Métricas** (taxa,
+sinais e, abaixo dos campos, as **Métricas** (taxa,
 jitter, perda, idade da amostra, navegação e o diagnóstico do firmware): são ferramentas de
 bancada, que não precisam ficar à vista de quem opera.
+
+O app só oferece o modo **Quat6** (giroscópio + acelerômetro). O magnetômetro (Quat9) e a calibração dele saíram da interface; o firmware continua com o código. Se a bola vier gravada em Quat9, o painel avisa e o próximo **Aplicar** a devolve ao Quat6 (e reinicia a navegação do globo).
 
 ### Interruptores liga/desliga
 
@@ -145,7 +147,7 @@ A bola calcula sozinha para onde o globo virtual aponta e envia o resultado num 
   - Joystick: velocidade máxima (1–720 °/s), ângulo da velocidade máxima (5–90°) e curva de resposta p (1,0–4,0; 3,0 = cúbica).
   - Taxa de envio (10–200 Hz) e ponto de referência (lat, lon; padrão Campinas/SP). O ponto de referência não entra nos presets.
   - Limiares de partida/parada do Espelho (°/s) e do Joystick (°/s, uma casa decimal) e o tempo para considerar parado (ms). A parada precisa ser menor que a partida, nos dois pares; senão o firmware rejeita a escrita inteira. No Espelho, a velocidade é medida numa janela de ~100 ms (o tremor da mão não conta como movimento) e, parado, o globo volta a "em movimento" depois de um giro de 3°, mesmo lento.
-  - Os parâmetros do joystick e os limiares valem na hora e não movem o globo. Só trocar o modo, trocar o ponto de referência ou mudar a referência do IMU (**Zerar orientação**, **Calibrar montagem**, Quat6 ↔ Quat9) leva o globo de volta ao ponto de referência.
+  - Os parâmetros do joystick e os limiares valem na hora e não movem o globo. Só trocar o modo, trocar o ponto de referência ou mudar a referência do IMU (**Zerar orientação**, **Calibrar montagem**) leva o globo de volta ao ponto de referência.
 - **Referência e Zerar orientação** (painel Conexão): ligue a bola apoiada numa superfície plana e parada — a postura em que ela liga é a referência, sem “frente” marcada (o movimento é relativo a ela). O zero **não é gravado** e não precisa ser: ao religar, a referência volta a ser a postura do boot. **Zerar orientação** só troca a referência sem religar (bola parada na superfície). O lado da bola voltado para o público no instante da referência define como os gestos aparecem na tela.
 - **Gatilho de CO₂** (Configuração › CO₂): nível e histerese do bit de gatilho do pacote de CO₂; Métricas (Configuração › Avançado) mostra o bit na linha CO₂ ("gatilho: ligado/desligado"). O sopro só liga o gatilho se o pico virtual (`0x23`, padrão 2100 ppm) ficar acima do nível.
 - **Firmware antigo:** **Aplicar** só envia os registradores que a bola informou na leitura (o PIN sempre vai). Um firmware sem navegação recusaria a escrita inteira por causa de um registrador desconhecido; os que ficaram de fora são listados na mensagem.
