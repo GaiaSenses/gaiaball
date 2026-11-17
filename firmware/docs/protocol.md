@@ -15,7 +15,7 @@ Service `19b10000-e8f2-537e-4f6c-d104768a1214`.
 | `19b10003-e8f2-537e-4f6c-d104768a1214` | notify + read | CO2 packets |
 | `19b10004-e8f2-537e-4f6c-d104768a1214` | read + write | config TLV |
 | `19b10005-e8f2-537e-4f6c-d104768a1214` | notify + read | diagnostics (0x03, 1 Hz), live-sensor (0x04, 5 Hz), raw-audio (0x05, ~21 Hz, **only while TLV 0x1F is on**) and raw-magnetometer (0x06, ~3 Hz while calibrating) packets |
-| `19b10006-e8f2-537e-4f6c-d104768a1214` | notify + read | globe-navigation packets (0x07, see [NavPacket](#navpacket-22-bytes-type-0x07-own-characteristic)) |
+| `19b10006-e8f2-537e-4f6c-d104768a1214` | notify + read | globe-navigation packets (0x07, see [NavPacket](#navpacket-23-bytes-type-0x07-own-characteristic)) |
 
 The navigation characteristic (`…0006`) is **optional for clients**: firmware that
 predates it does not expose it, so a client must treat its absence as "navigation not
@@ -204,11 +204,11 @@ remap (TLV 0x36; default 8 = `+Y +X -Z`, i.e. the AK8963's X and Y swapped and Z
 inverted). The capture (`0x15`) only produces samples in **Quat9** mode
 (`orientationMode` = 1): the magnetometer is not read in Quat6.
 
-## NavPacket (22 bytes, type 0x07, own characteristic)
+## NavPacket (23 bytes, type 0x07, own characteristic)
 
 The globe pose, computed **on the ball** from the orientation (mirror or joystick) and
-sent on characteristic `19b10006-…` so the site only has to draw it. Needs MTU >= 25
-(22-byte payload + 3-byte ATT header).
+sent on characteristic `19b10006-…` so the site only has to draw it. Needs MTU >= 26
+(23-byte payload + 3-byte ATT header).
 
 | Offset | Size | Type | Field |
 |---|---|---|---|
@@ -222,6 +222,14 @@ sent on characteristic `19b10006-…` so the site only has to draw it. Needs MTU
 | 14 | 4 | i32 | lonE7 — screen-centre longitude, degrees × 1e7, (−180, 180] |
 | 18 | 2 | i16 | bearingX100 — Mapbox bearing, degrees × 100, (−180, 180] |
 | 20 | 2 | u16 | speedDegSX10 — reported globe speed, deg/s × 10 |
+| 22 | 1 | u8 | anchorSeq — anchors (command `0x17`) applied since boot, wrapping 255 → 0 |
+
+`anchorSeq` was appended (the version byte stays `1`): the first 22 bytes are unchanged,
+and a **22-byte NavPacket means firmware without command `0x17`**. It increments each
+time an anchor is applied, so a client that sent `0x17` sees its anchor take effect when
+`anchorSeq` changes (two anchors sent before the first applies count once: the later
+one wins). Keepalives carry it too. Decoders must accept packets of at least 22 bytes
+and ignore bytes they do not know.
 
 Flags: bit0 `valid` (the pose is live: the IMU orientation is valid), bit1 `settled`,
 bit2 `moving`.
@@ -248,7 +256,9 @@ bit2 `moving`.
   (the globe is drawn as seen from +X).
 - Globe frame E (unit sphere): x → (lat 0, lon 0), y → (lat 0, lon 90° E), z → north pole.
 - **Identity orientation shows the reference point** (TLV 0x62, default Campinas/SP,
-  lat −22.905556, lon −47.060833) **at the screen centre with north up** (bearing 0).
+  lat −22.905556, lon −47.060833) **at the screen centre with north up** (bearing 0),
+  unless an anchor (command `0x17`) is active: then it shows the anchor's point with the
+  anchor's bearing (see [Anchor](#anchor-command-0x17)).
 - Bearing: Mapbox convention, degrees clockwise from north of the direction that points
   UP on the screen, normalised to (−180, 180].
 - The `lat ±85.05°` clamp of Mapbox's map centre is a **client** limitation: the packet
@@ -297,27 +307,67 @@ bit2 `moving`.
   not snap it back).
 - **Reset to the reference point** (G = identity, state settled, first sample after it
   has dt = 0): only on a `navMode` change, a `navRef` change, or a change of the IMU's
-  reference — zero (`0x10`), mounting calibration (`0x14`), or switching Quat6 ↔ Quat9
-  (`orientationMode`). **The zero is not persisted, by design**: the ball is powered on
+  reference — zero (`0x10`), anchor (`0x17`), mounting calibration (`0x14`), or switching
+  Quat6 ↔ Quat9 (`orientationMode`). **The zero is not persisted, by design**: the ball is powered on
   resting on a flat surface and that boot pose is the reference (in Quat6 the heading is
   the heading at boot). Zeroing only re-references without a reboot.
 
-Golden vectors (hex, byte order as transmitted):
+### Anchor (command `0x17`)
 
-A — seq 258, timestampUs 12345678, mode 1, flags 0x03 (valid + settled),
-latE7 −229055560, lonE7 −470608330, bearingX100 4500, speedDegSX10 123
+A client anchors the navigation to its own map view, so connecting does not make the
+globe jump to the configured reference point. Argument after the opcode, little-endian:
+
+| Offset | Size | Type | Field |
+|---|---|---|---|
+| 0 | 4 | i32 | latE6 — degrees × 1e6, −90 000 000..90 000 000 |
+| 4 | 4 | i32 | lonE6 — degrees × 1e6, −180 000 000..180 000 000 |
+| 8 | 2 | i16 | bearingX100 — Mapbox bearing, degrees × 100, −18 000..18 000 (optional) |
+
+- 10 argument bytes, or 8 (no bearing: bearing 0). Any other length or a value out of
+  range is rejected (warning in the serial log, no effect).
+- **No PIN**: it is accepted on a locked connection (every other command in the table
+  below still needs the unlock). It is volatile: **RAM only**, not a config register,
+  never persisted by `0x11` or `0x14`, gone after a reboot.
+- Effect: it zeroes the orientation at that instant (same as `0x10`) and the reference
+  becomes (lat, lon, bearing). The anchor applies together with that zero: IMU samples
+  already queued from before the zero keep the old reference, and the **first NavPacket
+  after the zero takes effect shows the anchor** at the screen centre with the anchor's
+  bearing, in mirror and joystick mode (up to float rounding, ~1e-5° away from the
+  poles), with `anchorSeq` incremented. That packet is sent at once, whatever the phase
+  of the `navNotifyHz` divisor.
+- Lifetime: a later zero (`0x10`) keeps the anchor (the globe returns to it); a
+  `navMode` change keeps it; a write that **changes** `navRef` (TLV 0x62) drops it
+  (active or still pending) — the explicit reference wins; rewriting the same `navRef`
+  does not. A reboot drops it. With navigation off (`navMode` 0) or no IMU samples, the
+  anchor waits and applies once navigation runs again.
+
+Golden vectors (full command writes, opcode first):
 
 ```
-01 07 02 01 4E 61 BC 00 01 03 B8 E3 58 F2 36 16 F3 E3 94 11 7B 00
+17 C8 A5 98 FE A4 6E 38 FD D2 04    São Paulo: lat −23.550520, lon −46.633308, bearing 12.34
+17 18 7E E9 02 48 E4 23 00 D8 DC    Paris: lat 48.856600, lon 2.352200, bearing −90.00
+```
+
+### NavPacket golden vectors
+
+Hex, byte order as transmitted:
+
+A — seq 258, timestampUs 12345678, mode 1, flags 0x03 (valid + settled),
+latE7 −229055560, lonE7 −470608330, bearingX100 4500, speedDegSX10 123, anchorSeq 7
+
+```
+01 07 02 01 4E 61 BC 00 01 03 B8 E3 58 F2 36 16 F3 E3 94 11 7B 00 07
 ```
 
 B — format extremes, not a reachable state (every field at a limit of its type or range):
 seq 65535, timestampUs 4294967295, mode 2, flags 0x06 (settled + moving),
-latE7 900000000, lonE7 −1800000000, bearingX100 −18000, speedDegSX10 65535
+latE7 900000000, lonE7 −1800000000, bearingX100 −18000, speedDegSX10 65535, anchorSeq 255
 
 ```
-01 07 FF FF FF FF FF FF 02 06 00 E9 A4 35 00 2E B6 94 B0 B9 FF FF
+01 07 FF FF FF FF FF FF 02 06 00 E9 A4 35 00 2E B6 94 B0 B9 FF FF FF
 ```
+
+Firmware without `0x17` sends the same packets without the last byte (22 bytes).
 
 ## SensorsPacket (23 bytes, type 0x04, 5 Hz, diag characteristic)
 
@@ -409,15 +459,20 @@ to tune the band-pass against the live spectrum, then turn it off.
 | `0x14` | mounting calibration (also clears the zero and resets the navigation globe) |
 | `0x15` | start raw magnetometer capture (streams 0x06 packets; auto-stops after 180 s; samples only in Quat9 mode) |
 | `0x16` | stop raw magnetometer capture |
+| `0x17` + 8 or 10 bytes | anchor the navigation to a map view: `i32 latE6`, `i32 lonE6`, optional `i16 bearingX100`. **No PIN**, RAM only; also zeroes the orientation. See [Anchor](#anchor-command-0x17) |
 | `0x20` + ASCII PIN | unlock (PIN bytes follow the opcode) |
+
+Every opcode from `0x10` to `0x16` needs the connection to be unlocked (`0x20`) when the
+write arrives; `0x17` does not. Unknown opcodes are ignored. Arguments longer than 10
+bytes drop the write.
 
 Unlock is per connection and rate-limited: after 5 consecutive failed attempts the
 connection's unlock requests are refused (even with the correct PIN) until 30 s
 after the last failure. A successful unlock or a disconnect clears the streak.
 
 Commands get no response either (see the note under the UUID table): an unlock is
-confirmed by a subsequent config write taking effect, and a saved config by reading it
-back after a reboot.
+confirmed by a subsequent config write taking effect, a saved config by reading it
+back after a reboot, and an anchor by the NavPacket's `anchorSeq` changing.
 
 ## Config TLV (characteristic `...0004`)
 
@@ -425,7 +480,8 @@ A sequence of records `id u8 | len u8 | value (len bytes, little-endian)`.
 
 Reading the TLV requires no PIN **by design**: any connected central may inspect
 thresholds, rates, pins and the BLE name (the PIN itself is write-only and never
-serialized). Only TLV writes and the sensitive commands are gated by the unlock.
+serialized). Only TLV writes and the sensitive commands (`0x10`–`0x16`) are gated by the
+unlock.
 
 Persistence (command `0x11`) stores this same TLV serialization in NVS — not a struct
 dump — and loads it leniently (unknown ids and invalid values are skipped; the
@@ -488,8 +544,8 @@ TLV register and are persisted under their own NVS keys.
 | 0x41 | char[4] | "1234" | pin (write-only: never serialized/readable) |
 | 0x50 | u8 | 0 | serialLogEnabled — USB serial logging master switch (default OFF: log formatting steals CPU) |
 | 0x60 | u8 | 1 | navMode — 0 = off, 1 = mirror, 2 = joystick (0–2). A change resets the globe |
-| 0x61 | u8 | 50 | navNotifyHz — NavPacket rate (10–200); the effective rate is imuNotifyHz / N, see [NavPacket](#navpacket-22-bytes-type-0x07-own-characteristic) |
-| 0x62 | 8 bytes | −22905556, −47060833 | navRef — reference point shown at identity: `i32 latE6` (−90000000..90000000) then `i32 lonE6` (−180000000..180000000), degrees × 1e6 (default Campinas/SP). A change resets the globe |
+| 0x61 | u8 | 50 | navNotifyHz — NavPacket rate (10–200); the effective rate is imuNotifyHz / N, see [NavPacket](#navpacket-23-bytes-type-0x07-own-characteristic) |
+| 0x62 | 8 bytes | −22905556, −47060833 | navRef — reference point shown at identity: `i32 latE6` (−90000000..90000000) then `i32 lonE6` (−180000000..180000000), degrees × 1e6 (default Campinas/SP). A change resets the globe and drops an active `0x17` anchor |
 | 0x63 | u16 | 90 | joyMaxSpeedDegS — joystick speed at full tilt, deg/s (1–720) |
 | 0x64 | u8 | 60 | joyFullAngleDeg — tilt that commands full speed (5–90) |
 | 0x65 | u8 | 30 | joyCurveX10 — response exponent × 10 (10–40; 30 = cubic) |
@@ -562,7 +618,7 @@ standard aerospace roll/pitch/yaw formulas on (qw, qx, qy, qz).
 
 ## Golden vectors (hex, byte order as transmitted)
 
-The two NavPacket vectors are listed in the [NavPacket](#navpacket-22-bytes-type-0x07-own-characteristic) section.
+The two NavPacket vectors are listed in [NavPacket golden vectors](#navpacket-golden-vectors), and the two `0x17` command vectors in [Anchor](#anchor-command-0x17).
 
 ImuPacket (version 2): seq=258, timestampUs=0x0A0B0C0D, q=(1,0,0,0), acc=(1000,-500,151) mg
 (from counts 8192, -4096, 1234), flags=0b1011 (quatValid+nineAxis+audioValid),

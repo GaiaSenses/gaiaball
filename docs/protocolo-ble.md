@@ -24,7 +24,7 @@
      [0x07 Navegação](#pkt-nav)
 7. [Navegação do globo](#navegacao)
 8. [Escrevendo na bola: comandos, PIN e configuração](#escrita)
-   - [Comandos](#comandos) · [PIN](#pin) · [Configuração TLV](#tlv) ·
+   - [Comandos](#comandos) · [Âncora (`0x17`)](#ancora) · [PIN](#pin) · [Configuração TLV](#tlv) ·
      [Tabela completa de registradores](#tabela-tlv)
 9. [Passo a passo para escrever um cliente](#passo-a-passo)
 10. [Exemplos completos](#exemplos): [JavaScript](#exemplo-js) · [Python](#exemplo-python) ·
@@ -62,6 +62,7 @@ flowchart LR
     CO2 --> FW
   end
   FW -- "notify: IMU, CO₂, navegação" --> SITE["Site GaiaSenses<br/>Web Bluetooth"]
+  SITE -- "só o comando 0x17 (âncora)" --> FW
   FW -- "notify: tudo" --> APP["config-app<br/>bancada e ajustes"]
   APP -- "comandos e configuração" --> FW
   APP -- "WebSocket local<br/>127.0.0.1:9478" --> EXT["external [gaiaball]"]
@@ -70,14 +71,14 @@ flowchart LR
 
 | Programa | O que faz com a bola | Escreve na bola? |
 |---|---|---|
-| **Site GaiaSenses** | Move o globo do Mapbox com a navegação, abre composições quando o CO₂ dispara, repassa orientação, aceleração e CO₂ aos patches de Pure Data | Não |
+| **Site GaiaSenses** | Move o globo do Mapbox com a navegação, abre composições quando o CO₂ dispara, repassa orientação, aceleração e CO₂ aos patches de Pure Data | Só o comando de âncora `0x17` (sem PIN): a vista atual do mapa vira a referência da navegação |
 | **config-app** | Bancada: mostra tudo em gráficos, edita e salva a configuração, calibra | Sim (com PIN) |
 | **External `[gaiaball]`** (`pd-gaiaball/`) | Recebe da config-app, por WebSocket local, os pacotes de movimento, CO₂ e navegação e os publica no Pure Data (`[r gaia.*]`). Não conecta na bola | Não |
 | **O seu programa** | O que você quiser: este guia mostra como | Opcional |
 
 Ninguém precisa **parear** a bola: o firmware não usa pareamento nem criptografia de enlace.
 Ler é livre; o que muda a bola (comandos e configuração) exige destravar a conexão com um
-PIN de 4 dígitos.
+PIN de 4 dígitos. A única exceção é a [âncora](#ancora) (`0x17`), que só vive na RAM.
 
 ---
 
@@ -329,7 +330,7 @@ Três regras valem para todas:
 - **A característica 5 mistura tipos.** Olhe o byte 1 (tipo) de cada notificação e decida o
   que fazer; ignore tipos que você não conhece.
 - **Ler uma característica de notify** (*read*) devolve o último pacote enviado por notify,
-  ou só zeros se nenhum foi enviado desde o boot (a 6, por exemplo, devolve 22 bytes
+  ou só zeros se nenhum foi enviado desde o boot (a 6, por exemplo, devolve 23 bytes
   zerados). Um pacote zerado tem versão 0 e é recusado por um decodificador correto.
 
 ---
@@ -361,7 +362,7 @@ Resumo dos tipos (o "MTU mínimo" é o tamanho + 3 bytes do cabeçalho ATT):
 | `0x04` | Sensores (níveis de áudio e potenciômetro) | 23 B | 26 | 5 |
 | `0x05` | Áudio cru | 208 B | 211 | 5 |
 | `0x06` | Magnetômetro cru | 106 B | 109 | 5 |
-| `0x07` | Navegação | 22 B | 25 | 6 |
+| `0x07` | Navegação | 23 B | 26 | 6 |
 
 <a id="pkt-imu"></a>
 
@@ -568,7 +569,7 @@ segundo. **MTU mínimo:** 109.
 
 <a id="pkt-nav"></a>
 
-### Navegação — tipo `0x07`, 22 bytes (característica 6)
+### Navegação — tipo `0x07`, 23 bytes (característica 6)
 
 A pose do globo virtual, **calculada na bola**: para onde o centro da tela aponta e como o
 mapa está girado. Detalhes de uso em [Navegação do globo](#navegacao).
@@ -585,6 +586,7 @@ mapa está girado. Detalhes de uso em [Navegação do globo](#navegacao).
 | 14 | 4 | i32 | `lonE7` | graus × 10⁷ | Longitude do centro da tela, (−180, 180] |
 | 18 | 2 | i16 | `bearingX100` | graus × 100 | Rumo no padrão do Mapbox, (−180, 180]; pelo arredondamento pode chegar −18000 (−180,00°) |
 | 20 | 2 | u16 | `speedDegSX10` | °/s × 10 | Velocidade informada do globo; satura em 65535 (6553,5 °/s) |
+| 22 | 1 | u8 | `anchorSeq` | — | Quantas [âncoras](#ancora) (`0x17`) a bola aplicou desde o boot; depois de 255 volta a 0 |
 
 **Flags:**
 
@@ -599,7 +601,12 @@ os dois limiares (parada e partida) com a máquina ainda "parada", então `flags
 (`valid + settled + moving`) é um valor legal. No espelho, a máquina também sai de "parado"
 por um giro lento de 3° (veja [a máquina de estados](#nav-parado)), mesmo
 abaixo do limiar de partida. No modo joystick a velocidade informada é 0
-enquanto parado, então `moving` nunca liga junto com `settled`. **MTU mínimo:** 25.
+enquanto parado, então `moving` nunca liga junto com `settled`.
+
+**`anchorSeq`** foi acrescentado no fim (a versão continua 1): os 22 primeiros bytes não
+mudaram. Ele sobe de 1 cada vez que uma âncora é aplicada, inclusive no *keepalive*. É a
+confirmação da âncora: mandou `0x17`, espere o `anchorSeq` mudar. Um pacote de **22 bytes**
+quer dizer firmware sem o comando `0x17`. **MTU mínimo:** 26.
 
 ---
 
@@ -640,6 +647,8 @@ inclinar 60° ou mais dá 90 °/s. A curva cúbica deixa os movimentos pequenos 
 - **Orientação identidade = ponto de referência no centro, com o norte para cima.** O ponto
   de referência é o registrador `navRef` (`0x62`); o padrão é Campinas/SP, lat −22,905556,
   lon −47,060833. Logo depois de zerar, a bola mostra esse ponto no centro da tela com rumo 0.
+  Se um cliente mandou uma [âncora](#ancora) (`0x17`), vale o ponto e o rumo dela no lugar
+  do `navRef`.
 - **Rumo (*bearing*)**: convenção do Mapbox, graus no sentido horário a partir do norte, da
   direção que aponta **para cima na tela**, normalizado em (−180, 180].
 
@@ -665,6 +674,10 @@ desse lugar, mesmo que a bola não tenha se mexido.
 
 O Mapbox não aceita centro além de cerca de **±85,05°** de latitude. O pacote traz a pose
 verdadeira até ±90°; limitar perto dos polos é decisão do cliente.
+
+Para o globo **não pular** ao conectar (a bola manda a pose relativa ao `navRef`, e o mapa
+pode estar em outro lugar), o cliente manda antes a vista atual do mapa como
+[âncora](#ancora) (`0x17`).
 
 <a id="nav-parado"></a>
 
@@ -728,8 +741,9 @@ velocidade dele mesmo nunca conseguiria fazê-lo partir de novo.
   parada (`0x66`–`0x6A`) ou as taxas vale na hora e **não** mexe no globo.
 - **Volta ao ponto de referência** (globo na identidade, estado parado, primeira amostra sem
   velocidade) acontece **só** quando muda o `navMode`, muda o `navRef`, ou muda a
-  referência do IMU: **zerar** (`0x10`), **calibrar a montagem** (`0x14`) ou trocar entre
-  **Quat6 e Quat9** (`orientationMode`).
+  referência do IMU: **zerar** (`0x10`), **ancorar** (`0x17`), **calibrar a montagem**
+  (`0x14`) ou trocar entre **Quat6 e Quat9** (`orientationMode`). Com uma âncora ativa, o
+  "ponto de referência" é o dela.
 - **O zero não é salvo, de propósito.** A bola é ligada apoiada numa superfície plana e
   essa postura de boot já é a referência. O comando `0x10` só troca a referência sem
   religar (bola parada na superfície).
@@ -762,9 +776,68 @@ Um comando é um byte de **opcode**, às vezes seguido de argumentos.
 | `0x14` | sim | **Calibrar a montagem** (com a bola na posição de referência). Limpa o zero e volta o globo ao ponto de referência. A montagem é gravada na memória na hora, e com ela a configuração atual inteira. |
 | `0x15` | sim | Iniciar a captura crua do magnetômetro (pacotes `0x06`; para sozinha depois de 180 s; só no Quat9). |
 | `0x16` | sim | Parar a captura do magnetômetro. |
+| `0x17` + 8 ou 10 bytes | **não** | **Âncora:** a vista do mapa (lat, lon e rumo) vira a referência da navegação, e a orientação é zerada. Só na RAM. Veja [Âncora](#ancora). |
 | `0x20` + 4 dígitos ASCII | — | **Destravar** a conexão com o PIN (veja abaixo). |
 
-Qualquer outro opcode é ignorado.
+Qualquer outro opcode é ignorado. Argumentos com mais de 10 bytes derrubam o comando.
+
+<a id="ancora"></a>
+
+### Âncora: a vista do mapa vira a referência (`0x17`)
+
+A bola manda a pose do globo **relativa ao ponto de referência** (`navRef`, padrão
+Campinas). Se o site está mostrando São Paulo e conecta, o mapa pularia para Campinas. A
+âncora resolve isso: o cliente manda a vista atual do mapa e a bola passa a usá-la como
+referência **naquela sessão**.
+
+Argumento (depois do opcode), *little-endian*:
+
+| Offset | Tam. | Tipo | Campo | Faixa |
+|---|---|---|---|---|
+| 0 | 4 | i32 | `latE6` — latitude × 10⁶ | −90 000 000 a 90 000 000 |
+| 4 | 4 | i32 | `lonE6` — longitude × 10⁶ | −180 000 000 a 180 000 000 |
+| 8 | 2 | i16 | `bearingX100` — rumo do Mapbox × 100 (opcional) | −18 000 a 18 000 |
+
+- **10 bytes**, ou **8** (sem rumo: rumo 0). Outro tamanho ou um valor fora da faixa é
+  recusado em silêncio (só um aviso no log serial).
+- **Não precisa de PIN.** É o único comando aceito numa conexão travada; todos os outros
+  continuam pedindo o PIN.
+- **Só na RAM:** não é um registrador, o `0x11` e o `0x14` não a gravam, e ao religar a bola
+  a referência volta a ser o `navRef`.
+- **O que acontece:** a bola zera a orientação naquele instante (como o `0x10`) e a
+  referência passa a ser (lat, lon, rumo). O **primeiro pacote de navegação depois do zero
+  mostra exatamente a vista mandada** (até o arredondamento do *float*, uns 0,00001° longe
+  dos polos), no modo espelho e no joystick, com o `anchorSeq` uma unidade acima. Esse
+  pacote sai na hora, sem esperar a vez do divisor de taxa. Amostras do IMU que já estavam
+  na fila antes do zero continuam com a referência antiga.
+- **Quanto dura:** um `0x10` depois mantém a âncora (o globo volta para ela); trocar o
+  `navMode` também. Escrever um `navRef` **diferente** (`0x62`) apaga a âncora (a
+  referência explícita ganha); reescrever o mesmo valor não apaga. Religar apaga.
+- **Confirmação:** a bola não responde a comandos, mas o `anchorSeq` do pacote de
+  navegação muda quando a âncora é aplicada. Pacotes de 22 bytes = firmware sem `0x17`.
+
+Montando os bytes em JavaScript, a partir do Mapbox GL JS:
+
+```js
+// Comando 0x17: opcode + i32 latE6 + i32 lonE6 + i16 bearingX100, little-endian.
+function anchorCommand(lat, lon, bearing = 0) {
+  const dv = new DataView(new ArrayBuffer(11));
+  dv.setUint8(0, 0x17);
+  dv.setInt32(1, Math.round(lat * 1e6), true);
+  dv.setInt32(5, Math.round(lon * 1e6), true);
+  dv.setInt16(9, Math.round(bearing * 100), true);
+  return new Uint8Array(dv.buffer);
+}
+
+// O getCenter().wrap() traz a longitude para [−180, 180] mesmo depois de dar a volta no mapa.
+const { lat, lng } = map.getCenter().wrap();
+await chars.command.writeValueWithResponse(anchorCommand(lat, lng, map.getBearing()));
+
+// Conferência com o vetor de ouro de São Paulo:
+// anchorCommand(-23.550520, -46.633308, 12.34) → 17 c8 a5 98 fe a4 6e 38 fd d2 04
+```
+
+Em Python: `struct.pack("<Biih", 0x17, round(lat * 1e6), round(lon * 1e6), round(bearing * 100))`.
 
 <a id="pin"></a>
 
@@ -1105,6 +1178,8 @@ export function decodeNav(dv) {
     lon: dv.getInt32(14, true) / 1e7,
     bearing: dv.getInt16(18, true) / 100,
     speedDegS: dv.getUint16(20, true) / 10,
+    // Âncoras (0x17) aplicadas desde o boot; undefined num pacote de 22 bytes (firmware sem 0x17).
+    anchorSeq: dv.byteLength >= 23 ? dv.getUint8(22) : undefined,
   };
 }
 
@@ -1338,6 +1413,8 @@ def decode_nav(data: bytes):
         "lon": lon_e7 / 1e7,
         "bearing": bearing_x100 / 100,
         "speed_deg_s": speed_x10 / 10,
+        # Âncoras (0x17) aplicadas desde o boot; None num pacote de 22 bytes (firmware sem 0x17).
+        "anchor_seq": data[22] if len(data) >= 23 else None,
     }
 
 
@@ -1533,6 +1610,7 @@ typedef struct {
   uint8_t mode;   /* 0 desligado, 1 espelho, 2 joystick */
   uint8_t flags;  /* bit0 valid, bit1 settled, bit2 moving */
   double lat, lon, bearing, speed_deg_s;
+  int anchor_seq; /* âncoras (0x17) aplicadas desde o boot; -1 num pacote de 22 bytes */
 } gb_nav;
 
 /* Cada função devolve 1 se o pacote é válido, 0 se não é (versão, tipo ou tamanho).
@@ -1575,6 +1653,7 @@ int gb_decode_nav(const uint8_t *b, size_t n, gb_nav *o) {
   o->lon = rd_i32(b + 14) / 1e7;
   o->bearing = rd_i16(b + 18) / 100.0;
   o->speed_deg_s = rd_u16(b + 20) / 10.0;
+  o->anchor_seq = n >= 23 ? b[22] : -1;
   return 1;
 }
 
@@ -1605,10 +1684,10 @@ int main(void) {
                                          0x00, 0x00, 0x00, 0x00, 0x00, 0xE8, 0x03, 0x0C, 0xFE, 0x97, 0x00,
                                          0x1B, 0xF0, 0xC8, 0xF0, 0xE4};
   static const uint8_t co2[12] = {0x01, 0x02, 0x02, 0x01, 0x0D, 0x0C, 0x0B, 0x0A, 0xE8, 0x03, 0x05, 0x07};
-  static const uint8_t nav_a[22] = {0x01, 0x07, 0x02, 0x01, 0x4E, 0x61, 0xBC, 0x00, 0x01, 0x03, 0xB8,
-                                    0xE3, 0x58, 0xF2, 0x36, 0x16, 0xF3, 0xE3, 0x94, 0x11, 0x7B, 0x00};
-  static const uint8_t nav_b[22] = {0x01, 0x07, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02, 0x06, 0x00,
-                                    0xE9, 0xA4, 0x35, 0x00, 0x2E, 0xB6, 0x94, 0xB0, 0xB9, 0xFF, 0xFF};
+  static const uint8_t nav_a[23] = {0x01, 0x07, 0x02, 0x01, 0x4E, 0x61, 0xBC, 0x00, 0x01, 0x03, 0xB8, 0xE3,
+                                    0x58, 0xF2, 0x36, 0x16, 0xF3, 0xE3, 0x94, 0x11, 0x7B, 0x00, 0x07};
+  static const uint8_t nav_b[23] = {0x01, 0x07, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02, 0x06, 0x00, 0xE9,
+                                    0xA4, 0x35, 0x00, 0x2E, 0xB6, 0x94, 0xB0, 0xB9, 0xFF, 0xFF, 0xFF};
   gb_imu i, ib;
   gb_co2 c;
   gb_nav a, b;
@@ -1636,12 +1715,16 @@ int main(void) {
   check(a.seq == 258 && a.t_us == 12345678u && a.mode == 1 && a.flags == 0x03, "Nav A seq, tUs, modo, flags");
   check(same(a.lat, -22.905556) && same(a.lon, -47.060833), "Nav A lat -22.905556, lon -47.060833");
   check(same(a.bearing, 45.0) && same(a.speed_deg_s, 12.3), "Nav A rumo 45.00, velocidade 12.3");
+  check(a.anchor_seq == 7, "Nav A anchorSeq 7");
 
   check(gb_decode_nav(nav_b, sizeof nav_b, &b), "Nav B decodifica");
   check(b.seq == 65535 && b.t_us == 4294967295u && b.mode == 2 && b.flags == 0x06, "Nav B seq, tUs, modo, flags");
   check(same(b.lat, 90.0) && same(b.lon, -180.0), "Nav B lat 90, lon -180");
   check(same(b.bearing, -180.0) && same(b.speed_deg_s, 6553.5), "Nav B rumo -180.00, velocidade 6553.5");
+  check(b.anchor_seq == 255, "Nav B anchorSeq 255");
 
+  check(gb_decode_nav(nav_a, 22, &a) && a.anchor_seq == -1 && same(a.lat, -22.905556),
+        "Nav de 22 bytes (firmware sem 0x17): mesma pose, sem anchorSeq");
   check(!gb_decode_nav(nav_a, 21, &a), "pacote curto demais é recusado");
   check(!gb_decode_nav(imu, sizeof imu, &a), "tipo errado é recusado");
 
@@ -1709,30 +1792,43 @@ decodificador deve devolver `breath` verdadeiro e o resto igual.
 `metricPeak` + `adaptive` (`audioFiltered` desligado): o limiar de 100000 é então em contagens
 de **pico**, e o nível efetivo do detector adaptativo.
 
-**Navegação A (`0x07`, 22 bytes)**
+**Navegação A (`0x07`, 23 bytes)**
 
 ```
-01 07 02 01 4E 61 BC 00 01 03 B8 E3 58 F2 36 16 F3 E3 94 11 7B 00
+01 07 02 01 4E 61 BC 00 01 03 B8 E3 58 F2 36 16 F3 E3 94 11 7B 00 07
 ```
 
 `seq` 258 · `timestampUs` 12345678 · `mode` 1 (espelho) · `flags` 0x03 = `valid` +
 `settled` · `latE7` −229055560 → −22,905556° · `lonE7` −470608330 → −47,060833° ·
-`bearingX100` 4500 → 45,00° · `speedDegSX10` 123 → 12,3 °/s.
+`bearingX100` 4500 → 45,00° · `speedDegSX10` 123 → 12,3 °/s · `anchorSeq` 7.
 
-**Navegação B (`0x07`, 22 bytes): os limites de cada campo**
+**Navegação B (`0x07`, 23 bytes): os limites de cada campo**
 
 ```
-01 07 FF FF FF FF FF FF 02 06 00 E9 A4 35 00 2E B6 94 B0 B9 FF FF
+01 07 FF FF FF FF FF FF 02 06 00 E9 A4 35 00 2E B6 94 B0 B9 FF FF FF
 ```
 
 `seq` 65535 · `timestampUs` 4294967295 · `mode` 2 (joystick) · `flags` 0x06 = `settled` +
 `moving` (`valid` desligado) · `latE7` 900000000 → 90° · `lonE7` −1800000000 → −180° ·
-`bearingX100` −18000 → −180,00° · `speedDegSX10` 65535 → 6553,5 °/s.
+`bearingX100` −18000 → −180,00° · `speedDegSX10` 65535 → 6553,5 °/s · `anchorSeq` 255.
+
+Um firmware sem o comando `0x17` manda os mesmos pacotes sem o último byte (22 bytes): o
+decodificador deve aceitá-los, só sem `anchorSeq`.
 
 O vetor B testa o **formato** nos extremos; não é um estado que a bola produza. Na prática a longitude nunca sai como −180: o
 firmware a normaliza para (−180, 180]. O rumo também é normalizado para (−180, 180], mas o
 arredondamento para centésimos pode fazer um rumo de −179,996° chegar como −18000
 (−180,00°). Um decodificador deve aceitar os dois extremos.
+
+**Comando âncora (`0x17`, 11 bytes com o opcode)**: o site monta exatamente estes bytes.
+
+```
+17 C8 A5 98 FE A4 6E 38 FD D2 04    São Paulo: lat −23,550520, lon −46,633308, rumo 12,34°
+17 18 7E E9 02 48 E4 23 00 D8 DC    Paris: lat 48,856600, lon 2,352200, rumo −90,00°
+```
+
+No de São Paulo: `C8 A5 98 FE` = −23550520 (`latE6`), `A4 6E 38 FD` = −46633308 (`lonE6`),
+`D2 04` = 1234 (`bearingX100`).
 
 ### Convenção de Euler legada
 
@@ -1762,8 +1858,9 @@ está na **versão 2**. Uma versão só muda quando a mudança deixa de ser **ad
 
 1. **Campos novos só no fim do pacote.** Deslocamentos, tipos e escalas que já existem nunca
    mudam. Exemplos reais: o pacote IMU cresceu de 23 para 31 bytes (envelope do som, firmware
-   v8) e o de diagnóstico de 23 para 32 (v7) e depois 34 bytes (v8), sempre com versão 1
-   (o IMU só mudou de versão depois, veja a regra 8).
+   v8), o de diagnóstico de 23 para 32 (v7) e depois 34 bytes (v8), e o de navegação de 22
+   para 23 (`anchorSeq`, junto com o comando `0x17`), sempre com versão 1 (o IMU só mudou de
+   versão depois, veja a regra 8).
 2. **Decodificadores aceitam pacotes maiores.** Confira `tamanho ≥ mínimo`, nunca
    `tamanho == exato`. Um decodificador do site que exigia tamanho exato parou de funcionar
    quando o IMU cresceu, e um pacote recusado é indistinguível de uma bola desligada.
@@ -1809,7 +1906,7 @@ repositório da Gaiaball, "Deploying with GaiaSenses").
 
 **Conecto, assino, mas os números saem estranhos ou não chega nada.**
 Confira o MTU. Uma notificação maior que MTU − 3 é cortada: o IMU precisa de MTU ≥ 30, a
-navegação de ≥ 25, o áudio cru de ≥ 211. Um decodificador correto recusa o pacote cortado
+navegação de ≥ 26, o áudio cru de ≥ 211. Um decodificador correto recusa o pacote cortado
 (tamanho menor que o mínimo). No bleak, veja `client.mtu_size`; com o aplicativo nRF Connect
 dá para ver o MTU negociado. Confira também se você lê *little-endian* (em JavaScript, o
 `true` em `getInt16(o, true)`).
@@ -1858,7 +1955,15 @@ limite a latitude no cliente antes do `jumpTo`.
 
 **O globo voltou sozinho para Campinas.**
 Houve uma volta ao ponto de referência: mudou o `navMode` ou o `navRef`, alguém zerou
-(`0x10`), calibrou a montagem (`0x14`) ou trocou entre Quat6 e Quat9.
+(`0x10`), calibrou a montagem (`0x14`) ou trocou entre Quat6 e Quat9. Com uma âncora
+(`0x17`) ativa, a volta é para o ponto dela, e não para Campinas; depois de religar a bola,
+ou de escrever um `navRef` diferente, a âncora some e vale de novo o `navRef`.
+
+**Mandei a âncora (`0x17`) e o `anchorSeq` não mudou.**
+Confira o tamanho (opcode + 8 ou 10 bytes) e as faixas: um comando fora delas é ignorado. Com
+`navMode` = 0 ou sem amostras do IMU, a âncora fica esperando e só é aplicada quando a
+navegação volta a rodar. Se o pacote de navegação tem 22 bytes, o firmware não tem o `0x17`:
+grave o firmware atual.
 
 **Depois de religar a bola, o globo aponta torto.**
 A referência é a postura em que a bola liga. Ligue-a apoiada numa superfície plana e
@@ -1890,7 +1995,8 @@ O nome (`0x40`) vale depois de reiniciar: salve (`0x11`) e reinicie (`0x13`).
 | Especificação curta (inglês) | [`firmware/docs/protocol.md`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/docs/protocol.md) |
 | Formato dos pacotes | [`Packets.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/Packets.h), [`PacketCodec.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/PacketCodec.cpp) |
 | Registradores e validação | [`TlvCodec.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/TlvCodec.cpp), [`GaiaConfig.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/GaiaConfig.h) |
-| Serviço, características, PIN | [`BleService.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/services/BleService.cpp), [`CommandGate.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/CommandGate.cpp) |
+| Serviço, características, PIN, quais comandos pedem PIN | [`BleService.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/services/BleService.cpp), [`CommandGate.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/CommandGate.cpp) |
+| Âncora (`0x17`) | [`AnchorCommand.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/AnchorCommand.cpp) (argumento), [`NavEngine.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/NavEngine.cpp) (aplicação) |
 | Taxas, CO₂, comandos | [`App.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/App.cpp), [`Co2Trigger.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/Co2Trigger.h) |
 | Navegação | [`NavEngine.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/NavEngine.cpp), [`NavMath.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/NavMath.cpp), [`MotionSettle.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/MotionSettle.h) |
 | Vetores de ouro do firmware | [`test_protocol.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/test/test_protocol/test_protocol.cpp) |

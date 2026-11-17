@@ -368,11 +368,28 @@ N = máx(1, arred(taxa do IMU ÷ taxa de navegação))); o painel Métricas e o 
 mesma sequência.
 
 **Reset do globo:** trocar o modo, trocar o ponto de referência, **Zerar orientação**,
-**Calibrar montagem** ou alternar Quat6 ↔ Quat9 levam o globo ao ponto de referência. Mexer
+a âncora (`0x17`, abaixo), **Calibrar montagem** ou alternar Quat6 ↔ Quat9 levam o globo ao
+ponto de referência (com uma âncora ativa, ao ponto dela). Mexer
 nos demais parâmetros de navegação não.
 
 **Keepalive:** com Modo de navegação = Desligado (ou com o IMU parado/desconfigurado), a linha Navegação
 mostra "sem dados" e continua atualizando uma vez por segundo, sem pose.
+
+**Âncora (comando `0x17`, sem PIN).** O config-app não tem botão para ela (é o site que a
+manda ao conectar); use o **nRF Connect** (celular) como segunda central, com o config-app
+conectado ao mesmo tempo só para ver a linha Navegação. No nRF Connect **não** destrave a
+conexão: a âncora precisa funcionar travada.
+
+| Item | Como verificar | Esperado |
+|---|---|---|
+| Versão | No nRF Connect, assine a `…0006` | Notificações de **23 bytes**; o último byte é o `anchorSeq` (0 logo depois do boot). 22 bytes = firmware sem `0x17` |
+| Aplicar | Bola parada, modo Espelho. Escreva na `…0002` o vetor de São Paulo: `17C8A598FEA46E38FDD204` | A linha Navegação vai na hora para lat −23,5505°, lon −46,6333°, rumo 12,34°, "parado"; o último byte da `…0006` sobe 1 |
+| Joystick | Repita em Joystick (vetor de Paris: `17187EE90248E42300D8DC`) | O globo vai para lat 48,8566°, lon 2,3522°, rumo −90,00°, `anchorSeq` +1. A âncora também zera: a postura do envio passa a ser a neutra, e inclinar a partir dela leva o globo para longe de Paris |
+| Recusa | Escreva `17C8A598FE` (só 4 bytes de argumento) | Nada muda; `anchorSeq` igual; aviso "anchor rejected" no log serial (se ligado) |
+| Outros comandos travados | Ainda sem destravar, escreva `10` (zerar) | Recusado: nada muda (só a âncora dispensa o PIN) |
+| Zero mantém | Destrave no config-app e **Zerar orientação** em outra postura | O globo volta para a âncora (São Paulo/Paris), não para Campinas; `anchorSeq` igual |
+| `navRef` apaga | Mude o ponto de referência no config-app e **Aplicar** | O globo vai para o novo ponto; um zero depois volta para ele, não para a âncora |
+| Só na RAM | Mande a âncora de novo, **Salvar** (`0x11`) e **Reiniciar** | Depois do boot a referência é Campinas (ou o `navRef` salvo) e o `anchorSeq` voltou a 0 |
 
 **Gatilho de CO₂** (Configuração › CO₂: gatilho 1200 ppm, histerese 50 ppm por padrão):
 o pacote de CO₂ ganhou o bit 3 (`0x08`) das flags. O painel Métricas o mostra na linha

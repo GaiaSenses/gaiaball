@@ -95,8 +95,10 @@ silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen b
   connect, but the central decides, so the granted value is reported rather than
   assumed — it is the ceiling on every notify rate.
 - **BLE → App (commands)**: every command except `0x20` (unlock, inline on the host task)
-  goes through the BleCommand queue. Gated opcodes are authorized with
-  `BleCommand::unlockedAtEnqueue`, never by re-querying the gate.
+  goes through the BleCommand queue (args up to 10 bytes, the size of the `0x17` anchor).
+  Gated opcodes are authorized with `BleCommand::unlockedAtEnqueue`, never by
+  re-querying the gate; which opcodes are gated is `commandAccess()` in
+  `src/logic/CommandGate.h` (`0x10`–`0x16` need the PIN, `0x17` does not).
 - **BLE → App (config)**: `ConfigStore::applyTlv` runs on the host task and fires onChange
   there; the handler only sets `configDirty_`. The App task then re-applies the config:
   `applyConfig` on IMU/audio/CO2/pot plus `App::applySnapshot` — the ONE place that
@@ -119,6 +121,12 @@ silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen b
   App task's `NavEngine` (App-task-only, fed on every sample before the IMU notify
   throttle) resets the globe when the epoch changes, so a new reference never reads as a
   sudden swing; no extra lock or flag crosses the tasks.
+- **Anchor (`0x17`)**: `App::dispatch` parses the map view (`parseAnchorArgs`), calls
+  `NavEngine::stageAnchor` and only then `requestZeroOrientation()`. The staged anchor is
+  applied by the NavEngine reset that the zero's new epoch triggers, so IMU samples
+  already queued from the old epoch keep the old reference. Dispatch and `NavEngine::update`
+  both run on the App task, so the hand-off needs no lock. The anchor lives in the
+  NavEngine's RAM only; a changed `navRef` (TLV 0x62) drops it.
 - **IMU → App (magnetometer capture)**: `0x15` starts the capture; the IMU task pushes
   each RAW magnetometer triplet into a depth-32 queue (drop-oldest, so a stalled reader
   cannot stall the capture) and the App task batches 16 per `MagChunkPacket`. The

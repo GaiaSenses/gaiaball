@@ -128,12 +128,15 @@ config write that lands both LED functions on the same GPIO is rejected atomical
   Notifications are only sent to subscribers. See [BLE byte budget](#ble-byte-budget).
 - **Globe navigation** is computed on the ball (`src/logic/NavEngine.*`): mirror (the
   globe is the orientation) or joystick (the tilt steers the globe), with a
-  moving/settled state machine, sent as a 22-byte NavPacket on its own characteristic
+  moving/settled state machine, sent as a 23-byte NavPacket on its own characteristic
   (`19b10006-…`, optional for clients) every N IMU samples,
   N = max(1, round(`imuNotifyHz` / `navNotifyHz`)), plus a 1 Hz `valid = 0` keepalive
   when navigation is off or the IMU is silent for more than 500 ms. Frames, laws and
-  resets: [`docs/protocol.md`](docs/protocol.md#navpacket-22-bytes-type-0x07-own-characteristic).
-  The zero (`0x10`) is not persisted across power cycles. The CO2 packet also carries a
+  resets: [`docs/protocol.md`](docs/protocol.md#navpacket-23-bytes-type-0x07-own-characteristic).
+  The zero (`0x10`) is not persisted across power cycles. Command `0x17` (no PIN) anchors
+  the navigation to a client's map view: it zeroes the orientation and makes that
+  lat/lon/bearing the reference for the session (RAM only, until a reboot or a `navRef`
+  change); the NavPacket's `anchorSeq` confirms it was applied. The CO2 packet also carries a
   `trigger` flag (TLV `0x29`/`0x2A`, level with hysteresis).
 - On every connect the firmware requests a **7.5–15 ms connection interval** (0 latency,
   4 s supervision timeout). This is what makes rates above ~60 Hz reachable at all: a
@@ -210,12 +213,14 @@ Default configuration (`imuNotifyHz` = 50, raw stream off):
 ### Globe navigation (v9): the NavPacket
 
 The NavPacket is a packet of its own (own characteristic), so it pays the full per-slot
-cost: 22 B payload, `(22 + 17) x 8 + 80 + 300` = **692 µs** per notification. At the
+cost: 23 B payload (22 in v9; `anchorSeq` was appended with command `0x17`),
+`(23 + 17) x 8 + 80 + 300` = **700 µs** per notification. At the
 default `navNotifyHz` = 50 (N = 1 at `imuNotifyHz` = 50) that is
-50 x 22 = **1100 B/s** and 50 x 692 µs = **34.6 ms/s** of air time, +50 packets/s. It is
+50 x 23 = **1150 B/s** and 50 x 700 µs = **35.0 ms/s** of air time, +50 packets/s. It is
 sent only while a central subscribes to `…0006`, and the rate does not depend on
 `imuNotifyHz`: at 100 or 200 Hz the divisor is 2 or 4 and the nav stream stays at 50 Hz.
-The 1 Hz keepalive (navigation off or IMU silent) is 22 B/s and 0.7 ms/s. The Co2Packet
+The 1 Hz keepalive (navigation off or IMU silent) is 23 B/s and 0.7 ms/s. The extra
+`anchorSeq` byte costs +50 B/s and +0.4 ms/s at 50 Hz; the tables below include it. The Co2Packet
 trigger flag is one bit of an existing byte: 0 extra bytes.
 
 These figures are arithmetic from the formula above, **not measured on hardware**.
@@ -233,13 +238,13 @@ inside it), and because only the peak needed new per-sample work.
 | v8 at 100 Hz, stream off | 107 | 2861 B/s | 78.1 ms/s | 7.8 % |
 | v8 at 200 Hz, stream off | 207 | 5561 B/s | 151.3 ms/s | 15.1 % |
 | v8 at 100 Hz while tuning (stream on) | 128 | 7194 B/s | 123.5 ms/s | 12.4 % |
-| **v9 default (50 Hz, stream off, nav 50 Hz)** | **107** | **2611 B/s** | **76.1 ms/s** | **7.6 %** |
-| v9 at 100 Hz, stream off, nav 50 Hz | 157 | 3961 B/s | 112.7 ms/s | 11.3 % |
-| v9 at 200 Hz, stream off, nav 50 Hz | 257 | 6661 B/s | 185.9 ms/s | 18.6 % |
-| v9 at 100 Hz while tuning (stream on, nav 50 Hz) | 178 | 8294 B/s | 158.1 ms/s | 15.8 % |
+| **v9 default (50 Hz, stream off, nav 50 Hz)** | **107** | **2661 B/s** | **76.5 ms/s** | **7.7 %** |
+| v9 at 100 Hz, stream off, nav 50 Hz | 157 | 4011 B/s | 113.1 ms/s | 11.3 % |
+| v9 at 200 Hz, stream off, nav 50 Hz | 257 | 6711 B/s | 186.3 ms/s | 18.6 % |
+| v9 at 100 Hz while tuning (stream on, nav 50 Hz) | 178 | 8344 B/s | 158.5 ms/s | 15.9 % |
 
-The v9 rows are the v8 rows plus the NavPacket at 50 Hz (+50 packets/s, +1100 B/s,
-+34.6 ms/s). Breakdown of the v9 default (v8 plus the NavPacket row), per packet type:
+The v9 rows are the v8 rows plus the 23-byte NavPacket at 50 Hz (+50 packets/s,
++1150 B/s, +35.0 ms/s). Breakdown of the v9 default (v8 plus the NavPacket row), per packet type:
 
 | Packet | Payload | Rate | Payload/s | Air time/s |
 |---|---|---|---|---|
@@ -247,9 +252,9 @@ The v9 rows are the v8 rows plus the NavPacket at 50 Hz (+50 packets/s, +1100 B/
 | SensorsPacket (threshold, pot, health) | 23 B | 5 Hz | 115 B/s | 3.5 ms |
 | DiagPacket | 34 B | 1 Hz | 34 B/s | 0.8 ms |
 | Co2Packet | 12 B | 1 Hz | 12 B/s | 0.6 ms |
-| NavPacket (v9, own characteristic) | 22 B | 50 Hz | 1100 B/s | 34.6 ms |
+| NavPacket (v9, own characteristic) | 23 B | 50 Hz | 1150 B/s | 35.0 ms |
 | AudioChunkPacket (opt-in) | 208 B | 0 (20.8 Hz when on) | 0 (4333 B/s) | 0 (45.4 ms) |
-| **Total (v8 was 1511 B/s, 41.5 ms)** | | | **2611 B/s** | **76.1 ms** |
+| **Total (v8 was 1511 B/s, 41.5 ms)** | | | **2661 B/s** | **76.5 ms** |
 
 ### Why the spectrum is not computed here
 
@@ -429,9 +434,13 @@ that connection's unlock for 30 s. Unlock lasts until disconnect.
 | `0x14` | mounting calibration (captured and saved to NVS automatically) | yes |
 | `0x15` | start raw magnetometer capture (streams MagChunk packets; auto-stops after 180 s) | yes |
 | `0x16` | stop raw magnetometer capture | yes |
+| `0x17` + 8/10 bytes | anchor: `i32 latE6`, `i32 lonE6`, optional `i16 bearingX100` (little-endian) becomes the navigation reference and the orientation is zeroed; RAM only, never saved | **no** |
 | `0x20` + PIN | unlock this connection | — |
 
-Locked or unknown commands are ignored and logged on the serial console.
+Locked or unknown commands are ignored and logged on the serial console. `0x17` is the
+one opcode accepted on a locked connection: the GaiaSenses site sends it on connect so
+the globe starts where the map already is. Details:
+[`docs/protocol.md`](docs/protocol.md#anchor-command-0x17).
 
 ### Changing the PIN
 
