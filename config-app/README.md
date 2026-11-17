@@ -174,7 +174,7 @@ npm run preview    # serve dist/ localmente (ou sirva dist/ com qualquer servido
 npm test           # testes (vitest)
 ```
 
-**Modo demo:** abra `http://localhost:5173/?demo=1` para ver a visualização 3D, as métricas e o painel de sensores com dados sintéticos, sem dispositivo.
+**Modo demo:** abra `http://localhost:5173/?demo=1` para ver a visualização 3D, as métricas e o painel de sensores com dados sintéticos, sem dispositivo. O demo também simula a leitura da configuração (uma bola falsa com os registradores de fábrica, que guarda o que você aplica), então dá para experimentar a faixa de status, as marcas "na bola: …" e o **Aplicar (n)**.
 
 ## Roteiro de bancada
 
@@ -182,7 +182,7 @@ npm test           # testes (vitest)
 2. **Desbloquear** com o PIN (padrão de fábrica: `1234`). O firmware não confirma o PIN; sem ele, comandos e escritas sensíveis são ignorados.
 3. Ao conectar, o app **lê sozinho a configuração da bola** (até 3 tentativas) e preenche o formulário; a faixa no topo do painel Configuração mostra "Lendo…", "Valores lidos da bola às HH:MM:SS · IMU em uso: …" ou, se falhar, "Tentar de novo". **Ler do dispositivo** lê de novo e descarta o que você editou. Um campo editado (ou vindo de um preset) que difere da bola mostra "na bola: …" embaixo, e o botão vira **Aplicar (n)**.
 4. Em **superfície plana**, gire a bola e acompanhe **Taxa**, **Perda** e **Jitter** em Configuração › Avançado › Métricas.
-5. Acompanhe a vista 3D — ela mostra o quaternion tratado exatamente como chega da bola — e ajuste Modo e Taxa (Hz). Para suavizar o movimento, use **Suavização do quaternion (slerp)** no painel Configuração: como a vista reflete o fluxo real, o efeito do slerp (e o atraso que ele adiciona) aparece nela ao aplicar.
+5. Acompanhe a vista 3D — ela mostra o quaternion tratado exatamente como chega da bola — e ajuste a Taxa (Hz). Para suavizar o movimento, use **Suavização do quaternion (slerp)** no painel Configuração: como a vista reflete o fluxo real, o efeito do slerp (e o atraso que ele adiciona) aparece nela ao aplicar.
 6. **Aplicar**: só os campos alterados são enviados; em seguida o app relê o dispositivo para verificar. Se algum valor voltar ao anterior, aparece o aviso "alguns valores não foram aceitos (desbloqueou com o PIN?)".
 7. Se tudo foi aceito, o **Aplicar** já grava na NVS (comando `0x11`), como descrito em "Persistência": a configuração sobrevive a desligar/reiniciar a bola.
 8. **Presets**: salve a configuração atual com um nome, carregue (só preenche o formulário; clique em Aplicar para enviar), exclua, exporte/importe JSON. O PIN nunca entra nos presets nem é lido do dispositivo.

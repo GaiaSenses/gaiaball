@@ -146,12 +146,14 @@ os critérios e onde olhar cada número.
 1. **Conectar** (painel Conexão) e escolher `Globo_1`.
 2. **Desbloquear** com o PIN `1234` (botão "Desbloquear"). O firmware não confirma o PIN:
    se escritas/comandos forem ignorados, o PIN está errado ou o bloqueio de 30 s está ativo.
-3. **Ler do dispositivo** (painel Configuração). O formulário já abre preenchido com os
-   padrões de fábrica; depois da leitura os valores devem continuar iguais aos da tabela
-   de `firmware/README.md` (item 02). O painel tem duas abas: **Básico** (14 parâmetros
-   de operação) e **Avançado** (26 de afinação da cadeia de sinais). A contagem na aba
-   Avançado acende quando algum parâmetro está fora do padrão — confira isso antes de
-   culpar o firmware por um comportamento estranho.
+3. **Conferir a leitura** (painel Configuração). Ao conectar, o app já lê sozinho a
+   configuração da bola; a faixa no topo do painel mostra "Valores lidos da bola às
+   HH:MM:SS · IMU em uso: …" (o botão **Ler do dispositivo** só lê de novo). Numa bola com
+   os padrões de fábrica, os valores lidos devem ser iguais aos da tabela de
+   `firmware/README.md` (item 02). O painel tem duas abas: **Básico** (parâmetros de
+   operação) e **Avançado** (afinação da cadeia de sinais; o número na aba diz quantos
+   parâmetros ficam ali). O ponto na aba Avançado acende quando algum parâmetro está fora
+   do padrão — confira isso antes de culpar o firmware por um comportamento estranho.
 4. Medir em **Métricas**, no fim da aba Configuração › Avançado (deixe a bola em movimento):
 
 | Critério | Onde olhar | Meta |
@@ -307,8 +309,6 @@ Tudo aqui se observa em Métricas › Firmware, que agora publica o estado inter
 Não é mais oferecida pelo config-app (a bola é usada só em Quat6). O firmware mantém o
 Quat9 e a calibração (TLV `0x1E`), acessíveis por escrita TLV crua.
 
-5. Para persistir ajustes, **Salvar no dispositivo** (`0x11`). "Aplicar" vale só até reiniciar.
-
 ## 4.3 Navegação do globo e gatilho de CO₂ (firmware v9)
 
 O firmware calcula a posição do globo (modo Espelho ou Joystick) e a envia no `NavPacket`
@@ -451,7 +451,7 @@ segue) de reboot (uptime volta a zero).
 | IMU ausente: boot lento (+5 s) | IMU não responde no I²C (fiação SDA 21 / SCL 22, AD0 em GND, alimentação). `imuOk` fica desligada (Firmware › **Saúde**); o resto do firmware segue rodando. |
 | Escritas e comandos ignorados | Não desbloqueado, PIN errado, ou bloqueio de 30 s (5 erros seguidos). Aguarde 30 s ou reconecte e tente de novo. |
 | Valores voltam ao anterior após **Aplicar** | O app avisa "alguns valores não foram aceitos (desbloqueou com o PIN?)". |
-| Config sumiu após reiniciar | Faltou **Salvar no dispositivo** (`0x11`). |
+| Config sumiu após reiniciar | O **Aplicar** só grava na NVS (`0x11`) quando a bola aceita tudo. Se ele avisou "⚠ alguns valores não foram aceitos (desbloqueou com o PIN?)", nada foi gravado: desbloqueie e aplique de novo (sucesso = "Aplicado, verificado e salvo no dispositivo"). Escrita TLV crua, feita fora do app, também precisa do `0x11` (**Salvar no dispositivo**). Apagar a flash (`-t erase`) volta tudo ao padrão de fábrica. |
 | Navegador não lista o dispositivo | Use Chrome/Edge em `localhost` ou HTTPS; confira se o nome BLE continua `Globo_1`. |
 | Erros UART crescendo / CO₂ inválido | Fiação/interferência no GPIO16, ou o SC8 emudeceu após receber uma consulta — religue a alimentação (seção 5). |
 | Site novo não conecta no firmware antigo, ou o contrário | Veja a ordem de deploy no `README.md` da raiz. |
