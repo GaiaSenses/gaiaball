@@ -129,7 +129,7 @@ config write that lands both LED functions on the same GPIO is rejected atomical
 - **Globe navigation** is computed on the ball (`src/logic/NavEngine.*`): mirror (the
   globe is the orientation) or joystick (the tilt steers the globe), with a
   moving/settled state machine, sent as a 23-byte NavPacket on its own characteristic
-  (`19b10006-…`, optional for clients) every N IMU samples,
+  (`19b10006-…`) every N IMU samples,
   N = max(1, round(`imuNotifyHz` / `navNotifyHz`)), plus a 1 Hz `valid = 0` keepalive
   when navigation is off or the IMU is silent for more than 500 ms. Frames, laws and
   resets: [`docs/protocol.md`](docs/protocol.md#navpacket-23-bytes-type-0x07-own-characteristic).

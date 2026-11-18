@@ -326,8 +326,8 @@ Serviço: **`19b10000-e8f2-537e-4f6c-d104768a1214`**
 
 Três regras valem para todas:
 
-- **A característica 6 é opcional para os clientes.** Firmware anterior à navegação não a
-  tem. Se ela não existir, trate como "navegação não suportada" e continue com as outras.
+- **As seis existem em toda bola**, inclusive a 6 (navegação): o cliente pede cada uma pelo
+  UUID, sem caminho alternativo para a falta de alguma.
 - **A característica 5 mistura tipos.** Olhe o byte 1 (tipo) de cada notificação e decida o
   que fazer; ignore tipos que você não conhece.
 - **Ler uma característica de notify** (*read*) devolve o último pacote enviado por notify,
@@ -408,8 +408,7 @@ A orientação da bola, a aceleração, o som dos microfones e o sopro, todos do
   lê ±4000. Os filtros de aceleração (registradores `0x04` e `0x1D`) agem antes do envio,
   na mesma escala.
 - **Som.** Medido no firmware numa janela de `audioWindowMs` (registrador `0x2F`, padrão
-  50 ms; 20 ms fixos em firmware sem ele) que termina nesta amostra (o pico é
-  acompanhado nos 16 kHz completos). RMS em dBFS AES17 (0 dBFS = senoide de fundo de escala);
+  50 ms) que termina nesta amostra (o pico é acompanhado nos 16 kHz completos). RMS em dBFS AES17 (0 dBFS = senoide de fundo de escala);
   pico em dBFS de amplitude (0 dBFS = amostra de fundo de escala). A mesma senoide aparece
   3,01 dB mais baixa no pico. Cada nível é um byte em passos de **0,5 dB**:
   `valor = clamp(round((dBFS + 120) × 2), 0, 255)` e, na leitura, `dBFS = valor / 2 − 120`.
@@ -611,10 +610,9 @@ por um giro lento de 3° (veja [a máquina de estados](#nav-parado)), mesmo
 abaixo do limiar de partida. No modo joystick a velocidade informada é 0
 enquanto parado, então `moving` nunca liga junto com `settled`.
 
-**`anchorSeq`** foi acrescentado no fim (a versão continua 1): os 22 primeiros bytes não
-mudaram. Ele sobe de 1 cada vez que uma âncora é aplicada, inclusive no *keepalive*. É a
-confirmação da âncora: mandou `0x17`, espere o `anchorSeq` mudar. Um pacote de **22 bytes**
-quer dizer firmware sem o comando `0x17`. **MTU mínimo:** 26.
+**`anchorSeq`** sobe de 1 cada vez que uma âncora é aplicada, e vem em todo pacote,
+inclusive no *keepalive*. É a confirmação da âncora: mandou `0x17`, espere o `anchorSeq`
+mudar. **MTU mínimo:** 26.
 
 ---
 
@@ -776,7 +774,7 @@ Um comando é um byte de **opcode**, às vezes seguido de argumentos.
 
 | Opcode | Precisa de PIN? | O que faz |
 |---|---|---|
-| `0x00`, `0x01` | — | Reservados (comando de LED do firmware antigo, removido). Ignorados; não reutilize. |
+| `0x00`, `0x01` | — | Reservados (eram o comando de LED, removido). Ignorados; não reutilize. |
 | `0x10` | sim | **Zerar a orientação.** Também volta o globo ao ponto de referência. Não é salvo: vale até a bola desligar. |
 | `0x11` | sim | **Salvar** a configuração atual na memória permanente (NVS). |
 | `0x12` | sim | **Restaurar o padrão de fábrica** e reiniciar. |
@@ -785,7 +783,7 @@ Um comando é um byte de **opcode**, às vezes seguido de argumentos.
 | `0x15` | sim | Iniciar a captura crua do magnetômetro (pacotes `0x06`; para sozinha depois de 180 s; só no Quat9). |
 | `0x16` | sim | Parar a captura do magnetômetro. |
 | `0x17` + 8 ou 10 bytes | **não** | **Âncora:** a vista do mapa (lat, lon e rumo) vira a referência da navegação, e a orientação é zerada. Só na RAM. Veja [Âncora](#ancora). |
-| `0x18` | **não** | **Encerrar o pulso virtual de CO₂ agora.** Sem argumentos, só na RAM. O ppm informado volta à leitura real (ou aos 600 do sensor desabilitado) no próximo tique de CO₂, até 50 ms depois, e o gatilho cai pela histerese. O próximo sopro começa um pulso novo, inteiro. Sem pulso ativo, não faz nada. O site manda este comando quando a pessoa fecha a composição. Um firmware anterior ignora o opcode. |
+| `0x18` | **não** | **Encerrar o pulso virtual de CO₂ agora.** Sem argumentos, só na RAM. O ppm informado volta à leitura real (ou aos 600 do sensor desabilitado) no próximo tique de CO₂, até 50 ms depois, e o gatilho cai pela histerese. O próximo sopro começa um pulso novo, inteiro. Sem pulso ativo, não faz nada. O site manda este comando quando a pessoa fecha a composição. |
 | `0x20` + 4 dígitos ASCII | — | **Destravar** a conexão com o PIN (veja abaixo). |
 
 Qualquer outro opcode é ignorado. Argumentos com mais de 10 bytes derrubam o comando.
@@ -826,7 +824,7 @@ Argumento (depois do opcode), *little-endian*:
   `navMode` também. Escrever um `navRef` **diferente** (`0x62`) apaga a âncora (a
   referência explícita ganha); reescrever o mesmo valor não apaga. Religar apaga.
 - **Confirmação:** a bola não responde a comandos, mas o `anchorSeq` do pacote de
-  navegação muda quando a âncora é aplicada. Pacotes de 22 bytes = firmware sem `0x17`.
+  navegação muda quando a âncora é aplicada.
 
 Montando os bytes em JavaScript, a partir do Mapbox GL JS:
 
@@ -867,7 +865,6 @@ ASCII. Com o PIN de fábrica `1234`:
   depois: o registro somente-leitura `0x37` (`unlockState`) diz como está **a conexão que
   leu** — 0 travada (sem PIN ou com PIN errado), 1 destravada, 2 bloqueada por erros (os
   30 s abaixo). Um PIN errado também trava de novo uma conexão que estava destravada.
-  Firmware anterior ao `0x37` não manda esse registro e não tem como confirmar.
 - Errar **5 vezes seguidas** bloqueia os pedidos daquela conexão por **30 s** contados da
   última falha; durante o bloqueio, até o PIN certo é recusado. Passados os 30 s, a contagem
   de falhas **continua** (5 ou mais): a próxima tentativa é comparada, e se errar começa outro
@@ -894,9 +891,8 @@ Uma leitura ou escrita é simplesmente vários registros colados um atrás do ou
 
 **Ler** (sem PIN) devolve **todos** os registradores, mais os registros somente-leitura
 `0x35` e `0x37`, que vêm **primeiro**: cerca de 252 bytes com o nome de fábrica (procure
-cada registro pelo id, nunca pela posição; firmware anterior ao `0x37` mandava o `0x35` no
-fim). Isso é mais que um MTU, mas o Web
-Bluetooth, o bleak e o NimBLE buscam a leitura longa em pedaços sozinhos. Um trecho da
+cada registro pelo id, nunca pela posição). Isso é mais que um MTU, mas o Web Bluetooth, o
+bleak e o NimBLE buscam a leitura longa em pedaços sozinhos. Um trecho da
 leitura de fábrica:
 
 ```
@@ -1000,7 +996,7 @@ e [`GaiaConfig.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gai
 | `0x2C` | `breathMetric` | u8 | 0–1 | 0 | O que o detector mede: 0 = RMS, 1 = pico |
 | `0x2D` | `breathDetector` | u8 | 0–1 | 0 | 0 = absoluto (a cada bloco de 5 ms, dispara se **qualquer** microfone passar da linha); 1 = adaptativo (a cada 3 blocos, envelope rápido menos linha de base, do microfone mais alto) |
 | `0x2E` | `breathRearmDb` | u8 | 0–20 | 6 | O detector rearma quando o nível cai abaixo de `limiar × 10^(−valor/20)`; dB inteiros |
-| `0x2F` | `audioWindowMs` | u16 | 5–200 | 50 | Janela do RMS (e do pico) de cada microfone, ms, arredondada para blocos de 5 ms; vale na hora. Firmware sem este registrador usa 20 ms fixos |
+| `0x2F` | `audioWindowMs` | u16 | 5–200 | 50 | Janela do RMS (e do pico) de cada microfone, ms, arredondada para blocos de 5 ms; vale na hora |
 
 **CO₂**
 
@@ -1047,8 +1043,7 @@ CO₂), `0x33` (pino do LED de status, removido com o comando de LED antigo) e `
 `thresholdFixed`, em contagens de RMS; foi trocado pelo limiar em dBFS `0x2B`). Este é o id
 do **registrador**, não o do comando `0x15` (captura do magnetômetro), que continua valendo.
 Também `0x24` (era o `virtualDelayMs`: o pulso virtual agora começa no próprio sopro).
-Uma escrita que contenha um id reservado é rejeitada inteira. Um valor de `0x15` salvo por
-firmware antigo **não** é convertido: o `0x2B` começa no padrão.
+Uma escrita que contenha um id reservado é rejeitada inteira.
 
 O comando `0x11` grava essa mesma serialização TLV na memória. Ao ligar, a bola a carrega
 **com tolerância**: ids desconhecidos e valores inválidos são pulados, e um par cruzado
@@ -1070,7 +1065,7 @@ sequenceDiagram
   B-->>C: pede intervalo de 7,5 a 15 ms
   C->>B: troca de MTU (peça 247 se a plataforma deixar)
   C->>B: descobrir o serviço e as características
-  C->>B: assinar notify em …0001, …0003 e …0006 (se existir)
+  C->>B: assinar notify em …0001, …0003 e …0006
   loop a cada amostra do IMU
     B-->>C: notify pacote IMU (0x01)
     B-->>C: notify pacote de navegação (0x07)
@@ -1089,9 +1084,8 @@ sequenceDiagram
 3. **MTU.** Peça **247** onde a plataforma permitir (Android: `requestMtu(247)`; ESP32 e
    NimBLE como central: `setMTU`). No Web Bluetooth e no bleak a troca é feita pelo sistema
    e não se escolhe o valor; no bleak dá para ver o resultado em `client.mtu_size`. O mínimo
-   que importa: 30 para o IMU, 25 para a navegação, 211 para o áudio cru.
-4. **Descubra** o serviço e as características. Se a `…0006` não existir, o firmware é
-   anterior à navegação: siga sem ela.
+   que importa: 30 para o IMU, 26 para a navegação, 211 para o áudio cru.
+4. **Descubra** o serviço e as características. Toda bola tem as seis, inclusive a `…0006`.
 5. **Assine** as características que interessam. Para o site, `…0001`, `…0003` e `…0006`.
 6. **Valide cada notificação** antes de ler qualquer campo: `version` igual à esperada para o
    tipo (2 para o IMU, 1 para os demais), `type` igual ao
@@ -1136,7 +1130,7 @@ testar no Node), e o programa que conecta.
 export const VERSION_OF = (type) => (type === 0x01 ? 2 : 1);
 export const TYPE = { IMU: 0x01, CO2: 0x02, DIAG: 0x03, SENSORS: 0x04, AUDIO: 0x05, MAG: 0x06, NAV: 0x07 };
 // Tamanhos MÍNIMOS: um firmware futuro pode acrescentar bytes no fim do pacote.
-export const MIN_SIZE = { 0x01: 27, 0x02: 12, 0x03: 34, 0x04: 23, 0x05: 208, 0x06: 106, 0x07: 22 };
+export const MIN_SIZE = { 0x01: 27, 0x02: 12, 0x03: 34, 0x04: 23, 0x05: 208, 0x06: 106, 0x07: 23 };
 
 /** Tipo do pacote (byte 1), ou -1 se a versão não é a esperada para o tipo. Use na …0005, que mistura tipos. */
 export function packetType(dv) {
@@ -1198,8 +1192,7 @@ export function decodeNav(dv) {
     lon: dv.getInt32(14, true) / 1e7,
     bearing: dv.getInt16(18, true) / 100,
     speedDegS: dv.getUint16(20, true) / 10,
-    // Âncoras (0x17) aplicadas desde o boot; undefined num pacote de 22 bytes (firmware sem 0x17).
-    anchorSeq: dv.byteLength >= 23 ? dv.getUint8(22) : undefined,
+    anchorSeq: dv.getUint8(22), // âncoras (0x17) aplicadas desde o boot; depois de 255 volta a 0
   };
 }
 
@@ -1294,10 +1287,10 @@ async function connect() {
   // 2. Conecta e acha o serviço.
   const server = await device.gatt.connect();
   const service = await server.getPrimaryService(SERVICE);
-  // 3. Acha as características. A …0006 (navegação) não existe em firmware antigo: vira null.
+  // 3. Acha as características: toda bola tem as seis.
   const chars = {};
   for (const [name, uuid] of Object.entries(CHAR)) {
-    chars[name] = await service.getCharacteristic(uuid).catch(() => null);
+    chars[name] = await service.getCharacteristic(uuid);
   }
   return chars;
 }
@@ -1321,15 +1314,11 @@ export async function main() {
   await listen(chars.co2, decodeCo2, (p) => {
     console.log('CO₂', p.ppm, 'ppm', p.trigger ? '(gatilho ligado)' : '');
   });
-  if (chars.nav) {
-    await listen(chars.nav, decodeNav, (p) => {
-      if (!p.valid) return; // keepalive: navegação desligada ou IMU sem amostras
-      // Com Mapbox GL JS: map.jumpTo({ center: [p.lon, p.lat], bearing: p.bearing });
-      console.log('globo', p.lat, p.lon, p.bearing, p.settled ? 'parado' : 'movendo');
-    });
-  } else {
-    console.warn('Este firmware não tem navegação (característica …0006 ausente).');
-  }
+  await listen(chars.nav, decodeNav, (p) => {
+    if (!p.valid) return; // keepalive: navegação desligada ou IMU sem amostras
+    // Com Mapbox GL JS: map.jumpTo({ center: [p.lon, p.lat], bearing: p.bearing });
+    console.log('globo', p.lat, p.lon, p.bearing, p.settled ? 'parado' : 'movendo');
+  });
 
   // 4. Destrava com o PIN: opcode 0x20 + 4 dígitos ASCII.
   await chars.command.writeValueWithResponse(new Uint8Array([0x20, ...new TextEncoder().encode('1234')]));
@@ -1368,7 +1357,7 @@ def version_of(ptype: int) -> int:
 
 
 # Tamanhos MÍNIMOS por tipo: um firmware futuro pode acrescentar bytes no fim do pacote.
-MIN_SIZE = {0x01: 27, 0x02: 12, 0x03: 34, 0x04: 23, 0x05: 208, 0x06: 106, 0x07: 22}
+MIN_SIZE = {0x01: 27, 0x02: 12, 0x03: 34, 0x04: 23, 0x05: 208, 0x06: 106, 0x07: 23}
 
 
 def packet_type(data: bytes) -> int:
@@ -1421,7 +1410,7 @@ def decode_nav(data: bytes):
     if not _header_ok(data, 0x07):
         return None
     (seq, t_us, mode, flags, lat_e7, lon_e7,
-     bearing_x100, speed_x10) = struct.unpack_from("<HIBBiihH", data, 2)
+     bearing_x100, speed_x10, anchor_seq) = struct.unpack_from("<HIBBiihHB", data, 2)
     return {
         "seq": seq,
         "t_us": t_us,
@@ -1433,8 +1422,7 @@ def decode_nav(data: bytes):
         "lon": lon_e7 / 1e7,
         "bearing": bearing_x100 / 100,
         "speed_deg_s": speed_x10 / 10,
-        # Âncoras (0x17) aplicadas desde o boot; None num pacote de 22 bytes (firmware sem 0x17).
-        "anchor_seq": data[22] if len(data) >= 23 else None,
+        "anchor_seq": anchor_seq,  # âncoras (0x17) aplicadas desde o boot; depois de 255 volta a 0
     }
 
 
@@ -1542,13 +1530,10 @@ async def main(pin: str = "1234", listen_s: float = 10.0) -> None:
                 estado = "parado" if p["settled"] else "movendo"
                 print(f"globo lat {p['lat']:.5f} lon {p['lon']:.5f} rumo {p['bearing']:.2f} ({estado})")
 
-        # 3. Assina as notificações. A …0006 é opcional: firmware antigo não tem.
+        # 3. Assina as notificações.
         await client.start_notify(CHAR_IMU, on_imu)
         await client.start_notify(CHAR_CO2, on_co2)
-        if client.services.get_characteristic(CHAR_NAV) is not None:
-            await client.start_notify(CHAR_NAV, on_nav)
-        else:
-            print("firmware sem navegação (característica …0006 ausente)")
+        await client.start_notify(CHAR_NAV, on_nav)
 
         # 4. Destrava (0x20 + PIN), muda co2TriggerPpm (0x29) para 1500 e lê de volta.
         await client.write_gatt_char(CHAR_CMD, b"\x20" + pin.encode("ascii"), response=True)
@@ -1587,6 +1572,7 @@ confere os vetores de ouro.
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 /* ---- leitura little-endian ------------------------------------------------ */
 static uint16_t rd_u16(const uint8_t *p) { return (uint16_t)(p[0] | (p[1] << 8)); }
@@ -1630,7 +1616,7 @@ typedef struct {
   uint8_t mode;   /* 0 desligado, 1 espelho, 2 joystick */
   uint8_t flags;  /* bit0 valid, bit1 settled, bit2 moving */
   double lat, lon, bearing, speed_deg_s;
-  int anchor_seq; /* âncoras (0x17) aplicadas desde o boot; -1 num pacote de 22 bytes */
+  uint8_t anchor_seq; /* âncoras (0x17) aplicadas desde o boot; depois de 255 volta a 0 */
 } gb_nav;
 
 /* Cada função devolve 1 se o pacote é válido, 0 se não é (versão, tipo ou tamanho).
@@ -1664,7 +1650,7 @@ int gb_decode_co2(const uint8_t *b, size_t n, gb_co2 *o) {
 }
 
 int gb_decode_nav(const uint8_t *b, size_t n, gb_nav *o) {
-  if (n < 22 || b[0] != 1 || b[1] != 0x07) return 0;
+  if (n < 23 || b[0] != 1 || b[1] != 0x07) return 0;
   o->seq = rd_u16(b + 2);
   o->t_us = rd_u32(b + 4);
   o->mode = b[8];
@@ -1673,7 +1659,7 @@ int gb_decode_nav(const uint8_t *b, size_t n, gb_nav *o) {
   o->lon = rd_i32(b + 14) / 1e7;
   o->bearing = rd_i16(b + 18) / 100.0;
   o->speed_deg_s = rd_u16(b + 20) / 10.0;
-  o->anchor_seq = n >= 23 ? b[22] : -1;
+  o->anchor_seq = b[22];
   return 1;
 }
 
@@ -1708,6 +1694,7 @@ int main(void) {
                                     0x58, 0xF2, 0x36, 0x16, 0xF3, 0xE3, 0x94, 0x11, 0x7B, 0x00, 0x07};
   static const uint8_t nav_b[23] = {0x01, 0x07, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02, 0x06, 0x00, 0xE9,
                                     0xA4, 0x35, 0x00, 0x2E, 0xB6, 0x94, 0xB0, 0xB9, 0xFF, 0xFF, 0xFF};
+  uint8_t nav_longer[24];
   gb_imu i, ib;
   gb_co2 c;
   gb_nav a, b;
@@ -1743,9 +1730,11 @@ int main(void) {
   check(same(b.bearing, -180.0) && same(b.speed_deg_s, 6553.5), "Nav B rumo -180.00, velocidade 6553.5");
   check(b.anchor_seq == 255, "Nav B anchorSeq 255");
 
-  check(gb_decode_nav(nav_a, 22, &a) && a.anchor_seq == -1 && same(a.lat, -22.905556),
-        "Nav de 22 bytes (firmware sem 0x17): mesma pose, sem anchorSeq");
-  check(!gb_decode_nav(nav_a, 21, &a), "pacote curto demais é recusado");
+  memcpy(nav_longer, nav_a, sizeof nav_a);
+  nav_longer[23] = 0xAA; /* um byte que um firmware futuro acrescentaria no fim */
+  check(gb_decode_nav(nav_longer, sizeof nav_longer, &a) && a.anchor_seq == 7 && same(a.lat, -22.905556),
+        "Nav com um byte a mais: o extra é ignorado");
+  check(!gb_decode_nav(nav_a, sizeof nav_a - 1, &a), "pacote curto demais é recusado");
   check(!gb_decode_nav(imu, sizeof imu, &a), "tipo errado é recusado");
 
   printf("%s\n", failures ? "HÁ FALHAS" : "todos os vetores conferem");
@@ -1832,9 +1821,6 @@ de **pico**, e o nível efetivo do detector adaptativo.
 `moving` (`valid` desligado) · `latE7` 900000000 → 90° · `lonE7` −1800000000 → −180° ·
 `bearingX100` −18000 → −180,00° · `speedDegSX10` 65535 → 6553,5 °/s · `anchorSeq` 255.
 
-Um firmware sem o comando `0x17` manda os mesmos pacotes sem o último byte (22 bytes): o
-decodificador deve aceitá-los, só sem `anchorSeq`.
-
 O vetor B testa o **formato** nos extremos; não é um estado que a bola produza. Na prática a longitude nunca sai como −180: o
 firmware a normaliza para (−180, 180]. O rumo também é normalizado para (−180, 180], mas o
 arredondamento para centésimos pode fazer um rumo de −179,996° chegar como −18000
@@ -1873,25 +1859,26 @@ Valores de referência: o quaternião identidade (1, 0, 0, 0), o do vetor IMU ac
 
 ## Compatibilidade e versionamento
 
+O site, a config-app e o external `[gaiaball]` acompanham só o firmware atual, o da `main` do
+repositório da Gaiaball: não há modo de compatibilidade com firmware de antes. As regras
+abaixo dizem como o protocolo pode **crescer** sem quebrar os clientes que já existem.
+
 Cada tipo de pacote tem a sua versão. Todos estão na **versão 1**, menos o IMU (`0x01`), que
 está na **versão 2**. Uma versão só muda quando a mudança deixa de ser **aditiva**. As regras:
 
 1. **Campos novos só no fim do pacote.** Deslocamentos, tipos e escalas que já existem nunca
    mudam. Exemplos reais: o pacote IMU cresceu de 23 para 31 bytes (envelope do som, firmware
-   v8), o de diagnóstico de 23 para 32 (v7) e depois 34 bytes (v8), e o de navegação de 22
-   para 23 (`anchorSeq`, junto com o comando `0x17`), sempre com versão 1 (o IMU só mudou de
-   versão depois, veja a regra 8).
+   v8) e o de diagnóstico de 23 para 32 (v7) e depois 34 bytes (v8), sempre com versão 1 (o
+   IMU só mudou de versão depois, veja a regra 8).
 2. **Decodificadores aceitam pacotes maiores.** Confira `tamanho ≥ mínimo`, nunca
    `tamanho == exato`. Um decodificador do site que exigia tamanho exato parou de funcionar
    quando o IMU cresceu, e um pacote recusado é indistinguível de uma bola desligada.
 3. **Bits de flag novos** são ignorados por quem não os conhece (o `trigger` do CO₂ entrou
-   assim, sem mudar o tamanho do pacote). O contrário também vale: um firmware anterior à
-   navegação **nunca** liga o bit 3 (`trigger`) do CO₂. Um cliente reconhece esse firmware
-   pela falta da característica `…0006`; quem depende do gatilho deve avisar o usuário.
+   assim, sem mudar o tamanho do pacote).
 4. **Tipos de pacote novos** ganham um número novo; quem lê a característica 5 ignora os tipos
    que não conhece.
-5. **Características novas** são opcionais para os clientes: a 6 (navegação) não existe em
-   firmware antigo, e o cliente segue sem ela.
+5. **Características novas** ganham um UUID novo e não mudam as que já existem: um cliente
+   que não conhece uma característica simplesmente não a usa.
 6. **Registradores TLV novos** ganham ids novos. Ao **ler**, pule ids desconhecidos pelo `len`.
    Ao **escrever**, mande só ids que a bola conhece (confira numa leitura antes): um id
    desconhecido derruba a escrita inteira.
@@ -1905,18 +1892,7 @@ está na **versão 2**. Uma versão só muda quando a mudança deixa de ser **ad
    `u8` em meio-dB, e o bit 4 de `flags` ganhou o sopro. Como o significado de campos que já
    existiam mudou (e o pacote encolheu de 31 para 27 bytes), o IMU virou **versão 2**; todos
    os outros tipos continuam na versão 1. Por isso um decodificador valida a versão **por
-   tipo**, e um site antigo, que só conhece o IMU v1, não lê a bola nova.
-
-Combinações do IMU v2 com o site e o firmware:
-
-| Combinação | Resultado |
-|---|---|
-| Site antigo (só IMU v1) + firmware novo (IMU v2) | ❌ o site recusa o pacote (exige versão 1 e ≥ 31 B): sem movimento |
-| Site novo (só IMU v2) + firmware antigo (IMU v1) | ❌ o IMU some em silêncio (o site avisa para atualizar o firmware); o pacote v1 é descartado |
-| Site novo + firmware novo | ✅ funciona |
-
-Por isso as bolas e o site precisam trocar de versão **na mesma janela** (veja o README do
-repositório da Gaiaball, "Deploying with GaiaSenses").
+   tipo**.
 
 ---
 
@@ -1963,12 +1939,10 @@ a partir de um clique do usuário. No Linux pode ser preciso ativar
 Windows: rode o navegador no Windows.
 
 **A característica `…0006` não existe.**
-O firmware é anterior à navegação. Siga só com IMU e CO₂ e avise o usuário. Esse firmware
-também nunca liga o bit `trigger` do CO₂, então composições abertas pelo gatilho não abrem.
-Para ter navegação e gatilho, grave o firmware atual na bola. Se você acabou de gravá-lo e
-a `…0006` continua faltando, o sistema operacional está usando a lista de características
-guardada da conexão anterior (cache do GATT): desligue e ligue o Bluetooth, ou esqueça o
-dispositivo nas configurações do sistema, e conecte de novo.
+Toda bola tem as seis características. Se a `…0006` falta, o sistema operacional está usando
+a lista de características guardada de uma conexão anterior (cache do GATT), de quando o
+ESP32 tinha outro programa gravado: desligue e ligue o Bluetooth, ou esqueça o dispositivo
+nas configurações do sistema, e conecte de novo.
 
 **O globo não passa de uns 85° de latitude no mapa.**
 É o Mapbox: o centro do mapa fica limitado a cerca de ±85,05°. O pacote traz até ±90°;
@@ -1984,8 +1958,7 @@ ou de escrever um `navRef` diferente, a âncora some e vale de novo o `navRef`.
 Confira o tamanho (opcode + 8 ou 10 bytes) e as faixas: um comando fora delas é ignorado. Com
 `navMode` = 0 ou sem amostras do IMU, a âncora fica esperando e só é aplicada quando a
 navegação volta a rodar (o zero, esse, acontece na hora; no modo espelho, o primeiro pacote
-depois disso já mostra o quanto a bola girou desde o zero). Se o pacote de navegação tem 22
-bytes, o firmware não tem o `0x17`: grave o firmware atual.
+depois disso já mostra o quanto a bola girou desde o zero).
 
 **Depois de religar a bola, o globo aponta torto.**
 A referência é a postura em que a bola liga. Ligue-a apoiada numa superfície plana e

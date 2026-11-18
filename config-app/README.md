@@ -50,7 +50,7 @@ sinais e, abaixo dos campos, as **Métricas** (taxa,
 jitter, perda, idade da amostra, navegação e o diagnóstico do firmware): são ferramentas de
 bancada, que não precisam ficar à vista de quem opera.
 
-O app só oferece o modo **Quat6** (giroscópio + acelerômetro). O magnetômetro (Quat9) e a calibração dele saíram da interface; o firmware continua com o código. Se a bola vier gravada em Quat9, o painel avisa e o próximo **Aplicar** a devolve ao Quat6 (e reinicia a navegação do globo).
+O app só oferece o modo **Quat6** (giroscópio + acelerômetro). O magnetômetro (Quat9) e a calibração dele saíram da interface; o firmware continua com o código, acessível por escrita TLV crua.
 
 ### Interruptores liga/desliga
 
@@ -154,7 +154,7 @@ exatamente no corte; a inclinação da atenuação vem da ordem do filtro, não 
 
 ## Navegação do globo
 
-A bola calcula sozinha para onde o globo virtual aponta e envia o resultado num pacote próprio (`NavPacket`, característica `…0006`); o app só o mostra e configura. Firmware antigo não tem essa característica: o painel Métricas avisa "sem característica de navegação".
+A bola calcula sozinha para onde o globo virtual aponta e envia o resultado num pacote próprio (`NavPacket`, característica `…0006`); o app só o mostra e configura.
 
 - **Configuração › Avançado › Métricas › Navegação:** modo, latitude e longitude do centro da tela, rumo (padrão Mapbox: graus no sentido horário, a partir do norte, da direção que aponta para cima na tela), velocidade angular do globo e "parado" / "em movimento". "Parado" vem da máquina de estados da bola (histerese e tempo de espera), que é a autoridade; o bit "em movimento" é instantâneo e pode divergir dela por um instante.
 - **Painel Configuração › Navegação do globo:**
@@ -165,7 +165,7 @@ A bola calcula sozinha para onde o globo virtual aponta e envia o resultado num 
   - Os parâmetros do joystick e os limiares valem na hora e não movem o globo. Só trocar o modo, trocar o ponto de referência ou mudar a referência do IMU (**Zerar orientação**, **Calibrar montagem**) leva o globo de volta ao ponto de referência. Com uma âncora ativa (comando `0x17`, que o site do GaiaSenses envia ao conectar), o globo volta ao ponto da âncora, não ao de referência; trocar o ponto de referência descarta a âncora.
 - **Referência e Zerar orientação** (painel Conexão): ligue a bola apoiada numa superfície plana e parada — a postura em que ela liga é a referência, sem “frente” marcada (o movimento é relativo a ela). O zero **não é gravado** e não precisa ser: ao religar, a referência volta a ser a postura do boot. **Zerar orientação** só troca a referência sem religar (bola parada na superfície). O lado da bola voltado para o público no instante da referência define como os gestos aparecem na tela.
 - **Gatilho de CO₂** (Configuração › CO₂): nível e histerese do bit de gatilho do pacote de CO₂; Métricas (Configuração › Avançado) mostra o bit na linha CO₂ ("gatilho: ligado/desligado"). O sopro só liga o gatilho se o pico virtual (`0x23`, padrão 2100 ppm) ficar acima do nível.
-- **Firmware antigo:** **Aplicar** só envia os registradores que a bola informou na leitura (o PIN sempre vai). Um firmware sem navegação recusaria a escrita inteira por causa de um registrador desconhecido; os que ficaram de fora são listados na mensagem.
+- **Firmware:** a config-app funciona só com o firmware atual (o `main` deste repositório). Não há caminho de compatibilidade para firmware antigo: grave o firmware atual na bola antes de usá-la.
 
 ### Persistência
 
@@ -194,7 +194,7 @@ npm test           # testes (vitest)
 ## Roteiro de bancada
 
 1. **Conectar** (painel Conexão) e escolher o Gaiaball na lista do navegador.
-2. **Desbloquear** com o PIN (padrão de fábrica: `1234`). O app relê a bola e diz o resultado: **Desbloqueada**, **PIN incorreto** ou **Bloqueada por 30 s** (depois de 5 PINs errados seguidos); o selo ao lado do botão mostra o estado da conexão, já a partir da leitura automática ao conectar. O desbloqueio vale só para a conexão atual: se a bola reiniciar ou a conexão cair, conecte e desbloqueie de novo. Firmware anterior ao TLV `0x37` não confirma o PIN (o app avisa); nele, sem o PIN certo, comandos e escritas sensíveis são ignorados.
+2. **Desbloquear** com o PIN (padrão de fábrica: `1234`). O app relê a bola e diz o resultado: **Desbloqueada**, **PIN incorreto** ou **Bloqueada por 30 s** (depois de 5 PINs errados seguidos); o selo ao lado do botão mostra o estado da conexão, já a partir da leitura automática ao conectar. O desbloqueio vale só para a conexão atual: se a bola reiniciar ou a conexão cair, conecte e desbloqueie de novo.
 3. Ao conectar, o app **lê sozinho a configuração da bola** (até 3 tentativas) e preenche o formulário; a faixa no topo do painel Configuração mostra "Lendo…", "Valores lidos da bola às HH:MM:SS · IMU em uso: …" ou, se falhar, "Tentar de novo". **Ler do dispositivo** lê de novo e descarta o que você editou. Um campo editado (ou vindo de um preset) que difere da bola mostra "na bola: …" embaixo, e o botão vira **Aplicar (n)**.
 4. Em **superfície plana**, gire a bola e acompanhe **Taxa**, **Perda** e **Jitter** em Configuração › Avançado › Métricas.
 5. Acompanhe a vista 3D — ela mostra o quaternion tratado exatamente como chega da bola — e ajuste a Taxa (Hz). Para suavizar o movimento, use **Suavização do quaternion (slerp)** no painel Configuração: como a vista reflete o fluxo real, o efeito do slerp (e o atraso que ele adiciona) aparece nela ao aplicar.
