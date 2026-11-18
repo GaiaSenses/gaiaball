@@ -425,7 +425,10 @@ peak), so the same knob position means the same dBFS whichever metric is chosen.
 Sensitive operations require a per-connection unlock with a 4-digit PIN. **Default PIN:
 `1234`.** Unlock by writing `0x20` followed by the ASCII PIN to the command
 characteristic (`19b10002-…`), e.g. `20 31 32 33 34`. Five consecutive wrong attempts lock
-that connection's unlock for 30 s. Unlock lasts until disconnect.
+that connection's unlock for 30 s. Unlock lasts until disconnect. The write has no reply:
+read the config characteristic afterwards, and the read-only TLV `0x37` says whether this
+connection is locked (0), unlocked (1) or locked out (2); the config-app shows it next to
+the PIN field.
 
 | Opcode | Action | PIN required |
 |---|---|---|
@@ -489,6 +492,7 @@ persisted only by command `0x11`. Full table with types: [`docs/protocol.md`](do
 | `0x30`–`0x32` | sound LED pin, CO2 LED pin (pins distinct), co2AlertPpm | 2, 4, 2000 |
 | `0x34` | imuChip (0 unconfigured / IMU off, 1 ICM-20948, 2 GY-91 / MPU-9250; reboot to apply) | 0 |
 | `0x35` | imuDetected — **read-only**, appended on config reads; never write it | — |
+| `0x37` | unlockState — **read-only**, appended on config reads: this connection's PIN state (0 locked, 1 unlocked, 2 locked out); never write it | — |
 | `0x36` | magAxisRemap (0–23, applied live; changing it invalidates a `0x1E` calibration) | 8 |
 | `0x40` | bleName (≤16 chars) | `Globo_1` |
 | `0x41` | PIN (4 ASCII digits, write-only) | `1234` |

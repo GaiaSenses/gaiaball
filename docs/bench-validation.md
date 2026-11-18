@@ -144,8 +144,10 @@ O roteiro básico do app está em [`config-app/README.md`](../config-app/README.
 os critérios e onde olhar cada número.
 
 1. **Conectar** (painel Conexão) e escolher `Globo_1`.
-2. **Desbloquear** com o PIN `1234` (botão "Desbloquear"). O firmware não confirma o PIN:
-   se escritas/comandos forem ignorados, o PIN está errado ou o bloqueio de 30 s está ativo.
+2. **Desbloquear** com o PIN `1234` (botão "Desbloquear"). A mensagem e o selo ao lado do
+   botão mostram o que a bola respondeu: "Desbloqueada", "PIN incorreto" ou "Bloqueada por
+   30 s" (5 PINs errados seguidos). Firmware anterior ao TLV `0x37` não confirma: nele, se
+   escritas/comandos forem ignorados, o PIN está errado ou o bloqueio de 30 s está ativo.
 3. **Conferir a leitura** (painel Configuração). Ao conectar, o app já lê sozinho a
    configuração da bola; a faixa no topo do painel mostra "Valores lidos da bola às
    HH:MM:SS · IMU em uso: …" (o botão **Ler do dispositivo** só lê de novo). Numa bola com

@@ -856,6 +856,11 @@ ASCII. Com o PIN de fábrica `1234`:
 ```
 
 - O destravamento vale **para aquela conexão**, até ela cair. Ao reconectar, destrave de novo.
+- A escrita do `0x20` não tem resposta. Para **confirmar**, leia a característica 4 logo
+  depois: o registro somente-leitura `0x37` (`unlockState`) diz como está **a conexão que
+  leu** — 0 travada (sem PIN ou com PIN errado), 1 destravada, 2 bloqueada por erros (os
+  30 s abaixo). Firmware anterior ao `0x37` não manda esse registro e não tem como
+  confirmar.
 - Errar **5 vezes seguidas** bloqueia os pedidos daquela conexão por **30 s** contados da
   última falha; durante o bloqueio, até o PIN certo é recusado. Passados os 30 s, a contagem
   de falhas **continua** (5 ou mais): a próxima tentativa é comparada, e se errar começa outro
@@ -880,8 +885,8 @@ Toda a configuração da bola é uma lista de **registradores**. Cada registrado
 
 Uma leitura ou escrita é simplesmente vários registros colados um atrás do outro.
 
-**Ler** (sem PIN) devolve **todos** os registradores, mais o registrador somente-leitura
-`0x35`: cerca de 242 bytes com o nome de fábrica. Isso é mais que um MTU, mas o Web
+**Ler** (sem PIN) devolve **todos** os registradores, mais os registros somente-leitura
+`0x35` e `0x37`: cerca de 252 bytes com o nome de fábrica. Isso é mais que um MTU, mas o Web
 Bluetooth, o bleak e o NimBLE buscam a leitura longa em pedaços sozinhos. Um trecho da
 leitura de fábrica:
 
@@ -912,7 +917,7 @@ qualquer ordem. Exemplos (conferidos com o código de validação do firmware co
 nada**):
 
 1. Todo `id` precisa existir na tabela. Um id desconhecido derruba a escrita inteira; isso
-   inclui o `0x35`, que é só de leitura: **nunca** o inclua numa escrita.
+   inclui o `0x35` e o `0x37`, que são só de leitura: **nunca** os inclua numa escrita.
 2. O `len` precisa bater com o tipo: 1 para u8, 2 para u16, 4 para u32, 24 para `0x1E`, 8
    para `0x62`, 4 para o PIN, 1 a 16 para o nome. Um registro cortado no fim também derruba
    tudo.
@@ -963,6 +968,7 @@ e [`GaiaConfig.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gai
 | `0x1E` | `magCal` | 12 × i16 (24 B) | diagonal ≠ 0 | identidade | Calibração do magnetômetro: *hard iron* x, y, z em 0,1 µT, depois a matriz *soft iron* por linhas em 1/4096. Padrão: `0, 0, 0` + `4096, 0, 0, 0, 4096, 0, 0, 0, 4096` |
 | `0x34` | `imuChip` | u8 | 0–2 | 0 | Qual IMU está montado: 0 nenhum (IMU desligado), 1 ICM-20948, 2 GY-91/MPU-9250. Vale depois de reiniciar |
 | `0x35` | `imuDetected` | u8 | **só leitura** | — | Bits 0–1: o `imuChip` em vigor no boot; bit 2 (`0x04`): sensor encontrado; bit 3 (`0x08`): magnetômetro respondeu |
+| `0x37` | `unlockState` | u8 | **só leitura** | — | O PIN da conexão que está lendo: 0 travada, 1 destravada, 2 bloqueada por 30 s (5 PINs errados). Leia logo depois do `0x20` para confirmar o PIN |
 | `0x36` | `magAxisRemap` | u8 | 0–23 | 8 | Remapeamento dos eixos do magnetômetro (8 = `+Y +X −Z`); mudar invalida a calibração `0x1E` |
 
 **Áudio e potenciômetro**
@@ -1918,8 +1924,9 @@ dá para ver o MTU negociado. Confira também se você lê *little-endian* (em J
 
 **Escrevi a configuração e nada mudou.**
 A bola não confirma nem recusa em voz alta. As causas, em ordem: a conexão não foi destravada
-(o destravamento vale por conexão; ao reconectar, destrave de novo); um valor fora da faixa;
-o `len` errado para o tipo; um id desconhecido ou o `0x35` na escrita; uma regra cruzada
+(o destravamento vale por conexão; ao reconectar, destrave de novo; o `0x37` da leitura diz
+se está destravada); um valor fora da faixa;
+o `len` errado para o tipo; um id desconhecido, ou o `0x35` ou o `0x37` na escrita; uma regra cruzada
 (por exemplo, `navStopDegS` maior ou igual a `navStartDegS`). Qualquer uma delas descarta a
 escrita **inteira**. Leia a característica 4 de volta e compare.
 
