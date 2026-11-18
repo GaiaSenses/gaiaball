@@ -6,6 +6,11 @@ pacotes ao objeto `[gaiaball]`, que publica cada valor num nome: no seu patch, b
 `[r gaia.lat]`, `[r gaia.co2]`, `[r gaia.breath]`… Não há terminal, Python nem programa
 extra: só o Pd e o navegador. Nada é escrito na bola; o objeto só escuta.
 
+> **Primeira vez com a bola ou com o Pd?** Comece pelo [`TUTORIAL.md`](TUTORIAL.md): um
+> passo a passo para músicos, sem jargão, com todos os dados (o que são, unidade, faixa e
+> quantas vezes por segundo chegam), receitas e seis patches prontos na pasta
+> [`exemplos/`](exemplos/).
+
 ```
 ┌──────────┐  Bluetooth  ┌───────────────────┐  WebSocket local   ┌────────────┐
 │ Gaiaball │ ──────────> │ config-app        │ ─────────────────> │ [gaiaball] │──> [r gaia.*]
@@ -83,8 +88,8 @@ por segundo. Não há zona morta: para ignorar valores repetidos, use `[change]`
 | `gaia.settled` | globo parado | 0 ou 1 | navegação ativa |
 | `gaia.acc.x`, `gaia.acc.y`, `gaia.acc.z` | aceleração em cada eixo | −4000 a 4000 mg (1000 mg = 1 g, a gravidade) | todo pacote de movimento |
 | `gaia.quat` | orientação, como quatérnio: lista `w x y z` | cada valor de −1 a 1 | todo pacote de movimento |
-| `gaia.mic.rms` | nível RMS dos microfones: lista `E D` (esquerdo, direito) | −120 a 0 dBFS (0 = fundo de escala; −120 = piso) | áudio da bola ligado |
-| `gaia.mic.peak` | pico dos microfones: lista `E D` | −120 a 0 dBFS | áudio da bola ligado |
+| `gaia.mic.rms` | nível RMS dos microfones: lista `E D` (esquerdo, direito) | −120 a 0 dBFS (0 = fundo de escala; −120 = piso) | pacote de movimento, se os microfones funcionam |
+| `gaia.mic.peak` | pico dos microfones: lista `E D` | −120 a 0 dBFS | pacote de movimento, se os microfones funcionam |
 | `gaia.breath` | sopro reconhecido pela bola (1 enquanto dura) | 0 ou 1 | todo pacote de movimento |
 | `gaia.sensors` | lista `roll pitch yaw aceX aceY aceZ co2` | ângulos em graus, aceleração em mg, CO₂ em ppm (0 até chegar o primeiro pacote de CO₂) | todo pacote de movimento |
 | `gaia.co2` | CO₂ medido | ppm (ar livre fica perto de 420; sala cheia passa de 1000) | todo pacote de CO₂ |
@@ -121,10 +126,11 @@ mesmo tempo, vale a mais recente. Feche as outras.
 | O console diz `gaiaball: porta 9478 em uso` | outro `[gaiaball]` já escuta nessa porta (por exemplo, em outro patch aberto, ou no patch de ajuda). Não atrapalha: os `[r gaia.*]` recebem do que está escutando, e o outro assume a porta sozinho quando o primeiro for fechado. Se a porta estiver com outro programa, escolha outra porta nos dois lados: `[gaiaball 9500]` e a mesma porta na config-app. |
 | A config-app mostra "Pd: aguardando" | o Pd não está aberto, não há `[gaiaball]` em nenhum patch aberto, ou as portas são diferentes nos dois lados. |
 | A config-app mostra "Pd: bloqueado pelo Chrome" | a permissão "Apps neste dispositivo" foi negada. Libere como no passo 4 e recarregue a página. |
-| A config-app mostra "Pd: desligado" | a chave Enviar ao Pd está desligada, ou a bola não está conectada. |
+| A config-app mostra "Pd: desligado" | a chave Enviar ao Pd está desligada. |
+| A config-app mostra "Pd: aguardando a bola" | a chave está ligada, mas a bola ainda não foi conectada na config-app: clique em **Conectar**. |
 | `connected 1`, mas `gaia.lat` e `gaia.lon` não chegam | a navegação está desligada na bola. Na config-app, desbloqueie com o PIN e escolha a navegação Espelho ou Joystick. |
 | `connected 1`, `rate` normal, mas nenhum valor `gaia.*` | a bola está com firmware antigo (o pacote de movimento v1 é ignorado). Grave o firmware novo; a config-app mostra o aviso "firmware desatualizado". |
-| `gaia.mic.*` não chega | o áudio está desligado na bola. Na config-app, desbloqueie com o PIN e ligue o áudio. |
+| `gaia.mic.*` não chega | os microfones não funcionaram quando a bola ligou (a bola deixa de mandar esses canais), ou o sensor de movimento está desligado (eles viajam no pacote de movimento). Desligar o "Detector de sopro" não para esses canais. Confira os microfones no painel "Sensores em tempo real" da config-app e, se preciso, reinicie a bola. |
 | `rate` baixo ou `gap` alto | a página ficou lenta. Feche outras abas pesadas e deixe só uma aba da config-app enviando. |
 | Ângulos "diferentes do site" | não são: é a mesma convenção. O zero e a montagem são ajustados **na bola**: use "Zerar orientação" na config-app (exige o PIN). |
 

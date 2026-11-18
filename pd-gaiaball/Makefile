@@ -14,7 +14,9 @@ gaiaball.class.sources = src/gb_decode.c src/gb_ws.c src/gb_sha1.c src/gb_base64
 
 cflags = -Isrc
 
-datafiles = gaiaball-help.pd README.md
+datafiles = gaiaball-help.pd README.md TUTORIAL.md
+# The tutorial's example patches, installed as a subfolder so README/TUTORIAL links work.
+datadirs = exemplos
 
 define forWindows
   ldlibs += -lws2_32

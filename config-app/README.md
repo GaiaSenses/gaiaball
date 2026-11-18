@@ -27,6 +27,9 @@ repassa os pacotes ao external `[gaiaball]` por um **WebSocket local** (`127.0.0
 - Com `?demo=1` o app gera dados sintéticos e os envia ao Pd pelo mesmo caminho dos pacotes
   reais. O `[gaiaball]` e os canais `gaia.*` estão descritos em
   [`pd-gaiaball/README.md`](../pd-gaiaball/README.md).
+- **Para músicos:** o passo a passo completo, da instalação ao primeiro som (incluindo ligar
+  o IMU de uma bola de fábrica), com cada canal explicado, receitas e seis patches de
+  exemplo, está em [`pd-gaiaball/TUTORIAL.md`](../pd-gaiaball/TUTORIAL.md).
 
 ## Modo ajuste e modo palco
 

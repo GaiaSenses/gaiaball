@@ -399,7 +399,7 @@ carries it as milli-g, converted in `makeImuPacket`), gyro full scale selectable
 | 1 | Frame sync + checksum | A byte lost on the UART shifts every following field; the ppm value becomes nonsense that still looks plausible. | Resync on the header after any loss, and a corrupted frame is dropped instead of reported. |
 | 2 | Stale timeout | A sensor that stopped answering would keep a stale number on screen for ever. | The reading is flagged `stale`, so the UI and the patch can tell "old" from "low". |
 | 3 | EMA over accepted readings | The sensor's own quantisation steps show up as jumps in a value people read as a slow trend. | A smooth trend. Off by default (1000), because the legacy behaviour is the reference for the patch. |
-| 4 | Virtual pulse | The real sensor's T90 is minutes: a breath would reach the composition long after the person stopped blowing. | A plausible ppm curve arrives ~1 s after the breath, which is what makes the instrument playable. The real reading returns when the pulse ends. |
+| 4 | Virtual pulse | The real sensor's T90 is minutes: a breath would reach the composition long after the person stopped blowing. | The reported ppm steps at once, on the breath itself, to the constant `virtualPeakPpm` (default 2100) and holds it for `virtualHoldMs` (default 10 s; a breath during the pulse does not restart it), which is what makes the instrument playable. The real reading returns when the pulse ends. |
 
 ### Threshold potentiometer
 

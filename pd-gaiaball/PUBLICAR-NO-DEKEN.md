@@ -69,6 +69,8 @@ gaiaball/
 ├── gaiaball.<extensão de cada sistema>   ← um binário por sistema/processador/precisão
 ├── gaiaball-help.pd                      ← patch de ajuda (o Pd abre com clique-direito → Ajuda)
 ├── README.md
+├── TUTORIAL.md                           ← o passo a passo para músicos
+├── exemplos/                             ← os seis patches do tutorial (os links relativos dependem desta subpasta)
 ├── LICENSE                               ← GPL-3.0, copiado da raiz do repositório
 └── *.c, *.h, Makefile                    ← o código-fonte (ver "Fontes", abaixo)
 ```
