@@ -183,8 +183,10 @@ struct __attribute__((packed)) AudioChunkPacket {
 // Globe-navigation pose, notified on its own characteristic (19b10006-...). mode: 0 off,
 // 1 mirror, 2 joystick. Position is degrees x 1e7 (lat -90..90, lon (-180,180]); bearing
 // is the Mapbox convention (degrees clockwise from north of the screen-up direction) x 100
-// in (-180,180]; speed is the globe angular speed in deg/s x 10. Needs MTU >= 25
-// (22-byte payload + 3-byte ATT header).
+// in (-180,180]; speed is the globe angular speed in deg/s x 10. anchorSeq counts the
+// anchors (command 0x17) applied since boot, wrapping at 255: appended (version stays 1),
+// so a 22-byte packet is firmware without 0x17. Needs MTU >= 26 (23-byte payload +
+// 3-byte ATT header).
 struct __attribute__((packed)) NavPacket {
   uint8_t version, type;
   uint16_t seq;
@@ -194,6 +196,7 @@ struct __attribute__((packed)) NavPacket {
   int32_t latE7, lonE7;
   int16_t bearingX100;
   uint16_t speedDegSX10;
+  uint8_t anchorSeq;
 };
 
 static_assert(sizeof(ImuPacket) == 27, "ImuPacket size");
@@ -202,6 +205,6 @@ static_assert(sizeof(DiagPacket) == 34, "DiagPacket size");
 static_assert(sizeof(SensorsPacket) == 23, "SensorsPacket size");
 static_assert(sizeof(AudioChunkPacket) == 208, "AudioChunkPacket size");
 static_assert(sizeof(MagChunkPacket) == 106, "MagChunkPacket size");
-static_assert(sizeof(NavPacket) == 22, "NavPacket size");
+static_assert(sizeof(NavPacket) == 23, "NavPacket size");
 
 }  // namespace gaia

@@ -36,7 +36,8 @@ namespace gaia {
 //  - ConfigStore onChange (NimBLE host task) only sets configDirty_; the App task
 //    re-applies the config to every service.
 //  - Globe navigation (nav_) is App-task-only: it learns about IMU reference changes
-//    from ImuSample::zeroEpoch, which the IMU task stamps on every queued sample.
+//    from ImuSample::zeroEpoch, which the IMU task stamps on every queued sample. The
+//    0x17 anchor is staged by dispatch() and applied by updateNav(), both on this task.
 class App {
  public:
   // Boots everything and starts all tasks. Call once from setup().
@@ -69,6 +70,8 @@ class App {
   void maybeSendMagChunk(uint32_t nowMs);
   void drainCommands();
   void dispatch(const BleCommand &cmd);
+  // Command 0x17: stages the anchor in nav_, then requests the IMU zero.
+  void anchorNavigation(const BleCommand &cmd);
   void persistCapturedMounting();
 
   ConfigStore store_;

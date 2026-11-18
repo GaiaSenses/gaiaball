@@ -1,5 +1,6 @@
 #include <unity.h>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include "../../Gaiaball/src/logic/Packets.h"
 #include "../../Gaiaball/src/logic/PacketCodec.h"
@@ -241,26 +242,33 @@ void test_mag_chunk_size_fits_default_mtu() {
   TEST_ASSERT_EQUAL(106, sizeof(MagChunkPacket));
 }
 
-void test_nav_packet_size() { TEST_ASSERT_EQUAL(22, sizeof(NavPacket)); }
+// 23 bytes since the anchor (command 0x17) appended anchorSeq; a 22-byte packet is the
+// same layout without it (firmware that has no 0x17).
+void test_nav_packet_size() {
+  TEST_ASSERT_EQUAL(23, sizeof(NavPacket));
+  TEST_ASSERT_EQUAL(22, offsetof(NavPacket, anchorSeq));
+}
 
 void test_nav_golden_a() {
   const NavPacket p = makeNavPacket(258, 12345678u, 1, kNavValid | kNavSettled, -229055560,
-                                    -470608330, 4500, 123);
-  const uint8_t expected[22] = {0x01, 0x07, 0x02, 0x01, 0x4E, 0x61, 0xBC, 0x00, 0x01, 0x03, 0xB8,
-                                0xE3, 0x58, 0xF2, 0x36, 0x16, 0xF3, 0xE3, 0x94, 0x11, 0x7B, 0x00};
-  uint8_t got[22];
-  std::memcpy(got, &p, 22);
-  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, got, 22);
+                                    -470608330, 4500, 123, 7);
+  const uint8_t expected[23] = {0x01, 0x07, 0x02, 0x01, 0x4E, 0x61, 0xBC, 0x00,
+                                0x01, 0x03, 0xB8, 0xE3, 0x58, 0xF2, 0x36, 0x16,
+                                0xF3, 0xE3, 0x94, 0x11, 0x7B, 0x00, 0x07};
+  uint8_t got[23];
+  std::memcpy(got, &p, 23);
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, got, 23);
 }
 
 void test_nav_golden_b() {
   const NavPacket p = makeNavPacket(65535, 4294967295u, 2, kNavSettled | kNavMoving, 900000000,
-                                    -1800000000, -18000, 65535);
-  const uint8_t expected[22] = {0x01, 0x07, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x02, 0x06, 0x00,
-                                0xE9, 0xA4, 0x35, 0x00, 0x2E, 0xB6, 0x94, 0xB0, 0xB9, 0xFF, 0xFF};
-  uint8_t got[22];
-  std::memcpy(got, &p, 22);
-  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, got, 22);
+                                    -1800000000, -18000, 65535, 255);
+  const uint8_t expected[23] = {0x01, 0x07, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+                                0x02, 0x06, 0x00, 0xE9, 0xA4, 0x35, 0x00, 0x2E,
+                                0xB6, 0x94, 0xB0, 0xB9, 0xFF, 0xFF, 0xFF};
+  uint8_t got[23];
+  std::memcpy(got, &p, 23);
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, got, 23);
 }
 
 void test_nav_flag_constants() {

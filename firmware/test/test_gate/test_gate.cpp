@@ -174,6 +174,38 @@ void test_throttle_resumes_after_idle() {
   TEST_ASSERT_TRUE(t.shouldSend(5100000));
 }
 
+// --- command access policy (App::dispatch) ------------------------------------
+
+void test_anchor_is_open_while_locked() {
+  // 0x17 needs no PIN: the site anchors the map without ever unlocking.
+  TEST_ASSERT_EQUAL_HEX8(0x17, kCmdAnchor);
+  TEST_ASSERT_TRUE(commandAccess(kCmdAnchor) == CommandAccess::Open);
+  TEST_ASSERT_TRUE(commandAllowed(kCmdAnchor, false));
+  TEST_ASSERT_TRUE(commandAllowed(kCmdAnchor, true));
+}
+
+void test_gated_opcodes_refused_while_locked() {
+  const uint8_t gated[] = {kCmdZero,   kCmdSave,        kCmdFactoryReset, kCmdReboot,
+                           kCmdMountCal, kCmdMagCalStart, kCmdMagCalStop};
+  const uint8_t values[] = {0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16};
+  for (size_t i = 0; i < sizeof gated; i++) {
+    TEST_ASSERT_EQUAL_HEX8(values[i], gated[i]);
+    TEST_ASSERT_TRUE(commandAccess(gated[i]) == CommandAccess::PinRequired);
+    TEST_ASSERT_FALSE(commandAllowed(gated[i], false));
+    TEST_ASSERT_TRUE(commandAllowed(gated[i], true));
+  }
+}
+
+void test_unknown_opcodes_never_run() {
+  // 0x00/0x01: the removed legacy LED command; 0x20 (unlock) never reaches the App task.
+  const uint8_t unknown[] = {0x00, 0x01, 0x0F, 0x18, 0x20, 0xFF};
+  for (uint8_t op : unknown) {
+    TEST_ASSERT_TRUE(commandAccess(op) == CommandAccess::Unknown);
+    TEST_ASSERT_FALSE(commandAllowed(op, false));
+    TEST_ASSERT_FALSE(commandAllowed(op, true));
+  }
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_wrong_pin_stays_locked);
@@ -194,5 +226,8 @@ int main() {
   RUN_TEST(test_throttle_zero_never_sends);
   RUN_TEST(test_throttle_even_spacing);
   RUN_TEST(test_throttle_resumes_after_idle);
+  RUN_TEST(test_anchor_is_open_while_locked);
+  RUN_TEST(test_gated_opcodes_refused_while_locked);
+  RUN_TEST(test_unknown_opcodes_never_run);
   return UNITY_END();
 }

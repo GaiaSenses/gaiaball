@@ -39,12 +39,23 @@ Quat quatFromMatrix(const float m[3][3]) {
 float dot3(const float a[3], const float b[3]) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 }  // namespace
 
-Quat navRefRotation(float latDeg, float lonDeg) {
+Quat navRefRotation(float latDeg, float lonDeg, float bearingDeg) {
   const float f = latDeg * kDegToRad, l = lonDeg * kDegToRad;
   const float sf = sinf(f), cf = cosf(f), sl = sinf(l), cl = cosf(l);
   // Rows: p, east, north. Row i dotted with a vector gives its component i, so
   // M p = +X, M east = +Y, M north = +Z.
-  const float m[3][3] = {{cf * cl, cf * sl, sf}, {-sl, cl, 0.f}, {-sf * cl, -sf * sl, cf}};
+  float m[3][3] = {{cf * cl, cf * sl, sf}, {-sl, cl, 0.f}, {-sf * cl, -sf * sl, cf}};
+  if (bearingDeg != 0.f) {
+    // Rows 1 and 2 become screen right and screen up: up = cos b north + sin b east,
+    // right = cos b east - sin b north (the same p, east, north basis turned by b).
+    const float b = bearingDeg * kDegToRad;
+    const float sb = sinf(b), cb = cosf(b);
+    for (int i = 0; i < 3; i++) {
+      const float east = m[1][i], north = m[2][i];
+      m[1][i] = cb * east - sb * north;
+      m[2][i] = sb * east + cb * north;
+    }
+  }
   return quatFromMatrix(m);
 }
 

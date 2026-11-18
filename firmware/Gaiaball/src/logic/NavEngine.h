@@ -1,6 +1,7 @@
 #pragma once
 #include <stdint.h>
 
+#include "AnchorCommand.h"
 #include "GaiaConfig.h"
 #include "MotionSettle.h"
 #include "NavMath.h"
@@ -39,6 +40,14 @@ uint8_t navDivisor(uint8_t imuHz, uint8_t navHz);
 // sensitivity slider must not snap it back). The first sample after a reset has dt = 0
 // (no speed, no integration). dt between samples comes from their uint32 micros()
 // stamps, wrap-safe.
+//
+// Anchor (command 0x17): stageAnchor() holds a client's map view; the App stages it
+// BEFORE requesting the IMU zero, and it is applied by the reset that the zero's new
+// epoch triggers (R0 = navRefRotation(lat, lon, bearing), anchorSeq + 1, that sample's
+// packet due at once), so samples still queued from the old epoch keep the old
+// reference. RAM only. It survives later zeros (an epoch change with nothing staged
+// keeps R0) and navMode changes; a real change of the configured reference (0x62)
+// drops it, active or pending. All calls come from the App task.
 class NavEngine {
  public:
   // Without an IMU sample for longer than this, the 1 Hz keepalive takes over.
@@ -65,10 +74,16 @@ class NavEngine {
   // false and leaves the navigation state untouched.
   bool update(uint32_t tUs, const Quat &q, bool quatValid, uint32_t zeroEpoch, uint32_t nowMs);
 
+  // Holds a as the reference for the next epoch change (see above); a later call
+  // before that replaces it.
+  void stageAnchor(const NavAnchor &a);
+  // Anchors applied since boot, wrapping at 255 (NavPacket.anchorSeq).
+  uint8_t anchorSeq() const { return anchorSeq_; }
+
   // The packet for the last update(): pose from navPoseFromGlobe(G, R0), timestamp of
-  // that sample, flags valid / settled / moving.
+  // that sample, flags valid / settled / moving, anchorSeq().
   NavPacket packet(uint16_t seq) const;
-  // valid = 0 and every pose field 0; mode = the current mode.
+  // valid = 0 and every pose field 0; mode = the current mode; anchorSeq().
   NavPacket keepalivePacket(uint16_t seq, uint32_t tUs) const;
   // Navigation off, no sample ever, or none for more than kKeepaliveSilenceMs.
   bool keepaliveDue(uint32_t nowMs) const;
@@ -98,6 +113,7 @@ class NavEngine {
   };
   static bool sameMotion(const MotionCfg &a, const MotionCfg &b);
   void resetMotion();
+  void applyAnchor();
   // Mirror: records (g_, tUs) and returns the windowed speed of g_.
   float mirrorSpeedDegS(uint32_t tUs);
 
@@ -114,6 +130,9 @@ class NavEngine {
   JoyParams joy_{90.f, 60.f, 3.f};
   float stopDegS_ = 5.f;
   Quat r0_{1, 0, 0, 0};
+  bool anchorPending_ = false;
+  NavAnchor pendingAnchor_{0, 0, 0};
+  uint8_t anchorSeq_ = 0;
 
   MotionSettle settle_;
   Quat g_{1, 0, 0, 0};

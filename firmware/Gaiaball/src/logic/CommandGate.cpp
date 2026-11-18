@@ -2,6 +2,34 @@
 
 namespace gaia {
 
+CommandAccess commandAccess(uint8_t opcode) {
+  switch (opcode) {
+    case kCmdAnchor:
+      return CommandAccess::Open;
+    case kCmdZero:
+    case kCmdSave:
+    case kCmdFactoryReset:
+    case kCmdReboot:
+    case kCmdMountCal:
+    case kCmdMagCalStart:
+    case kCmdMagCalStop:
+      return CommandAccess::PinRequired;
+    default:
+      return CommandAccess::Unknown;
+  }
+}
+
+bool commandAllowed(uint8_t opcode, bool unlockedAtEnqueue) {
+  switch (commandAccess(opcode)) {
+    case CommandAccess::Open:
+      return true;
+    case CommandAccess::PinRequired:
+      return unlockedAtEnqueue;
+    default:
+      return false;
+  }
+}
+
 void CommandGate::setPin(const char pin[4]) {
   for (size_t i = 0; i < kPinLen; i++) pin_[i] = pin[i];
 }

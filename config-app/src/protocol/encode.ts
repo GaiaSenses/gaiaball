@@ -6,25 +6,26 @@ import {
   CO2_FLAG_TRIGGER,
   CO2_FLAG_VALID,
   CO2_FLAG_VIRTUAL_ACTIVE,
-  CO2_PACKET_SIZE,
+  CO2_PACKET_MIN_SIZE,
   IMU_FLAG_AUDIO_VALID,
   IMU_FLAG_BREATH,
   IMU_FLAG_MOVING,
   IMU_FLAG_NINE_AXIS,
   IMU_FLAG_QUAT_VALID,
-  IMU_PACKET_SIZE,
+  IMU_PACKET_MIN_SIZE,
   IMU_PACKET_VERSION,
   NAV_FLAG_MOVING,
   NAV_FLAG_SETTLED,
   NAV_FLAG_VALID,
-  NAV_PACKET_SIZE,
+  NAV_ANCHOR_SEQ_OFFSET,
+  NAV_PACKET_MIN_SIZE,
   PKT_CO2,
   PKT_IMU,
   PKT_NAV,
   PKT_SENSORS,
   PROTOCOL_VERSION,
   QUAT_SCALE,
-  SENSORS_PACKET_SIZE,
+  SENSORS_PACKET_MIN_SIZE,
   SENS_FLAG_ADAPTIVE,
   SENS_FLAG_AUDIO_ENABLED,
   SENS_FLAG_AUDIO_FILTERED,
@@ -52,7 +53,7 @@ function start(size: number, type: number, version: number, seq: number): DataVi
 const bytes = (dv: DataView): Uint8Array => new Uint8Array(dv.buffer);
 
 export function encodeImuPacket(s: Omit<ImuSample, 'flags'> & { flags?: number }): Uint8Array {
-  const dv = start(IMU_PACKET_SIZE, PKT_IMU, IMU_PACKET_VERSION, s.seq);
+  const dv = start(IMU_PACKET_MIN_SIZE, PKT_IMU, IMU_PACKET_VERSION, s.seq);
   dv.setUint32(4, s.tUs >>> 0, true);
   const q = (o: number, v: number): void => dv.setInt16(o, clamp(Math.round(v * QUAT_SCALE), -32768, 32767), true);
   q(8, s.quat.w); q(10, s.quat.x); q(12, s.quat.y); q(14, s.quat.z);
@@ -69,7 +70,7 @@ export function encodeImuPacket(s: Omit<ImuSample, 'flags'> & { flags?: number }
 }
 
 export function encodeCo2Packet(s: Omit<Co2Sample, 'flags'> & { flags?: number }): Uint8Array {
-  const dv = start(CO2_PACKET_SIZE, PKT_CO2, PROTOCOL_VERSION, s.seq);
+  const dv = start(CO2_PACKET_MIN_SIZE, PKT_CO2, PROTOCOL_VERSION, s.seq);
   dv.setUint32(4, s.tMs >>> 0, true);
   dv.setUint16(8, clamp(Math.round(s.ppm), 0, 0xffff), true);
   dv.setUint8(10, bits([
@@ -80,8 +81,10 @@ export function encodeCo2Packet(s: Omit<Co2Sample, 'flags'> & { flags?: number }
   return bytes(dv);
 }
 
+/** 23 bytes with anchorSeq, 22 (firmware without the 0x17 anchor) without it. */
 export function encodeNavPacket(s: Omit<NavSample, 'flags'> & { flags?: number }): Uint8Array {
-  const dv = start(NAV_PACKET_SIZE, PKT_NAV, PROTOCOL_VERSION, s.seq);
+  const size = s.anchorSeq === undefined ? NAV_PACKET_MIN_SIZE : NAV_ANCHOR_SEQ_OFFSET + 1;
+  const dv = start(size, PKT_NAV, PROTOCOL_VERSION, s.seq);
   dv.setUint32(4, s.tUs >>> 0, true);
   dv.setUint8(8, s.mode);
   dv.setUint8(9, bits([[s.valid, NAV_FLAG_VALID], [s.settled, NAV_FLAG_SETTLED], [s.moving, NAV_FLAG_MOVING]]));
@@ -89,11 +92,12 @@ export function encodeNavPacket(s: Omit<NavSample, 'flags'> & { flags?: number }
   dv.setInt32(14, Math.round(s.lon * 1e7), true);
   dv.setInt16(18, clamp(Math.round(s.bearingDeg * 100), -32768, 32767), true);
   dv.setUint16(20, clamp(Math.round(s.speedDegS * 10), 0, 0xffff), true);
+  if (s.anchorSeq !== undefined) dv.setUint8(NAV_ANCHOR_SEQ_OFFSET, s.anchorSeq & 0xff);
   return bytes(dv);
 }
 
 export function encodeSensorsPacket(s: Omit<SensorsSample, 'flags'> & { flags?: number }): Uint8Array {
-  const dv = start(SENSORS_PACKET_SIZE, PKT_SENSORS, PROTOCOL_VERSION, s.seq);
+  const dv = start(SENSORS_PACKET_MIN_SIZE, PKT_SENSORS, PROTOCOL_VERSION, s.seq);
   dv.setUint32(4, s.tMs >>> 0, true);
   dv.setUint32(8, s.rmsL >>> 0, true);
   dv.setUint32(12, s.rmsR >>> 0, true);

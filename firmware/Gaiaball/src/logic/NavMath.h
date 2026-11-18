@@ -24,7 +24,10 @@ struct JoyParams {
 
 // R0: maps the reference point p to +X, its local east to +Y and local north to
 // +Z, so identity G shows the reference point at the centre with north up.
-Quat navRefRotation(float latDeg, float lonDeg);
+// bearingDeg turns the view about the screen centre (+X), R0 = Rx(bearing) (x) R0(0):
+// identity G then shows p with the Mapbox bearing bearingDeg (screen up points that
+// many degrees clockwise from north). bearingDeg == 0 returns exactly the plain R0.
+Quat navRefRotation(float latDeg, float lonDeg, float bearingDeg = 0.f);
 
 // Screen-centre latitude/longitude and Mapbox bearing (degrees clockwise from
 // north of the direction pointing up on screen, in (-180, 180]).

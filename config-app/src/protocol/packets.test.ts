@@ -17,6 +17,8 @@ const DIAG =
   ' 96 00';
 const MAG = '01 06 09 00 04 03 02 01 02 00 64 00 38 FF 2C 01 65 00 37 FF 2D 01' + ' 00'.repeat(84);
 const SENSORS = '01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 07';
+// 208-byte AudioChunk: header + hp/lp echo + 96 int16 samples (first = -2, second = 513).
+const AUDIO = '01 05 2A 00 10 27 00 00 D0 07 60 01 0A 00 C8 00 FE FF 01 02' + ' 00 00'.repeat(94);
 
 describe('golden decode', () => {
   it('IMU', () => {
@@ -131,10 +133,7 @@ describe('golden decode', () => {
   });
 
   it('AudioChunk', () => {
-    // 208-byte packet: header + hp/lp echo + 96 int16 samples (first = -2, second = 513).
-    const head = '01 05 2A 00 10 27 00 00 D0 07 60 01 0A 00 C8 00';
-    const body = 'FE FF 01 02 ' + '00 00 '.repeat(94);
-    const dv = hex(head + ' ' + body);
+    const dv = hex(AUDIO);
     expect(dv.byteLength).toBe(208);
     const s = decodeAudioChunkPacket(dv)!;
     expect(s).toMatchObject({ seq: 42, tMs: 10000, sampleRateHz: 2000, hpHz: 10, lpHz: 200 });
@@ -154,14 +153,43 @@ describe('golden decode', () => {
   });
 });
 
+// Every decoder with its golden packet (the NavPacket one is the 23-byte vector below).
+const ALL: [string, (dv: DataView) => unknown, string][] = [
+  ['IMU', decodeImuPacket, IMU],
+  ['CO2', decodeCo2Packet, CO2],
+  ['Diag', decodeDiagPacket, DIAG],
+  ['Sensors', decodeSensorsPacket, SENSORS],
+  ['AudioChunk', decodeAudioChunkPacket, AUDIO],
+  ['MagChunk', decodeMagChunkPacket, MAG],
+];
+
+describe('append-only protocol: the size is a minimum', () => {
+  // Newer firmware may append fields; an exact length check would silently drop its
+  // packets. Bytes past the known layout are ignored.
+  it.each(ALL)('%s: a longer packet decodes like the known one', (_, d, golden) => {
+    const known = d(hex(golden));
+    expect(known).not.toBeNull();
+    expect(d(hex(golden + ' AB CD EF 01'))).toEqual(known);
+  });
+  it.each(ALL)('%s: a truncated packet is rejected', (_, d, golden) => {
+    const b = new Uint8Array(hex(golden).buffer);
+    expect(d(new DataView(b.buffer, 0, b.length - 1))).toBeNull();
+  });
+  it('a longer v1 IMU packet is still legacy, not a v2 one', () => {
+    const v1Longer = hex(IMU_V1 + ' 00 00');
+    expect(decodeImuPacket(v1Longer)).toBeNull();
+    expect(isLegacyImuPacket(v1Longer)).toBe(true);
+  });
+});
+
 describe('invalid input returns null', () => {
   const dec = [decodeImuPacket, decodeCo2Packet, decodeDiagPacket];
   const good = [IMU, CO2, DIAG];
-  it('truncated / extended / empty', () => {
+  it('truncated / zero-filled / empty', () => {
     dec.forEach((d, i) => {
       const b = new Uint8Array(hex(good[i]).buffer);
       expect(d(new DataView(b.buffer, 0, b.length - 1))).toBeNull();
-      expect(d(new DataView(new Uint8Array(b.length + 1).buffer))).toBeNull();
+      expect(d(new DataView(new Uint8Array(b.length + 1).buffer))).toBeNull(); // version 0
       expect(d(new DataView(new ArrayBuffer(0)))).toBeNull();
     });
   });
@@ -250,9 +278,12 @@ describe('VALID_OUTPUT_GPIOS', () => {
   });
 });
 
-// Golden vectors A and B copied verbatim from the navigation protocol spec.
-const NAV_A = '01 07 02 01 4E 61 BC 00 01 03 B8 E3 58 F2 36 16 F3 E3 94 11 7B 00';
-const NAV_B = '01 07 FF FF FF FF FF FF 02 06 00 E9 A4 35 00 2E B6 94 B0 B9 FF FF';
+// Golden vectors A and B copied verbatim from the navigation protocol spec (23 bytes:
+// anchorSeq 7 and 255 at byte 22).
+const NAV_A = '01 07 02 01 4E 61 BC 00 01 03 B8 E3 58 F2 36 16 F3 E3 94 11 7B 00 07';
+const NAV_B = '01 07 FF FF FF FF FF FF 02 06 00 E9 A4 35 00 2E B6 94 B0 B9 FF FF FF';
+// The same pose from firmware without command 0x17: 22 bytes, no anchorSeq.
+const NAV_A_22 = '01 07 02 01 4E 61 BC 00 01 03 B8 E3 58 F2 36 16 F3 E3 94 11 7B 00';
 
 describe('NavPacket', () => {
   it('golden A', () => {
@@ -266,6 +297,17 @@ describe('NavPacket', () => {
     expect(s.lon).toBeCloseTo(-47.060833, 7);
     expect(s.bearingDeg).toBe(45);
     expect(s.speedDegS).toBeCloseTo(12.3, 6);
+    expect(s.anchorSeq).toBe(7);
+  });
+  it('22 bytes (firmware without 0x17): same pose, no anchorSeq', () => {
+    const s = decodeNav(hex(NAV_A_22))!;
+    expect(s.anchorSeq).toBeUndefined();
+    const { anchorSeq, ...rest } = decodeNav(hex(NAV_A))!;
+    expect(anchorSeq).toBe(7);
+    expect(s).toEqual(rest);
+  });
+  it('a longer packet still decodes, anchorSeq included', () => {
+    expect(decodeNav(hex(NAV_A + ' AB CD'))).toEqual(decodeNav(hex(NAV_A)));
   });
   it('golden B (extremes)', () => {
     const s = decodeNav(hex(NAV_B))!;
@@ -277,11 +319,12 @@ describe('NavPacket', () => {
     expect(s.lon).toBe(-180);
     expect(s.bearingDeg).toBe(-180);
     expect(s.speedDegS).toBeCloseTo(6553.5, 6);
+    expect(s.anchorSeq).toBe(255);
   });
-  it('rejects wrong length, version and type', () => {
+  it('rejects truncated, version and type', () => {
     const b = new Uint8Array(hex(NAV_A).buffer);
     expect(decodeNav(new DataView(b.buffer, 0, 21))).toBeNull();
-    expect(decodeNav(new DataView(new Uint8Array(23).buffer))).toBeNull();
+    expect(decodeNav(new DataView(new Uint8Array(23).buffer))).toBeNull(); // version 0
     expect(decodeNav(new DataView(new ArrayBuffer(0)))).toBeNull();
     const v = new Uint8Array(b); v[0] = 2;
     expect(decodeNav(new DataView(v.buffer))).toBeNull();
