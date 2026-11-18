@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "../logic/CommandGate.h"
+#include "../logic/StatusRecords.h"
 #include "ConfigStore.h"
 #include "Logger.h"
 
@@ -37,7 +38,6 @@ constexpr uint16_t kConnItvlMaxUnits = 12;   // x 1.25 ms = 15 ms
 constexpr uint16_t kConnLatency = 0;         // never skip an event: this is a live link
 constexpr uint16_t kConnTimeoutUnits = 400;  // x 10 ms = 4 s supervision timeout
 constexpr uint16_t kNoHandle = 0xFFFF;  // == BLE_HS_CONN_HANDLE_NONE
-constexpr uint8_t kTlvImuDetected = 0x35;  // read-only, see logic/ImuStatus.h
 constexpr size_t kConfigReadBuf = 384;  // see ConfigStore kTlvBufCap
 // onSubscribe() subValue bit for notifications (NimBLE-Arduino 1.4.3 keeps its
 // NIMBLE_SUB_NOTIFY private to NimBLECharacteristic.cpp).
@@ -115,7 +115,9 @@ class BleService::ConfigCb : public NimBLECharacteristicCallbacks {
  public:
   explicit ConfigCb(BleService &s) : s_(s) {}
 
-  void onRead(NimBLECharacteristic *chr, ble_gap_conn_desc *) override { s_.onConfigRead(chr); }
+  void onRead(NimBLECharacteristic *chr, ble_gap_conn_desc *desc) override {
+    s_.onConfigRead(chr, desc ? desc->conn_handle : kNoHandle);
+  }
 
   void onWrite(NimBLECharacteristic *chr, ble_gap_conn_desc *desc) override {
     NimBLEAttValue v = chr->getValue();
@@ -330,16 +332,16 @@ void BleService::onConfigWrite(uint16_t connHandle, const uint8_t *data, size_t 
     GB_LOGW(kTag, "slot %u config write invalid TLV, ignored", slot);
 }
 
-void BleService::onConfigRead(NimBLECharacteristic *chr) {
+void BleService::onConfigRead(NimBLECharacteristic *chr, uint16_t connHandle) {
   uint8_t buf[kConfigReadBuf];
   size_t n = store_->serializeTlv(buf, sizeof(buf));
-  // imuDetected (0x35) is read-only and lives outside the codec table: append it here.
-  // Skipped only if the config left no room for it (the full config is far below 384 B).
-  if (n + 3 <= sizeof(buf)) {
-    buf[n++] = kTlvImuDetected;
-    buf[n++] = 1;
-    buf[n++] = imuStatus_.load();
-  }
+  // Read-only status outside the codec table: imuDetected (0x35) and the reading
+  // connection's unlockState (0x37), so a client can confirm its PIN. Host task, like
+  // every gate access, so no lock is needed.
+  // kNoHandle must not go through slotOf(): it matches the FREE slots.
+  const uint8_t slot = connHandle == kNoHandle ? kNoSlot : slotOf(connHandle);
+  const GateState lock = slot == kNoSlot ? GateState::Locked : gate_->state(slot, millis());
+  n = appendStatusRecords(buf, n, sizeof(buf), imuStatus_.load(), static_cast<uint8_t>(lock));
   chr->setValue(buf, n);
 }
 

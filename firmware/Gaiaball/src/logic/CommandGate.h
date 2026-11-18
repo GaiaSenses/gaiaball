@@ -24,6 +24,14 @@ CommandAccess commandAccess(uint8_t opcode);
 // The App task's verdict for a queued command (BleCommand::unlockedAtEnqueue).
 bool commandAllowed(uint8_t opcode, bool unlockedAtEnqueue);
 
+// What a connection's gate looks like right now. The byte values travel to the clients as
+// the read-only config record 0x37 (unlockState, see StatusRecords.h): keep them stable.
+enum class GateState : uint8_t {
+  Locked = 0,     // no PIN accepted on this connection (or a wrong one)
+  Unlocked = 1,   // the PIN was accepted: gated commands and config writes run
+  LockedOut = 2,  // kMaxFailures wrong PINs: unlock() refuses until kLockoutMs pass
+};
+
 // Per-connection PIN unlock for sensitive BLE commands. The PIN is 4 ASCII
 // digits. Two connection slots (connId 0/1); any other connId is always locked.
 //
@@ -42,6 +50,8 @@ class CommandGate {
   void setPin(const char pin[4]);
   bool unlock(uint8_t connId, const uint8_t *pin, size_t len, uint32_t nowMs);
   bool isUnlocked(uint8_t connId) const;
+  // Locked for any connId out of range. LockedOut uses the same wrap-safe window as unlock().
+  GateState state(uint8_t connId, uint32_t nowMs) const;
   void onDisconnect(uint8_t connId);
 
  private:

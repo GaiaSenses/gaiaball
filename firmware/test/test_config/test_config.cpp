@@ -5,6 +5,7 @@
 #include "../../Gaiaball/src/logic/ImuStatus.h"
 #include "../../Gaiaball/src/logic/MagAxisRemap.h"
 #include "../../Gaiaball/src/logic/MagCalibration.h"
+#include "../../Gaiaball/src/logic/StatusRecords.h"
 #include "../../Gaiaball/src/logic/TlvCodec.h"
 
 using namespace gaia;
@@ -570,10 +571,50 @@ void test_0x35_never_appears_in_serialized_config(void) {
 }
 
 void test_serialized_config_leaves_room_for_status_record(void) {
-  GaiaConfig c;  // the 3-byte 0x35 record is appended after tlvSerialize in a 384 B buffer
+  GaiaConfig c;  // the 3-byte 0x35 and 0x37 records are appended after tlvSerialize in a 384 B buffer
   uint8_t buf[384];
   const size_t n = tlvSerialize(c, buf, sizeof(buf));
-  TEST_ASSERT_TRUE(n + 3 <= sizeof(buf));
+  TEST_ASSERT_TRUE(n + 6 <= sizeof(buf));
+}
+
+// --- unlockState (0x37): read-only, per reading connection, outside the codec table ---
+
+void test_status_records_append_imu_then_unlock_state(void) {
+  uint8_t buf[16] = {0x02, 1, 50};
+  const size_t n = appendStatusRecords(buf, 3, sizeof(buf), 0x0D, 1);
+  const uint8_t want[] = {0x02, 1, 50, 0x35, 1, 0x0D, 0x37, 1, 1};
+  TEST_ASSERT_EQUAL_UINT32(sizeof(want), n);
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(want, buf, sizeof(want));
+  TEST_ASSERT_EQUAL_UINT8(0x35, kTlvImuDetected);
+  TEST_ASSERT_EQUAL_UINT8(0x37, kTlvUnlockState);
+}
+
+void test_status_records_skip_what_does_not_fit(void) {
+  uint8_t buf[9] = {0x02, 1, 50};
+  TEST_ASSERT_EQUAL_UINT32(6, appendStatusRecords(buf, 3, 8, 0x05, 2));  // only 0x35 fits
+  TEST_ASSERT_EQUAL_UINT8(0x35, buf[3]);
+  TEST_ASSERT_EQUAL_UINT32(3, appendStatusRecords(buf, 3, 5, 0x05, 2));  // neither fits
+  TEST_ASSERT_EQUAL_UINT32(9, appendStatusRecords(buf, 3, 9, 0x05, 2));  // exactly both
+  TEST_ASSERT_EQUAL_UINT8(2, buf[8]);
+}
+
+void test_0x37_is_rejected_on_write(void) {
+  GaiaConfig c;
+  const uint8_t buf[] = {0x37, 1, 0x01};
+  TEST_ASSERT_FALSE(tlvApply(c, buf, sizeof(buf)));
+  const uint8_t mixed[] = {0x02, 1, 100, 0x37, 1, 0x01};
+  TEST_ASSERT_FALSE(tlvApply(c, mixed, sizeof(mixed)));
+  TEST_ASSERT_EQUAL_UINT8(50, c.imuNotifyHz);
+}
+
+void test_0x37_never_appears_in_serialized_config(void) {
+  GaiaConfig c;
+  uint8_t buf[384];
+  const size_t n = tlvSerialize(c, buf, sizeof(buf));
+  for (size_t i = 0; i < n;) {
+    TEST_ASSERT_NOT_EQUAL(0x37, buf[i]);
+    i += 2u + buf[i + 1];
+  }
 }
 
 // ------------------------------------------------------------- navigation registers
@@ -1037,6 +1078,10 @@ int main(int, char **) {
   RUN_TEST(test_0x35_is_rejected_on_write);
   RUN_TEST(test_0x35_never_appears_in_serialized_config);
   RUN_TEST(test_serialized_config_leaves_room_for_status_record);
+  RUN_TEST(test_status_records_append_imu_then_unlock_state);
+  RUN_TEST(test_status_records_skip_what_does_not_fit);
+  RUN_TEST(test_0x37_is_rejected_on_write);
+  RUN_TEST(test_0x37_never_appears_in_serialized_config);
   RUN_TEST(test_default_config_has_no_imu_selected);
   RUN_TEST(test_imu_chip_out_of_range_rejects_whole_write);
   RUN_TEST(test_mag_axis_remap_out_of_range_rejects_whole_write);
