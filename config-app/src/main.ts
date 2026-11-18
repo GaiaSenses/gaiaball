@@ -4,9 +4,9 @@ import '@fontsource/ibm-plex-sans/500.css';
 import '@fontsource/ibm-plex-sans/600.css';
 import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/500.css';
-import { GaiaballClient, type StatusDetail } from './ble/gaiaball-client.ts';
+import { CMD_UNLOCK, GaiaballClient, type StatusDetail } from './ble/gaiaball-client.ts';
 import { attachAutoRead } from './ble/auto-read.ts';
-import { demoConfigRegs, demoWrite } from './demo-config.ts';
+import { demoConfigRegs, demoUnlock, demoWrite } from './demo-config.ts';
 import { mountConnectionPanel } from './panels/connection-panel.ts';
 import { StreamStats } from './metrics/stream-stats.ts';
 import { mountConfigPanel } from './panels/config-panel.ts';
@@ -259,7 +259,7 @@ if (isDemo) {
   const demoRegs = demoConfigRegs();
   client.readConfig = async () => new Map(demoRegs);
   client.writeConfig = async (regs) => demoWrite(demoRegs, regs);
-  client.sendCommand = async () => {};
+  client.sendCommand = async (opcode, arg) => { if (opcode === CMD_UNLOCK) demoUnlock(demoRegs, arg); };
   void autoRead.run();
   // Synthetic slow compound rotation (quaternion products only), no BLE needed.
   type Q = { w: number; x: number; y: number; z: number };

@@ -49,6 +49,7 @@ export const TLV = {
   co2AlertPpm: 0x32,
   imuChip: 0x34, // 0 = unconfigured (IMU off), 1 = ICM-20948, 2 = GY-91 / MPU-9250; takes effect after a reboot
   imuDetected: 0x35, // READ-ONLY (never write it: the whole write fails). bits 0-1 = chip at boot, bit 2 = sensor found
+  unlockState: 0x37, // READ-ONLY, like 0x35: 0 locked / 1 unlocked / 2 locked out (5 wrong PINs, 30 s), for the READING connection
   magAxisRemap: 0x36, // 0..23, index into the fixed table of magnetometer axis mappings (default 8 = +Y +X -Z)
   // 0x33 is reserved (was statusLedPin; removed with the legacy LED command).
   bleName: 0x40,
