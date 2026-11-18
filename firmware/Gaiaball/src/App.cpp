@@ -368,7 +368,7 @@ void App::drainCommands() {
 
 void App::dispatch(const BleCommand &cmd) {
   // Policy in CommandGate.h: 0x00/0x01 (the legacy LED command, never sent by any
-  // client) are unknown; 0x17 (anchor) is the one opcode that needs no PIN.
+  // client) are unknown; 0x17 (anchor) and 0x18 (end the CO2 pulse) need no PIN.
   if (commandAccess(cmd.opcode) == CommandAccess::Unknown) {
     GB_LOGW(kTag, "unknown opcode 0x%02X (slot %u)", cmd.opcode, cmd.connSlot);
     return;
@@ -381,6 +381,14 @@ void App::dispatch(const BleCommand &cmd) {
   switch (cmd.opcode) {
     case kCmdAnchor:
       anchorNavigation(cmd);
+      break;
+    case kCmdEndCo2Pulse:
+      // The person closed the composition the breath opened: the reported ppm goes back to
+      // the real reading on the next CO2 tick (<= 50 ms, a flags change is sent at once), so
+      // the trigger drops instead of holding for the rest of virtualHoldMs. The next breath
+      // starts a new pulse.
+      GB_LOGI(kTag, "virtual CO2 pulse ended by slot %u", cmd.connSlot);
+      virtualPulse_.cancel();
       break;
     case kCmdZero:
       GB_LOGI(kTag, "zero orientation requested");
