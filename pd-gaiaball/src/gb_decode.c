@@ -43,7 +43,7 @@ int gb_decode_co2(const uint8_t *p, size_t n, gb_co2 *out) {
 }
 
 int gb_decode_nav(const uint8_t *p, size_t n, gb_nav *out) {
-    if (!p || !out || n < 22 || p[0] != 1 || p[1] != 0x07) return 0;
+    if (!p || !out || n < 23 || p[0] != 1 || p[1] != 0x07) return 0;
     out->seq = u16(p + 2);
     out->t_us = u32(p + 4);
     out->mode = p[8];

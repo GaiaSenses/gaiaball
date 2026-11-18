@@ -21,8 +21,7 @@ export const DIAG_PACKET_MIN_SIZE = 34;
 export const SENSORS_PACKET_MIN_SIZE = 23;
 export const AUDIO_PACKET_MIN_SIZE = 208;
 export const AUDIO_CHUNK_SAMPLES = 96;
-/** 22 bytes = firmware without the 0x17 anchor command; 23 adds anchorSeq (byte 22). */
-export const NAV_PACKET_MIN_SIZE = 22;
+export const NAV_PACKET_MIN_SIZE = 23;
 export const NAV_ANCHOR_SEQ_OFFSET = 22;
 export const MAG_PACKET_MIN_SIZE = 106;
 export const MAG_CHUNK_MAX_SAMPLES = 16;
@@ -105,7 +104,7 @@ export interface ImuSample {
   moving: boolean;
   /**
    * Microphone envelope measured in the firmware over the audioWindowMs window (TLV
-   * 0x2F, default 50 ms; 20 ms on older firmware) that ended with this sample, at the
+   * 0x2F, default 50 ms) that ended with this sample, at the
    * full 16 kHz rate (left, right).
    * RMS is AES17 dBFS (0 dBFS = full-scale sine); peak is amplitude dBFS (0 dBFS =
    * full-scale sample), so the same sine reads 3.01 dB lower on the peak scale.
@@ -187,11 +186,8 @@ export interface NavSample {
   bearingDeg: number;
   /** Globe angular speed, deg/s. */
   speedDegS: number;
-  /**
-   * Anchors (command 0x17) the ball has applied since boot, wrapping at 255. Absent on
-   * 22-byte packets: that firmware has no 0x17.
-   */
-  anchorSeq?: number;
+  /** Anchors (command 0x17) the ball has applied since boot, wrapping at 255. */
+  anchorSeq: number;
 }
 
 export interface MagChunkSample {
@@ -240,11 +236,6 @@ export interface AudioChunkSample {
 /** Minimum size (append-only protocol: longer packets are accepted), then version and type. */
 function header(dv: DataView, minSize: number, type: number, version = PROTOCOL_VERSION): boolean {
   return dv.byteLength >= minSize && dv.getUint8(0) === version && dv.getUint8(1) === type;
-}
-
-/** True for an IMU packet from firmware that still speaks version 1 (31 B, acceleration in LSB). */
-export function isLegacyImuPacket(dv: DataView): boolean {
-  return dv.byteLength >= 2 && dv.getUint8(0) === 1 && dv.getUint8(1) === PKT_IMU;
 }
 
 export function decodeImuPacket(dv: DataView): ImuSample | null {
@@ -378,7 +369,7 @@ export function decodeMagChunkPacket(dv: DataView): MagChunkSample | null {
   return { seq: dv.getUint16(2, true), tMs: dv.getUint32(4, true), samples, flags: dv.getUint8(9) };
 }
 
-/** Globe navigation (nav characteristic, optional in older firmware). */
+/** Globe navigation (nav characteristic). */
 export function decodeNav(dv: DataView): NavSample | null {
   if (!header(dv, NAV_PACKET_MIN_SIZE, PKT_NAV)) return null;
   const flags = dv.getUint8(9);
@@ -394,6 +385,6 @@ export function decodeNav(dv: DataView): NavSample | null {
     lon: dv.getInt32(14, true) / 1e7,
     bearingDeg: dv.getInt16(18, true) / 100,
     speedDegS: dv.getUint16(20, true) / 10,
-    ...(dv.byteLength > NAV_ANCHOR_SEQ_OFFSET ? { anchorSeq: dv.getUint8(NAV_ANCHOR_SEQ_OFFSET) } : {}),
+    anchorSeq: dv.getUint8(NAV_ANCHOR_SEQ_OFFSET),
   };
 }

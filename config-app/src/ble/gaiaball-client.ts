@@ -7,7 +7,6 @@ import {
   decodeImuPacket,
   decodeNav,
   decodeSensorsPacket,
-  isLegacyImuPacket,
 } from '../protocol/packets.ts';
 import { buildCommand, decodeTlv, encodeTlv, type TlvWrite } from '../protocol/tlv.ts';
 import { lockStateFrom, type LockState } from './unlock-state.ts';
@@ -106,8 +105,6 @@ export class GaiaballClient extends EventTarget {
   private diagChar: BtCharacteristic | null = null;
   private rawSink: ((bytes: Uint8Array) => void) | null = null;
   private isConnected = false;
-  private outdatedReported = false;
-  private hasNav = false;
   /** Characteristics already listened to, so a retry or reconnect never doubles the stream. */
   private readonly subscribed = new WeakSet<BtCharacteristic>();
   /** Tail of the GATT operation chain: the link handles one operation at a time. */
@@ -119,11 +116,6 @@ export class GaiaballClient extends EventTarget {
 
   get connected(): boolean {
     return this.isConnected;
-  }
-
-  /** True when the connected ball exposes the navigation characteristic (newer firmware). */
-  get navAvailable(): boolean {
-    return this.hasNav;
   }
 
   get deviceName(): string | null {
@@ -207,38 +199,25 @@ export class GaiaballClient extends EventTarget {
   private async setupLink(gatt: BtServer): Promise<void> {
     const server = await gatt.connect();
     const service = await server.getPrimaryService(SERVICE_UUID);
-    const [imu, cmd, co2, cfg, diag] = await Promise.all([
+    const [imu, cmd, co2, cfg, diag, nav] = await Promise.all([
       service.getCharacteristic(CHAR_IMU),
       service.getCharacteristic(CHAR_COMMAND),
       service.getCharacteristic(CHAR_CO2),
       service.getCharacteristic(CHAR_CONFIG),
       service.getCharacteristic(CHAR_DIAG),
+      service.getCharacteristic(CHAR_NAV),
     ]);
     this.cmdChar = cmd;
     this.cfgChar = cfg;
     this.diagChar = diag;
-    // Optional: an older ball simply lacks it and must still connect.
-    let nav: BtCharacteristic | null = null;
-    try {
-      nav = await service.getCharacteristic(CHAR_NAV);
-    } catch {
-      nav = null;
-    }
     this.subscribe(imu, 'imu');
     this.subscribe(co2, 'co2');
     this.subscribe(diag, 'diag');
+    this.subscribe(nav, 'nav');
     await this.gatt(() => imu.startNotifications());
     await this.gatt(() => co2.startNotifications());
     await this.gatt(() => diag.startNotifications());
-    if (nav) {
-      this.subscribe(nav, 'nav');
-      try {
-        await this.gatt(() => nav.startNotifications());
-        this.hasNav = true;
-      } catch {
-        this.hasNav = false;
-      }
-    }
+    await this.gatt(() => nav.startNotifications());
   }
 
   disconnect(): void {
@@ -253,9 +232,8 @@ export class GaiaballClient extends EventTarget {
   }
 
   /**
-   * Sends the PIN, then reads the configuration back: firmware with the read-only TLV 0x37
-   * reports whether this connection is now unlocked ('unknown' on older firmware, which never
-   * confirms; there a wrong PIN only shows as ignored commands and config writes).
+   * Sends the PIN, then reads the configuration back: the read-only TLV 0x37 reports whether
+   * this connection is now unlocked.
    * Firmware lockout: 5 straight failures -> 30 s refusal ('locked-out').
    */
   async unlock(pin: string): Promise<LockState> {
@@ -313,17 +291,9 @@ export class GaiaballClient extends EventTarget {
       }
     }
     try {
-      let decoded = false;
       for (const [event, decode] of DECODERS[source]) {
         const sample = decode(dv);
-        if (sample !== null) {
-          decoded = true;
-          this.dispatchEvent(new CustomEvent(event, { detail: sample }));
-        }
-      }
-      if (!decoded && source === 'imu' && !this.outdatedReported && isLegacyImuPacket(dv)) {
-        this.outdatedReported = true;
-        this.dispatchEvent(new CustomEvent('firmware-outdated'));
+        if (sample !== null) this.dispatchEvent(new CustomEvent(event, { detail: sample }));
       }
     } catch {
       // Malformed packet: drop silently, never break the notification stream.
@@ -343,8 +313,6 @@ export class GaiaballClient extends EventTarget {
     // An operation in flight on a dead link may never settle; the next connection starts a fresh chain.
     this.gattQueue = Promise.resolve();
     this.isConnected = false;
-    this.outdatedReported = false;
-    this.hasNav = false;
     this.cmdChar = null;
     this.cfgChar = null;
     this.diagChar = null;

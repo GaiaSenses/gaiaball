@@ -9,7 +9,6 @@ const IMU = '02 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 E8 03 0C FE 97 00 0
 const CO2 = '01 02 02 01 0D 0C 0B 0A E8 03 05 07';
 const NAV_A = '01 07 02 01 4E 61 BC 00 01 03 B8 E3 58 F2 36 16 F3 E3 94 11 7B 00 07';
 const NAV_B = '01 07 FF FF FF FF FF FF 02 06 00 E9 A4 35 00 2E B6 94 B0 B9 FF FF FF';
-const NAV_A_22 = '01 07 02 01 4E 61 BC 00 01 03 B8 E3 58 F2 36 16 F3 E3 94 11 7B 00'; // no anchorSeq
 const SENSORS = '01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 07';
 
 describe('encode', () => {
@@ -27,7 +26,6 @@ describe('encode', () => {
     expect(Array.from(encodeCo2Packet(decodeCo2Packet(dv(bytes(CO2)))!))).toEqual(Array.from(bytes(CO2)));
     expect(Array.from(encodeNavPacket(decodeNav(dv(bytes(NAV_A)))!))).toEqual(Array.from(bytes(NAV_A)));
     expect(Array.from(encodeNavPacket(decodeNav(dv(bytes(NAV_B)))!))).toEqual(Array.from(bytes(NAV_B)));
-    expect(Array.from(encodeNavPacket(decodeNav(dv(bytes(NAV_A_22)))!))).toEqual(Array.from(bytes(NAV_A_22)));
     expect(Array.from(encodeSensorsPacket(decodeSensorsPacket(dv(bytes(SENSORS)))!))).toEqual(Array.from(bytes(SENSORS)));
   });
 

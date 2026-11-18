@@ -86,15 +86,6 @@ describe('config panel markers and Aplicar (n)', () => {
     expect(applyLabel()).toBe('Aplicar');
   });
 
-  it('says "não informado por este firmware" for a field the ball did not report', () => {
-    client.status(true);
-    client.regs.delete(TLV.navNotifyHz);
-    client.config();
-    expect(mark(TLV.navNotifyHz).hidden).toBe(false);
-    expect(mark(TLV.navNotifyHz).textContent).toBe('não informado por este firmware');
-    expect(mark(HZ).hidden).toBe(true);
-    expect(applyLabel()).toBe('Aplicar'); // such a field is never counted
-  });
 
   it('drops every marker on disconnect and says the screen shows the last reading', () => {
     client.status(true);
@@ -160,82 +151,6 @@ describe('automatic read keeps edits, explicit read discards them', () => {
   });
 });
 
-describe('ball stored in Quat9 (the magnetometer UI is gone)', () => {
-  const NOTICE = 'Esta bola está em Quat9 (com magnetômetro). O próximo Aplicar volta para Quat6 e reinicia a navegação do globo.';
-  const notice = (): HTMLElement => q('[data-el=quat9]');
-  let writes: TlvWrite[][];
-  beforeEach(() => {
-    writes = [];
-    client.writeConfig = async (w: TlvWrite[]) => { writes.push(w); demoWrite(client.regs, w); };
-  });
-
-  it('shows the notice and counts the 0x01 write in Aplicar (n)', () => {
-    client.status(true);
-    client.config(ballRegs([{ id: TLV.orientationMode, value: 1 }]));
-    expect(notice().hidden).toBe(false);
-    expect(notice().textContent).toBe(NOTICE);
-    expect(applyLabel()).toBe('Aplicar (1)');
-    type(HZ, '77');
-    expect(applyLabel()).toBe('Aplicar (2)');
-  });
-
-  it('shows nothing and writes nothing for Quat6, or when 0x01 is not reported', () => {
-    client.status(true);
-    client.config();
-    expect(notice().hidden).toBe(true);
-    expect(applyLabel()).toBe('Aplicar');
-    client.regs.delete(TLV.orientationMode);
-    client.config();
-    expect(notice().hidden).toBe(true);
-    expect(applyLabel()).toBe('Aplicar');
-  });
-
-  it('Aplicar writes {0x01: 0}, and the notice goes away after the read-back reports 0', async () => {
-    client.regs = ballRegs([{ id: TLV.orientationMode, value: 1 }]);
-    client.status(true);
-    client.config();
-    q('[data-act=apply]').click();
-    await new Promise((r) => setTimeout(r, 0));
-    expect(writes).toEqual([[{ id: TLV.orientationMode, value: 0 }]]);
-    expect(notice().hidden).toBe(true);
-    expect(applyLabel()).toBe('Aplicar');
-    expect(q('[data-el=msg]').textContent).toContain('Aplicado, verificado');
-  });
-
-  it('warns when the ball keeps Quat9 after Aplicar', async () => {
-    client.regs = ballRegs([{ id: TLV.orientationMode, value: 1 }]);
-    client.writeConfig = async () => {}; // the ball ignores the write
-    client.status(true);
-    client.config();
-    q('[data-act=apply]').click();
-    await new Promise((r) => setTimeout(r, 0));
-    expect(q('[data-el=msg]').textContent).toContain('não foram aceitos');
-    expect(notice().hidden).toBe(false);
-  });
-
-  it('hides the notice on disconnect', () => {
-    client.status(true);
-    client.config(ballRegs([{ id: TLV.orientationMode, value: 1 }]));
-    client.status(false);
-    expect(notice().hidden).toBe(true);
-  });
-
-  it('an old preset with 0x01/0x09/0x36 loads without crashing and writes none of them', async () => {
-    store.save('old', [
-      { id: TLV.orientationMode, value: 1 }, { id: TLV.magRejectionDeg, value: 20 },
-      { id: TLV.magAxisRemap, value: 3 }, { id: HZ, value: 77 },
-    ]);
-    mountConfigPanel(root, client as unknown as GaiaballClient, store); // remount: the list is read at mount
-    client.status(true);
-    client.config();
-    q<HTMLSelectElement>('[data-el=plist]').value = 'old';
-    q('[data-act=pload]').click();
-    expect(applyLabel()).toBe('Aplicar (1)');
-    q('[data-act=apply]').click();
-    await new Promise((r) => setTimeout(r, 0));
-    expect(writes).toEqual([[{ id: HZ, value: 77 }]]);
-  });
-});
 
 describe('Aplicar on a locked ball (TLV 0x37)', () => {
   const withLock = (r: Map<number, DataView>, v: number): Map<number, DataView> => {

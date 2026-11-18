@@ -184,9 +184,8 @@ struct __attribute__((packed)) AudioChunkPacket {
 // 1 mirror, 2 joystick. Position is degrees x 1e7 (lat -90..90, lon (-180,180]); bearing
 // is the Mapbox convention (degrees clockwise from north of the screen-up direction) x 100
 // in (-180,180]; speed is the globe angular speed in deg/s x 10. anchorSeq counts the
-// anchors (command 0x17) applied since boot, wrapping at 255: appended (version stays 1),
-// so a 22-byte packet is firmware without 0x17. Needs MTU >= 26 (23-byte payload +
-// 3-byte ATT header).
+// anchors (command 0x17) applied since boot, wrapping at 255. Needs MTU >= 26 (23-byte
+// payload + 3-byte ATT header).
 struct __attribute__((packed)) NavPacket {
   uint8_t version, type;
   uint16_t seq;

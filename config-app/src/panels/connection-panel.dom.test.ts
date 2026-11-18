@@ -69,12 +69,6 @@ describe('Desbloquear says what the ball answered', () => {
     expect(badge().textContent).toBe('Bloqueada por 30 s');
   });
 
-  it('on firmware that cannot confirm: no badge, and no claim either way', async () => {
-    client.result = 'unknown';
-    await unlockWith('1234');
-    expect(msg()).toMatch(/não confirma/);
-    expect(badge().hidden).toBe(true);
-  });
 
   it('explains a GATT failure in Portuguese instead of the bare Chrome text', async () => {
     client.result = new DOMException('GATT operation failed for unknown reason.', 'NetworkError');

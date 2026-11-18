@@ -81,10 +81,8 @@ export function encodeCo2Packet(s: Omit<Co2Sample, 'flags'> & { flags?: number }
   return bytes(dv);
 }
 
-/** 23 bytes with anchorSeq, 22 (firmware without the 0x17 anchor) without it. */
 export function encodeNavPacket(s: Omit<NavSample, 'flags'> & { flags?: number }): Uint8Array {
-  const size = s.anchorSeq === undefined ? NAV_PACKET_MIN_SIZE : NAV_ANCHOR_SEQ_OFFSET + 1;
-  const dv = start(size, PKT_NAV, PROTOCOL_VERSION, s.seq);
+  const dv = start(NAV_PACKET_MIN_SIZE, PKT_NAV, PROTOCOL_VERSION, s.seq);
   dv.setUint32(4, s.tUs >>> 0, true);
   dv.setUint8(8, s.mode);
   dv.setUint8(9, bits([[s.valid, NAV_FLAG_VALID], [s.settled, NAV_FLAG_SETTLED], [s.moving, NAV_FLAG_MOVING]]));
@@ -92,7 +90,7 @@ export function encodeNavPacket(s: Omit<NavSample, 'flags'> & { flags?: number }
   dv.setInt32(14, Math.round(s.lon * 1e7), true);
   dv.setInt16(18, clamp(Math.round(s.bearingDeg * 100), -32768, 32767), true);
   dv.setUint16(20, clamp(Math.round(s.speedDegS * 10), 0, 0xffff), true);
-  if (s.anchorSeq !== undefined) dv.setUint8(NAV_ANCHOR_SEQ_OFFSET, s.anchorSeq & 0xff);
+  dv.setUint8(NAV_ANCHOR_SEQ_OFFSET, s.anchorSeq & 0xff);
   return bytes(dv);
 }
 

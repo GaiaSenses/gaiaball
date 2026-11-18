@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeAudioChunkPacket, decodeCo2Packet, decodeDiagPacket, decodeImuPacket, decodeMagChunkPacket, decodeNav, decodeSensorsPacket, isLegacyImuPacket, peakToDbfs, potRawToDbfs, rmsToDbfs, thresholdToDbfs } from './packets';
+import { decodeAudioChunkPacket, decodeCo2Packet, decodeDiagPacket, decodeImuPacket, decodeMagChunkPacket, decodeNav, decodeSensorsPacket, peakToDbfs, potRawToDbfs, rmsToDbfs, thresholdToDbfs } from './packets';
 import { TLV, VALID_OUTPUT_GPIOS, buildCommand, decodeNavRef, decodeTlv, encodeNavRef, encodeTlv, navRefToString, parseNavRefString } from './tlv';
 
 const hex = (s: string) => new DataView(new Uint8Array(s.trim().split(/\s+/).map((b) => parseInt(b, 16))).buffer);
@@ -7,10 +7,6 @@ const hex = (s: string) => new DataView(new Uint8Array(s.trim().split(/\s+/).map
 // Golden vectors copied verbatim from firmware/docs/protocol.md
 const IMU =
   '02 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 E8 03 0C FE 97 00 0B F0 C8 F0 E4';
-// Version 1 IMU packet (31 B, acceleration in LSB, audio int16 dBFS x100): legacy firmware.
-const IMU_V1 =
-  '01 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 01 00 FE FF 03 00 0B' +
-  ' 00 00 30 F8 00 00 A6 FD';
 const CO2 = '01 02 02 01 0D 0C 0B 0A E8 03 05 07';
 const DIAG =
   '01 03 01 00 03 02 01 00 F4 01 F4 01 01 00 02 00 03 00 C8 00 96 00 07 11 03 0C 96 00 B5 FF 00 00' +
@@ -45,11 +41,10 @@ describe('golden decode', () => {
     expect(s.audioPeakDbfs).toEqual([-120, -120]);
   });
 
-  it('legacy 31-byte v1 IMU packet decodes to null and is flagged as legacy', () => {
-    expect(decodeImuPacket(hex(IMU_V1))).toBeNull();
-    expect(isLegacyImuPacket(hex(IMU_V1))).toBe(true);
-    expect(isLegacyImuPacket(hex(IMU))).toBe(false);
-    expect(isLegacyImuPacket(hex(CO2))).toBe(false);
+  it('an IMU packet with a version other than 2 is rejected', () => {
+    const b = new Uint8Array(hex(IMU).buffer);
+    b[0] = 1;
+    expect(decodeImuPacket(new DataView(b.buffer))).toBeNull();
   });
   it('CO2', () => {
     const s = decodeCo2Packet(hex(CO2))!;
@@ -175,11 +170,6 @@ describe('append-only protocol: the size is a minimum', () => {
     const b = new Uint8Array(hex(golden).buffer);
     expect(d(new DataView(b.buffer, 0, b.length - 1))).toBeNull();
   });
-  it('a longer v1 IMU packet is still legacy, not a v2 one', () => {
-    const v1Longer = hex(IMU_V1 + ' 00 00');
-    expect(decodeImuPacket(v1Longer)).toBeNull();
-    expect(isLegacyImuPacket(v1Longer)).toBe(true);
-  });
 });
 
 describe('invalid input returns null', () => {
@@ -287,8 +277,6 @@ describe('VALID_OUTPUT_GPIOS', () => {
 // anchorSeq 7 and 255 at byte 22).
 const NAV_A = '01 07 02 01 4E 61 BC 00 01 03 B8 E3 58 F2 36 16 F3 E3 94 11 7B 00 07';
 const NAV_B = '01 07 FF FF FF FF FF FF 02 06 00 E9 A4 35 00 2E B6 94 B0 B9 FF FF FF';
-// The same pose from firmware without command 0x17: 22 bytes, no anchorSeq.
-const NAV_A_22 = '01 07 02 01 4E 61 BC 00 01 03 B8 E3 58 F2 36 16 F3 E3 94 11 7B 00';
 
 describe('NavPacket', () => {
   it('golden A', () => {
@@ -303,13 +291,6 @@ describe('NavPacket', () => {
     expect(s.bearingDeg).toBe(45);
     expect(s.speedDegS).toBeCloseTo(12.3, 6);
     expect(s.anchorSeq).toBe(7);
-  });
-  it('22 bytes (firmware without 0x17): same pose, no anchorSeq', () => {
-    const s = decodeNav(hex(NAV_A_22))!;
-    expect(s.anchorSeq).toBeUndefined();
-    const { anchorSeq, ...rest } = decodeNav(hex(NAV_A))!;
-    expect(anchorSeq).toBe(7);
-    expect(s).toEqual(rest);
   });
   it('a longer packet still decodes, anchorSeq included', () => {
     expect(decodeNav(hex(NAV_A + ' AB CD'))).toEqual(decodeNav(hex(NAV_A)));
