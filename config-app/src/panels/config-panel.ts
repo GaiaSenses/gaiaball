@@ -193,7 +193,7 @@ const GROUPS: Group[] = [
     { id: TLV.breathThresholdNegDbX100, label: 'Sensibilidade (dBFS)', kind: 'number', min: 0, max: 9000,
       scale: 100, negate: true, step: 0.5,
       enabled: (cfg) => cfg.get(TLV.potControlsThreshold) === 0,
-      info: 'No detector absoluto é a linha: o som precisa passar dela para disparar (−35,5 dBFS por padrão; mais perto de 0 = menos sensível). No adaptativo é o quanto o som precisa subir acima do ruído da sala. De −90 a 0, em passos de 0,5. Só vale com a fonte “Valor fixo”; com o potenciômetro, o valor atual aparece ao lado. Unidade: dBFS (0 = fundo de escala).' },
+      info: 'No detector absoluto é a linha: o som precisa passar dela para disparar (−35,5 dBFS por padrão; mais perto de 0 = menos sensível). No adaptativo é o quanto o som precisa subir acima do ruído da sala. De −90 a 0, em passos de 0,5. Só vale com a fonte “Valor fixo”, quando a caixa fica editável; com o potenciômetro, a caixa mostra ao vivo o valor do botão físico e fica travada. Unidade: dBFS (0 = fundo de escala).' },
     { id: TLV.breathRearmDb, label: 'Rearme (dB)', kind: 'number', min: 0, max: 20, step: 1,
       info: 'Quanto o som precisa cair abaixo da linha para um novo sopro poder disparar. Evita que um sopro longo dispare várias vezes. De 0 a 20, de 1 em 1. Unidade: decibéis (dB).' },
     { id: TLV.debounceMs, label: 'Debounce (s)', kind: 'number', min: 0, max: 65535,
@@ -584,8 +584,12 @@ export function mountConfigPanel(
   const switches = new Map<number, HTMLButtonElement>();
   /** Description paragraph under a switch row. */
   const descs = new Map<number, HTMLElement>();
-  /** Shows the potentiometer's current threshold next to the sensitivity input. */
-  let potLabel!: HTMLElement;
+  /**
+   * Under the potentiometer source, takes the sensitivity input's place and shows the knob's
+   * threshold live, locked. A separate box, never the register's input: the knob's reading must
+   * not become the stored fixed value, nor mark the field as edited.
+   */
+  let potBox!: HTMLInputElement;
   let lastSensors: SensorsSample | null = null;
 
   /** Where each tier's fieldsets go. */
@@ -710,18 +714,18 @@ export function mountConfigPanel(
         name.prepend(tg);
         toggles.set(f.id, tg);
       }
-      if (f.id === TLV.breathThresholdNegDbX100) {
-        // Current potentiometer level (from 'sensors'), next to the input; only meaningful while the pot is the source.
-        const wrap = document.createElement('span');
-        wrap.className = 'cfg-sens';
-        potLabel = document.createElement('span');
-        potLabel.className = 'cfg-pot';
-        potLabel.hidden = true;
-        potLabel.setAttribute('aria-live', 'off');
-        wrap.append(potLabel, el);
-        extra = wrap;
-      }
       label.append(name, extra ?? el);
+      if (f.id === TLV.breathThresholdNegDbX100) {
+        // After the register's input, so the <label> still names that one (its first control).
+        potBox = document.createElement('input');
+        potBox.type = 'number';
+        potBox.dataset.el = 'pot-dbfs';
+        potBox.disabled = true;
+        potBox.hidden = true;
+        potBox.placeholder = '—';
+        potBox.setAttribute('aria-label', `${f.label}: valor atual do potenciômetro`);
+        label.append(potBox);
+      }
       if (f.kind === 'checkbox') label.append(el);
       if (f.kind === 'switch') {
         label.append(el);
@@ -833,7 +837,7 @@ export function mountConfigPanel(
     emitCo2();
     emitMetric();
     refreshDescribe();
-    refreshPotLabel();
+    refreshPotBox();
     refreshMarkers();
   };
   /**
@@ -903,14 +907,17 @@ export function mountConfigPanel(
       if (d && f.describe) d.textContent = f.describe(Number(inputs.get(f.id)!.value));
     }
   };
-  const refreshPotLabel = (): void => {
+  /** One box in the Sensibilidade row: the stored value (Valor fixo) or the knob, live (Potenciômetro). */
+  const refreshPotBox = (): void => {
     const pot = Number(inputs.get(TLV.potControlsThreshold)?.value) === 1;
-    potLabel.hidden = !(pot && lastSensors);
-    if (lastSensors) potLabel.textContent = `Potenciômetro: ${potRawToDbfs(lastSensors.potRaw).toFixed(1).replace('.', ',')} dBFS`;
+    inputs.get(TLV.breathThresholdNegDbX100)!.hidden = pot;
+    potBox.hidden = !pot;
+    // Same format as the input it stands in for (scale 100: two decimals).
+    potBox.value = lastSensors ? potRawToDbfs(lastSensors.potRaw).toFixed(2) : '';
   };
   client.addEventListener('sensors', (ev) => {
     lastSensors = (ev as CustomEvent<SensorsSample>).detail;
-    refreshPotLabel();
+    refreshPotBox();
   });
   /** Live form values by register id, for fields whose options depend on other fields. */
   const formView = (): Map<number, unknown> => {

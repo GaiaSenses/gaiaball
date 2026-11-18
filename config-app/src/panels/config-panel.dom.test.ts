@@ -276,3 +276,88 @@ describe('Aplicar on a locked ball (TLV 0x37)', () => {
     expect(msg()).toMatch(/^A bola não respondeu pelo Bluetooth/);
   });
 });
+
+describe('Sensibilidade: one box, the knob shows inside it', () => {
+  const SENS = TLV.breathThresholdNegDbX100;
+  /** A sensors packet with only what the panel reads (the knob's ADC reading). */
+  const knob = (potRaw: number): void => {
+    client.dispatchEvent(new CustomEvent('sensors', { detail: { potRaw } }));
+  };
+  const potBox = (): HTMLInputElement => q('[data-el=pot-dbfs]');
+  const row = (): HTMLElement => input(SENS).closest<HTMLElement>('.cfg-field')!;
+  const potSource = (): Map<number, DataView> => ballRegs([{ id: TLV.potControlsThreshold, value: 1 }]);
+  const fixedSource = (): Map<number, DataView> => ballRegs([{ id: TLV.potControlsThreshold, value: 0 }]);
+
+  it('potentiometer: the box shows the knob in dBFS, locked, with no side label', () => {
+    client.status(true);
+    client.config(potSource());
+    knob(2048); // -60 + 2048/4095 * 60
+    expect(potBox().hidden).toBe(false);
+    expect(potBox().disabled).toBe(true);
+    expect(potBox().value).toBe('-29.99');
+    expect(input(SENS).hidden).toBe(true);
+    expect(row().textContent).not.toContain('Potenciômetro');
+    expect(row().querySelector('.cfg-pot')).toBeNull();
+    // The name and the box sit in the row itself, as in every other row.
+    expect(potBox().parentElement).toBe(row());
+    expect(input(SENS).parentElement).toBe(row());
+  });
+
+  it('potentiometer: the box follows the knob live', () => {
+    client.status(true);
+    client.config(potSource());
+    knob(0);
+    expect(potBox().value).toBe('-60.00');
+    knob(4095);
+    expect(potBox().value).toBe('0.00');
+  });
+
+  it('the knob never becomes the register value: no marker, nothing to apply', () => {
+    client.status(true);
+    client.config(potSource());
+    knob(4095);
+    expect(mark(SENS).hidden).toBe(true);
+    expect(applyLabel()).toBe('Aplicar');
+  });
+
+  it('potentiometer before any sensors packet: an empty locked box', () => {
+    client.status(true);
+    client.config(potSource());
+    expect(potBox().hidden).toBe(false);
+    expect(potBox().value).toBe('');
+    expect(potBox().disabled).toBe(true);
+  });
+
+  it('fixed value: the same place holds the stored value, editable', () => {
+    client.status(true);
+    client.config(fixedSource());
+    knob(4095);
+    expect(potBox().hidden).toBe(true);
+    expect(input(SENS).hidden).toBe(false);
+    expect(input(SENS).disabled).toBe(false);
+    expect(input(SENS).value).toBe('-35.50');
+  });
+
+  it('switching the source swaps the box at once, both ways', () => {
+    client.status(true);
+    client.config(potSource());
+    knob(4095);
+    type(TLV.potControlsThreshold, '0');
+    expect(potBox().hidden).toBe(true);
+    expect(input(SENS).hidden).toBe(false);
+    expect(input(SENS).disabled).toBe(false);
+    expect(input(SENS).value).toBe('-35.50');
+    type(TLV.potControlsThreshold, '1');
+    expect(potBox().hidden).toBe(false);
+    expect(potBox().value).toBe('0.00');
+    expect(input(SENS).hidden).toBe(true);
+  });
+
+  it('disconnected: both boxes stay locked', () => {
+    client.status(true);
+    client.config(fixedSource());
+    client.status(false);
+    expect(input(SENS).disabled).toBe(true);
+    expect(potBox().disabled).toBe(true);
+  });
+});
