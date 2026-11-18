@@ -46,6 +46,8 @@ bool CommandGate::unlock(uint8_t connId, const uint8_t *pin, size_t len, uint32_
     ok = diff == 0;
   }
   if (!ok) {
+    // A wrong PIN also re-locks an unlocked connection: whoever checks a PIN must learn it is wrong.
+    unlocked_[connId] = false;
     if (failures_[connId] < 0xFF) failures_[connId]++;
     lastFailMs_[connId] = nowMs;
     return false;
@@ -57,6 +59,14 @@ bool CommandGate::unlock(uint8_t connId, const uint8_t *pin, size_t len, uint32_
 
 bool CommandGate::isUnlocked(uint8_t connId) const {
   return connId < kMaxConns && unlocked_[connId];
+}
+
+GateState CommandGate::state(uint8_t connId, uint32_t nowMs) const {
+  if (connId >= kMaxConns) return GateState::Locked;
+  if (unlocked_[connId]) return GateState::Unlocked;
+  if (failures_[connId] >= kMaxFailures && (uint32_t)(nowMs - lastFailMs_[connId]) < kLockoutMs)
+    return GateState::LockedOut;
+  return GateState::Locked;
 }
 
 void CommandGate::onDisconnect(uint8_t connId) {

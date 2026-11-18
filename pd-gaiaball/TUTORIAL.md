@@ -188,8 +188,9 @@ sua. Sem esse passo, só chegam ao Pd os dados de CO₂: nada de movimento, micr
 ou globo.
 
 1. Ainda no painel **Conexão**, digite o **PIN** e clique em **Desbloquear**. O PIN é uma
-   senha de 4 números que protege as configurações da bola; o de fábrica é `1234`. A bola
-   não avisa se o PIN está errado: ela só ignora os pedidos.
+   senha de 4 números que protege as configurações da bola; o de fábrica é `1234`. A
+   config-app mostra a resposta da bola: **Desbloqueada** (pode seguir) ou **PIN
+   incorreto**. O desbloqueio vale até desconectar: se a bola reiniciar, desbloqueie de novo.
 2. No painel **Configuração**, aba **Básico**, campo **IMU** (no grupo *Aquisição*),
    escolha o modelo do sensor. Na bola atual do projeto é o **ICM-20948**. Na dúvida,
    pergunte a quem montou a bola.

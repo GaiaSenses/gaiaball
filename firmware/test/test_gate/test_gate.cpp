@@ -206,6 +206,63 @@ void test_unknown_opcodes_never_run() {
   }
 }
 
+
+// --- state(): what the config read reports as 0x37 (unlockState) ----------------------
+
+static uint8_t st(const CommandGate &g, uint8_t conn, uint32_t now) {
+  return static_cast<uint8_t>(g.state(conn, now));
+}
+
+void test_state_locked_then_unlocked_per_connection() {
+  CommandGate g = makeGate();
+  TEST_ASSERT_EQUAL_UINT8(0, static_cast<uint8_t>(GateState::Locked));
+  TEST_ASSERT_EQUAL_UINT8(1, static_cast<uint8_t>(GateState::Unlocked));
+  TEST_ASSERT_EQUAL_UINT8(2, static_cast<uint8_t>(GateState::LockedOut));
+  TEST_ASSERT_EQUAL_UINT8(0, st(g, 0, 0));
+  TEST_ASSERT_TRUE(g.unlock(0, GOOD, 4, 0));
+  TEST_ASSERT_EQUAL_UINT8(1, st(g, 0, 10));
+  TEST_ASSERT_EQUAL_UINT8(0, st(g, 1, 10));  // the other connection stays locked
+  g.onDisconnect(0);
+  TEST_ASSERT_EQUAL_UINT8(0, st(g, 0, 20));
+}
+
+void test_state_wrong_pin_is_locked_until_the_fifth() {
+  CommandGate g = makeGate();
+  const uint8_t bad[4] = {'9', '9', '9', '9'};
+  for (int i = 0; i < 4; i++) TEST_ASSERT_FALSE(g.unlock(0, bad, 4, 1000));
+  TEST_ASSERT_EQUAL_UINT8(0, st(g, 0, 1000));
+  TEST_ASSERT_FALSE(g.unlock(0, bad, 4, 1000));
+  TEST_ASSERT_EQUAL_UINT8(2, st(g, 0, 1000));
+  TEST_ASSERT_EQUAL_UINT8(2, st(g, 0, 1000 + CommandGate::kLockoutMs - 1));
+  TEST_ASSERT_EQUAL_UINT8(0, st(g, 0, 1000 + CommandGate::kLockoutMs));  // expired: one try allowed
+}
+
+void test_state_lockout_wraparound() {
+  CommandGate g = makeGate();
+  const uint8_t bad[4] = {'9', '9', '9', '9'};
+  const uint32_t t = 0xFFFFFF00u;
+  for (int i = 0; i < 5; i++) g.unlock(0, bad, 4, t);
+  TEST_ASSERT_EQUAL_UINT8(2, st(g, 0, t + 0x200u));  // wrapped, 512 ms later: still out
+}
+
+void test_wrong_pin_relocks_an_unlocked_connection() {
+  // Someone checking a new PIN on a connection that is already unlocked must learn it is wrong.
+  CommandGate g = makeGate();
+  const uint8_t bad[4] = {'9', '9', '9', '9'};
+  TEST_ASSERT_TRUE(g.unlock(0, GOOD, 4, 0));
+  TEST_ASSERT_FALSE(g.unlock(0, bad, 4, 10));
+  TEST_ASSERT_FALSE(g.isUnlocked(0));
+  TEST_ASSERT_EQUAL_UINT8(0, st(g, 0, 10));
+  TEST_ASSERT_TRUE(g.unlock(0, GOOD, 4, 20));
+  TEST_ASSERT_EQUAL_UINT8(1, st(g, 0, 20));
+}
+
+void test_state_out_of_range_conn_is_locked() {
+  CommandGate g = makeGate();
+  TEST_ASSERT_EQUAL_UINT8(0, st(g, 2, 0));
+  TEST_ASSERT_EQUAL_UINT8(0, st(g, 255, 0));
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_wrong_pin_stays_locked);
@@ -229,5 +286,10 @@ int main() {
   RUN_TEST(test_anchor_is_open_while_locked);
   RUN_TEST(test_gated_opcodes_refused_while_locked);
   RUN_TEST(test_unknown_opcodes_never_run);
+  RUN_TEST(test_state_locked_then_unlocked_per_connection);
+  RUN_TEST(test_state_wrong_pin_is_locked_until_the_fifth);
+  RUN_TEST(test_state_lockout_wraparound);
+  RUN_TEST(test_state_out_of_range_conn_is_locked);
+  RUN_TEST(test_wrong_pin_relocks_an_unlocked_connection);
   return UNITY_END();
 }

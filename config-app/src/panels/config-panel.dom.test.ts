@@ -236,3 +236,43 @@ describe('ball stored in Quat9 (the magnetometer UI is gone)', () => {
     expect(writes).toEqual([[{ id: HZ, value: 77 }]]);
   });
 });
+
+describe('Aplicar on a locked ball (TLV 0x37)', () => {
+  const withLock = (r: Map<number, DataView>, v: number): Map<number, DataView> => {
+    r.set(TLV.unlockState, new DataView(new Uint8Array([v]).buffer));
+    return r;
+  };
+  const msg = (): string => q('[data-el=msg]').textContent!;
+
+  it('says the ball is locked and how to unlock, instead of a bare list of rejected fields', async () => {
+    client.status(true);
+    client.config(withLock(demoConfigRegs(), 0));
+    type(HZ, '77');
+    client.regs = withLock(demoConfigRegs(), 0); // the ball ignored the write: still 50, still locked
+    q('[data-act=apply]').click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(msg()).toMatch(/A bola está bloqueada/);
+    expect(msg()).toMatch(/Desbloquear/);
+  });
+
+  it('keeps the field list when the ball is unlocked but still refused a value', async () => {
+    client.status(true);
+    client.config(withLock(demoConfigRegs(), 1));
+    type(HZ, '77');
+    client.regs = withLock(demoConfigRegs(), 1);
+    q('[data-act=apply]').click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(msg()).toMatch(/alguns valores não foram aceitos/);
+    expect(msg()).not.toMatch(/bloqueada/);
+  });
+
+  it('explains a GATT failure in Portuguese', async () => {
+    client.status(true);
+    client.config();
+    type(HZ, '77');
+    client.writeConfig = async () => { throw new DOMException('GATT operation failed for unknown reason.', 'NetworkError'); };
+    q('[data-act=apply]').click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(msg()).toMatch(/^A bola não respondeu pelo Bluetooth/);
+  });
+});

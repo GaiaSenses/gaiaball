@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { demoConfigRegs, demoWrite } from './demo-config';
+import { demoConfigRegs, demoUnlock, demoWrite } from './demo-config';
 import { CONFIG_FIELDS, FIELD_DEFAULTS, imuInUseName } from './panels/config-panel';
 import { TLV } from './protocol/tlv';
 
@@ -15,5 +15,21 @@ describe('demo configuration', () => {
     const regs = demoConfigRegs();
     demoWrite(regs, [{ id: TLV.imuNotifyHz, value: 77 }]);
     expect(regs.get(TLV.imuNotifyHz)!.getUint8(0)).toBe(77);
+  });
+
+  it('starts unlocked, and a PIN locks or unlocks it like the ball (factory PIN 1234)', () => {
+    const regs = demoConfigRegs();
+    expect(regs.get(TLV.unlockState)!.getUint8(0)).toBe(1);
+    demoUnlock(regs, new TextEncoder().encode('9999'));
+    expect(regs.get(TLV.unlockState)!.getUint8(0)).toBe(0);
+    demoUnlock(regs, new TextEncoder().encode('1234'));
+    expect(regs.get(TLV.unlockState)!.getUint8(0)).toBe(1);
+  });
+
+  it('ignores writes while locked, like the ball', () => {
+    const regs = demoConfigRegs();
+    demoUnlock(regs, new TextEncoder().encode('0000'));
+    demoWrite(regs, [{ id: TLV.imuNotifyHz, value: 77 }]);
+    expect(regs.get(TLV.imuNotifyHz)!.getUint8(0)).toBe(50);
   });
 });

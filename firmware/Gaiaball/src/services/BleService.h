@@ -40,9 +40,10 @@ struct BleCommand {
 //   1 IMU     NOTIFY|READ    ImuPacket
 //   2 command WRITE|WRITE_NR opcode + args (see BleCommand)
 //   3 CO2     NOTIFY|READ    Co2Packet
-//   4 config  READ|WRITE     TLV (read = ConfigStore::serializeTlv, PIN redacted;
-//                            write = ConfigStore::applyTlv, requires the writer's
-//                            connection to be unlocked)
+//   4 config  READ|WRITE     TLV (read = the read-only 0x35 imuDetected and 0x37
+//                            unlockState of the reading connection, then
+//                            ConfigStore::serializeTlv, PIN redacted; write = ConfigStore::applyTlv,
+//                            requires the writer's connection to be unlocked)
 //   5 diag    NOTIFY|READ    DiagPacket
 //   6 nav     NOTIFY|READ    NavPacket (globe navigation pose)
 //
@@ -100,8 +101,8 @@ class BleService {
   // Queue of BleCommand items for the App task (depth 8). nullptr before begin().
   QueueHandle_t commandQueue() const { return cmdQueue_; }
 
-  // Read-only imuDetected status (TLV 0x35, see logic/ImuStatus.h), appended to every
-  // config read. The App sets it once after the IMU service starts; before that it reads
+  // Read-only imuDetected status (TLV 0x35, see logic/ImuStatus.h), at the start of every
+  // config read (logic/StatusRecords.h). The App sets it once after the IMU service starts; before that it reads
   // as 0 (unconfigured, not found).
   void setImuStatus(uint8_t status) { imuStatus_.store(status); }
 
@@ -136,7 +137,7 @@ class BleService {
   void onSubscribe(uint8_t idx, uint16_t connHandle, uint16_t subValue);
   void onCommandWrite(uint16_t connHandle, const uint8_t *data, size_t len);
   void onConfigWrite(uint16_t connHandle, const uint8_t *data, size_t len);
-  void onConfigRead(NimBLECharacteristic *chr);
+  void onConfigRead(NimBLECharacteristic *chr, uint16_t connHandle);
 
   void notify(uint8_t idx, const void *data, size_t len);
 

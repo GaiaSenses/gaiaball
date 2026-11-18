@@ -4,7 +4,7 @@
 #include "ImuFrontEnd.h"
 
 // Read-only status register imuDetected (TLV 0x35). It is NOT in the TlvCodec table: it is
-// appended to the config-read buffer by BleService::onConfigRead, so a client write of it
+// put in the config-read buffer by BleService::onConfigRead (StatusRecords.h), so a client write of it
 // is an unknown id (the whole write fails) and it is never persisted, hence never stale.
 namespace gaia {
 

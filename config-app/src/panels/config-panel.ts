@@ -8,6 +8,7 @@ import type { ConfigReadDetail, ConfigReadState } from '../ble/auto-read.ts';
 import { applyLabel, populatePlan } from './config-sync.ts';
 import { stripView } from './config-status.ts';
 import type { Co2Levels } from './chart-model.ts';
+import { bleErrorMessage, lockStateFrom } from '../ble/unlock-state.ts';
 
 type Kind = 'number' | 'range' | 'checkbox' | 'select' | 'text' | 'pin' | 'navref' | 'switch';
 export interface Field {
@@ -1071,7 +1072,7 @@ export function mountConfigPanel(
   };
 
   const say = (t: string): void => { msg.textContent = t; };
-  const fail = (e: unknown): void => say(e instanceof Error ? e.message : String(e));
+  const fail = (e: unknown): void => say(bleErrorMessage(e));
   const hasPin = (f: Field): boolean => f.id === TLV.pin;
 
   /** Mirror of the firmware rule: the band-pass must be a real band (LP > HP). */
@@ -1195,7 +1196,10 @@ export function mountConfigPanel(
       publish(back);
       const pinNote = regs.some((r) => r.id === TLV.pin) ? ' Novo PIN enviado (não verificável).' : '';
       if (rejected.length > 0) {
-        say(`⚠ alguns valores não foram aceitos (desbloqueou com o PIN?): ${rejected.join(', ')}.${pinNote}${skipNote}`);
+        const lock = lockStateFrom(back);
+        say(lock === 'locked' || lock === 'locked-out'
+          ? `⚠ A bola está bloqueada e não aceitou as mudanças: digite o PIN em Conexão e clique em Desbloquear (vale só para esta conexão), depois Aplicar de novo.${skipNote}`
+          : `⚠ alguns valores não foram aceitos (desbloqueou com o PIN?): ${rejected.join(', ')}.${pinNote}${skipNote}`);
         return;
       }
       // Changes made through this UI are meant to survive power cycles: persist now.

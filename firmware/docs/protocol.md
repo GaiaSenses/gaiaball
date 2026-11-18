@@ -472,11 +472,17 @@ bytes drop the write.
 
 Unlock is per connection and rate-limited: after 5 consecutive failed attempts the
 connection's unlock requests are refused (even with the correct PIN) until 30 s
-after the last failure. A successful unlock or a disconnect clears the streak.
+after the last failure. A successful unlock or a disconnect clears the streak. A wrong
+PIN also re-locks a connection that was already unlocked.
+The `0x20` write itself has no reply. To confirm it, read the config characteristic:
+the read-only `0x37` (unlockState) reports the **reading** connection's state — 0 locked
+(no PIN yet, or a wrong one), 1 unlocked, 2 locked out (the 30 s window above). Firmware
+older than `0x37` omits the record and cannot confirm the unlock.
 
 Commands get no response either (see the note under the UUID table): an unlock is
-confirmed by a subsequent config write taking effect, a saved config by reading it
-back after a reboot, and an anchor by the NavPacket's `anchorSeq` changing.
+confirmed by `0x37` in the next config read (firmware without it: by a subsequent config
+write taking effect), a saved config by reading it back after a reboot, and an anchor by
+the NavPacket's `anchorSeq` changing.
 
 ## Config TLV (characteristic `...0004`)
 
@@ -542,7 +548,8 @@ TLV register and are persisted under their own NVS keys.
 | 0x31 | u8 | 4 | co2LedPin (same validation as 0x30) |
 | 0x32 | u16 | 2000 | co2AlertPpm |
 | 0x34 | u8 | 0 | imuChip — which IMU is fitted: 0 = unconfigured (IMU off; the factory default, on purpose), 1 = ICM-20948, 2 = GY-91 / MPU-9250. Range 0–2. Persisted in NVS; **takes effect after a reboot** (the driver is chosen once, at boot) |
-| 0x35 | u8 | — | imuDetected — **READ-ONLY.** Appended by the firmware on every config read; **absent from NVS**. Bits 0–1 = the `imuChip` value in force *at boot*; bit 2 (`0x04`) = the sensor was actually found; bit 3 (`0x08`) = its magnetometer answered (clear in Quat9 means the fusion is running 6-axis). A config write that contains `0x35` fails as a whole, so a client must never include it. Comparing bits 0–1 with `0x34` tells "switched, reboot pending" apart from "sensor missing" |
+| 0x35 | u8 | — | imuDetected — **READ-ONLY.** Sent by the firmware at the start of every config read (firmware before `0x37` appended it at the end); **absent from NVS**. Bits 0–1 = the `imuChip` value in force *at boot*; bit 2 (`0x04`) = the sensor was actually found; bit 3 (`0x08`) = its magnetometer answered (clear in Quat9 means the fusion is running 6-axis). A config write that contains `0x35` fails as a whole, so a client must never include it. Comparing bits 0–1 with `0x34` tells "switched, reboot pending" apart from "sensor missing" |
+| 0x37 | u8 | — | unlockState — **READ-ONLY.** Sent by the firmware at the start of every config read, right after `0x35` and before the registers (so it is in the first chunk of a long read, which the firmware builds for the reading connection; the later blob reads come from a value shared by every central); **absent from NVS**. The PIN state of the connection that is reading: 0 = locked (no PIN yet, or a wrong one, which also re-locks), 1 = unlocked (`0x20` accepted), 2 = locked out (5 wrong PINs; refused until 30 s after the last one). A config write that contains `0x37` fails as a whole. Read it right after `0x20` to confirm the PIN. Clients must find records by id, never by position |
 | 0x36 | u8 | 8 | magAxisRemap — mapping of the magnetometer axes onto the accel/gyro frame, 0–23 (index into a fixed table; default 8 = `+Y +X -Z`, i.e. out.x=+in.y, out.y=+in.x, out.z=-in.z). Applied live. The firmware publishes calibration-capture samples already remapped, so **changing it invalidates an existing 0x1E calibration** (remap first, calibrate after). Order: permutation groups lexicographic (XYZ, XZY, YXZ, YZX, ZXY, ZYX), then the four sign patterns whose product equals the permutation's parity, from `+++` with `+` before `-`, leftmost axis slowest; authority `Gaiaball/src/logic/MagAxisRemap.cpp` |
 | 0x40 | char[≤16] | "Globo_1" | bleName |
 | 0x41 | char[4] | "1234" | pin (write-only: never serialized/readable) |
@@ -563,8 +570,8 @@ The magnetometer calibration (0x1E) is the only multi-value register: writes mus
 exactly 24 bytes, and a record whose soft-iron **diagonal** contains a zero is rejected
 (it would silently zero the magnetometer and make Quat9 unusable).
 
-A full config read is now ~250 bytes (246 of serialized registers plus the 3-byte
-read-only `0x35`), so a central that cannot do a long attribute read
+A full config read is now ~252 bytes (246 of serialized registers plus the read-only
+`0x35` and `0x37`, 3 bytes each), so a central that cannot do a long attribute read
 will truncate it; Web Bluetooth and NimBLE handle this transparently.
 
 The two LED pins (0x30, 0x31) are additionally validated **as a set**: a write
@@ -578,8 +585,8 @@ replaced by the dBFS threshold 0x2B — this is the TLV id, not the command opco
 Co2Packet with the peak leaves on the same App loop).
 Like any unknown id, a write that contains one of them is rejected whole, and the lenient
 NVS load skips it; a 0x15 value saved by older firmware is **not** converted, 0x2B starts
-at its default. `0x35` is a read-only status register, not configuration: it has no NVS
-key and no write path.
+at its default. `0x35` and `0x37` are read-only status registers, not configuration: they
+have no NVS key and no write path.
 
 Two more cross-field rules apply to the **resulting** state of a write, exactly like
 `audioLpHz > audioHpHz`: `navStopDegS` (0x67) < `navStartDegS` (0x66), and
