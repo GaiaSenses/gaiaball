@@ -98,7 +98,7 @@ silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen b
   goes through the BleCommand queue (args up to 10 bytes, the size of the `0x17` anchor).
   Gated opcodes are authorized with `BleCommand::unlockedAtEnqueue`, never by
   re-querying the gate; which opcodes are gated is `commandAccess()` in
-  `src/logic/CommandGate.h` (`0x10`–`0x16` need the PIN, `0x17` does not).
+  `src/logic/CommandGate.h` (`0x10`–`0x16` need the PIN, `0x17` and `0x18` do not).
 - **BLE → App (config)**: `ConfigStore::applyTlv` runs on the host task and fires onChange
   there; the handler only sets `configDirty_`. The App task then re-applies the config:
   `applyConfig` on IMU/audio/CO2/pot plus `App::applySnapshot` — the ONE place that

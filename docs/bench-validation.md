@@ -219,11 +219,16 @@ debounce 3 s.
 
 **B. Valor fixo**
 
-1. Mude a fonte para **Valor fixo** e ponha a sensibilidade em −35,5 dBFS. Girar o
+0. Com a fonte em **Potenciômetro**, a caixa da Sensibilidade (na mesma linha do nome, sem
+   rótulo ao lado) mostra o valor do botão em dBFS e está travada; girar o botão muda o
+   número na hora e **não** acende "na bola: …" nem o contador do Aplicar.
+1. Mude a fonte para **Valor fixo**: a mesma caixa passa a mostrar o valor gravado e fica
+   editável. Ponha a sensibilidade em −35,5 dBFS. Girar o
    potenciômetro mexe o gráfico do potenciômetro, mas a linha de limiar fica parada.
 2. Mude para −20 dBFS e aplique: a linha sobe para −20 e é preciso soprar mais forte. Use
    **Ler do dispositivo**: o campo continua em −20 (o `0x2B` guarda 2000).
-3. Volte para **Potenciômetro**: a linha volta para a posição do potenciômetro.
+3. Volte para **Potenciômetro**: a linha volta para a posição do potenciômetro, e a caixa
+   volta a mostrar o botão, travada.
 
 **C. Pico**
 
@@ -391,6 +396,22 @@ palma a ~1 m: o pulso virtual (2100 ppm, na hora) deve ligar o bit; ele só desl
 ppm reportado cair a 1150 ppm ou menos (ou o sensor ficar "stale" sem pulso ativo), isto é,
 no fim do pulso de 10 s (`virtualHoldMs`). Soprar perto do sensor real (acima de 1200 ppm) liga o bit do mesmo
 modo.
+
+**Fim do pulso (comando `0x18`, sem PIN).** É o que o site manda quando a pessoa fecha a
+composição que o sopro abriu. Com o nRF Connect como segunda central (sem destravar) e o
+config-app mostrando a linha CO₂ no painel Métricas:
+
+| Item | Como verificar | Esperado |
+|---|---|---|
+| Encerrar | Sopre (ou dê uma palma) e, com o pulso ativo, escreva `18` na `…0002` | Na hora (≤ 50 ms) o CO₂ volta à leitura real (ou a 600 ppm com o sensor desligado), o bit `virtualActive` (`0x04`) e o gatilho (`0x08`) apagam, e o LED de som apaga |
+| Pulso novo | Sopre de novo logo depois | Um pulso novo, com a duração inteira (`virtualHoldMs`), não o resto do anterior |
+| Sem pulso | Escreva `18` sem pulso ativo | Nada muda |
+
+**No site** (com a bola conectada): sopre, espere a composição abrir e feche-a por cada
+um dos três caminhos: clique na tela, botão **Back** e tecla **ESC** (em tela cheia, o ESC
+sai da tela cheia e fecha a composição junto). Em todos, a composição **não** reabre
+sozinha durante o resto do pulso, e o CO₂ do cartão de informações volta à leitura real em
+menos de 1 s. Um sopro novo depois disso abre a composição normalmente.
 
 ## 5. CO₂: validar o SC8-CO2-5K
 

@@ -67,6 +67,18 @@ campo aparece (`GOVERNORS` em `src/panels/config-panel.ts`):
 | CO₂ › Sensor de CO₂ (SC8) | timeout de dado velho, suavização e log bruto. A bola manda 600 ppm no lugar da leitura; o pulso virtual do sopro e o gatilho continuam valendo. |
 | Sistema › Log serial (USB) | CO₂ › log bruto (ele escreve no log serial) |
 
+**Sensibilidade (dBFS) e a fonte da sensibilidade.** A linha "Sensibilidade (dBFS)" tem uma
+caixa só, na mesma linha do nome, e o que ela mostra depende do interruptor **Fonte da
+sensibilidade**:
+
+- **Potenciômetro:** a caixa mostra ao vivo, em dBFS, a sensibilidade que o botão físico da
+  bola está dando (−60 a 0, do pacote de sensores) e fica travada. Esse número nunca vira o
+  valor do registrador `0x2B`: girar o botão não marca o campo como editado nem entra no
+  Aplicar. Antes do primeiro pacote de sensores a caixa fica vazia (—).
+- **Valor fixo:** a mesma caixa passa a mostrar o valor gravado no `0x2B` e fica editável.
+
+A troca entre os dois é imediata ao mexer no interruptor, antes mesmo de aplicar.
+
 ## Sensores em tempo real
 
 O painel "Sensores em tempo real" mostra o valor atual de cada sensor com a unidade

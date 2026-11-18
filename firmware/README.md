@@ -442,12 +442,14 @@ the PIN field.
 | `0x15` | start raw magnetometer capture (streams MagChunk packets; auto-stops after 180 s) | yes |
 | `0x16` | stop raw magnetometer capture | yes |
 | `0x17` + 8/10 bytes | anchor: `i32 latE6`, `i32 lonE6`, optional `i16 bearingX100` (little-endian) becomes the navigation reference and the orientation is zeroed; RAM only, never saved | **no** |
+| `0x18` | end the virtual CO₂ pulse now: the reported ppm goes back to the real reading and the trigger falls; the next breath starts a new pulse; RAM only | **no** |
 | `0x20` + PIN | unlock this connection | — |
 
 Locked or unknown commands are ignored and logged on the serial console. Besides the
-unlock itself (`0x20`), `0x17` is the only opcode accepted on a locked connection: the
-GaiaSenses site sends it on connect so
-the globe starts where the map already is. Details:
+unlock itself (`0x20`), `0x17` and `0x18` are the only opcodes accepted on a locked
+connection: the GaiaSenses site sends `0x17` on connect so the globe starts where the map
+already is, and `0x18` when the person closes a composition, so the rest of the virtual
+pulse does not reopen it. Details:
 [`docs/protocol.md`](docs/protocol.md#anchor-command-0x17).
 
 ### Changing the PIN

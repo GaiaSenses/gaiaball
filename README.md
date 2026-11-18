@@ -70,8 +70,8 @@ The full netlist cross-check against the KiCAD board design lives in
   200 Hz),
   over a NimBLE GATT server that accepts **two centrals at once** —
   the site and the config-app side by side. Sensitive commands and configuration
-  writes require a 4-digit PIN unlock per connection (the `0x17` map anchor is the one
-  command that does not).
+  writes require a 4-digit PIN unlock per connection (the `0x17` map anchor and the
+  `0x18` end of the virtual CO₂ pulse are the commands that do not).
 - **Configuration.** Every parameter (rates, filters, thresholds, pins, names) is a
   TLV register, editable live from the config-app; applying persists to NVS, so
   settings survive power cycles.

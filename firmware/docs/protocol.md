@@ -464,10 +464,12 @@ to tune the band-pass against the live spectrum, then turn it off.
 | `0x15` | start raw magnetometer capture (streams 0x06 packets; auto-stops after 180 s; samples only in Quat9 mode) |
 | `0x16` | stop raw magnetometer capture |
 | `0x17` + 8 or 10 bytes | anchor the navigation to a map view: `i32 latE6`, `i32 lonE6`, optional `i16 bearingX100`. **No PIN**, RAM only; also zeroes the orientation. See [Anchor](#anchor-command-0x17) |
+| `0x18` | end the virtual CO₂ pulse now. **No PIN**, no arguments, RAM only. The reported ppm goes back to the real reading (or the 600 ppm fallback) on the next CO₂ tick (≤ 50 ms; the flags change, so the packet leaves at once) and the trigger falls by its hysteresis. The next breath starts a full new pulse. No pulse active: nothing happens. The GaiaSenses site sends it when the person closes a composition, so the remaining `virtualHoldMs` cannot reopen it |
 | `0x20` + ASCII PIN | unlock (PIN bytes follow the opcode) |
 
 Every opcode from `0x10` to `0x16` needs the connection to be unlocked (`0x20`) when the
-write arrives; `0x17` does not. Unknown opcodes are ignored. Arguments longer than 10
+write arrives; `0x17` and `0x18` do not (neither touches the stored config, and the site
+never unlocks). Firmware older than `0x18` ignores it as unknown. Unknown opcodes are ignored. Arguments longer than 10
 bytes drop the write.
 
 Unlock is per connection and rate-limited: after 5 consecutive failed attempts the

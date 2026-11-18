@@ -62,7 +62,7 @@ flowchart LR
     CO2 --> FW
   end
   FW -- "notify: IMU, CO₂, navegação" --> SITE["Site GaiaSenses<br/>Web Bluetooth"]
-  SITE -- "só o comando 0x17 (âncora)" --> FW
+  SITE -- "só os comandos 0x17 (âncora) e 0x18 (fim do pulso)" --> FW
   FW -- "notify: tudo" --> APP["config-app<br/>bancada e ajustes"]
   APP -- "comandos e configuração" --> FW
   APP -- "WebSocket local<br/>127.0.0.1:9478" --> EXT["external [gaiaball]"]
@@ -71,14 +71,15 @@ flowchart LR
 
 | Programa | O que faz com a bola | Escreve na bola? |
 |---|---|---|
-| **Site GaiaSenses** | Move o globo do Mapbox com a navegação, abre composições quando o CO₂ dispara, repassa orientação, aceleração e CO₂ aos patches de Pure Data | Só o comando de âncora `0x17` (sem PIN): a vista atual do mapa vira a referência da navegação |
+| **Site GaiaSenses** | Move o globo do Mapbox com a navegação, abre composições quando o CO₂ dispara, repassa orientação, aceleração e CO₂ aos patches de Pure Data | Só dois comandos, sem PIN: a âncora `0x17` (a vista atual do mapa vira a referência da navegação) e o `0x18` (encerra o pulso virtual de CO₂ quando a pessoa fecha a composição) |
 | **config-app** | Bancada: mostra tudo em gráficos, edita e salva a configuração, calibra | Sim (com PIN) |
 | **External `[gaiaball]`** (`pd-gaiaball/`) | Recebe da config-app, por WebSocket local, os pacotes de movimento, CO₂ e navegação e os publica no Pure Data (`[r gaia.*]`). Não conecta na bola | Não |
 | **O seu programa** | O que você quiser: este guia mostra como | Opcional |
 
 Ninguém precisa **parear** a bola: o firmware não usa pareamento nem criptografia de enlace.
 Ler é livre; o que muda a bola (comandos e configuração) exige destravar a conexão com um
-PIN de 4 dígitos. A única exceção é a [âncora](#ancora) (`0x17`), que só vive na RAM.
+PIN de 4 dígitos. As exceções são a [âncora](#ancora) (`0x17`) e o fim do pulso virtual
+(`0x18`), que só vivem na RAM.
 
 ---
 
@@ -446,14 +447,19 @@ A orientação da bola, a aceleração, o som dos microfones e o sopro, todos do
   o sensor desabilitado (`co2Enabled` = 0), é a constante **600** (o valor "normal" do
   firmware original), e `valid` fica desligado.
 - **O pulso virtual.** Começa no próprio sopro, sem atraso: o pacote de CO₂ com o pico sai
-  na mesma volta do laço do App. Ele dura `virtualHoldMs` (padrão 10000 ms = 10 s).
+  na mesma volta do laço do App. Ele dura `virtualHoldMs` (padrão 10000 ms = 10 s), a menos
+  que um cliente o encerre antes com o comando `0x18`: aí o ppm volta à leitura real no
+  próximo tique de CO₂ (até 50 ms) e o gatilho cai pela histerese.
 - **O gatilho (`trigger`).** É um nível com histerese calculado **na bola**, sobre o ppm
   informado (o pulso virtual conta). Ele **liga** quando `ppm > co2TriggerPpm` (padrão 1200) e
   **desliga** quando `ppm ≤ co2TriggerPpm − co2TriggerHystPpm` (padrão 1200 − 50 = 1150; se a
   histerese for maior ou igual ao limite, desliga só em 0). Com a leitura `stale`, o gatilho é
   forçado a desligar, **a menos que** o pulso virtual esteja ativo (aí é o pulso que fornece
-  o ppm). Uma virada do gatilho muda as flags, então o pacote sai na hora. O site usa só
-  essa borda: 0 → 1 abre uma composição, 1 → 0 fecha.
+  o ppm). Uma virada do gatilho muda as flags, então o pacote sai na hora. O site segue o
+  nível: com o gatilho ligado e nenhuma composição tocando, abre uma; com o gatilho desligado
+  e uma composição tocando, fecha. Quando é a pessoa que fecha a composição (clique na tela,
+  botão Back ou ESC), o site manda o `0x18` e ignora o gatilho até ele desligar, para o resto
+  do pulso não reabrir a obra sozinho.
 - **Taxa:** imediata quando ppm ou flags mudam (o firmware confere a cada 50 ms), senão 1 vez
   por segundo. O sensor físico produz uma leitura por segundo. **MTU mínimo:** 15.
 
@@ -779,6 +785,7 @@ Um comando é um byte de **opcode**, às vezes seguido de argumentos.
 | `0x15` | sim | Iniciar a captura crua do magnetômetro (pacotes `0x06`; para sozinha depois de 180 s; só no Quat9). |
 | `0x16` | sim | Parar a captura do magnetômetro. |
 | `0x17` + 8 ou 10 bytes | **não** | **Âncora:** a vista do mapa (lat, lon e rumo) vira a referência da navegação, e a orientação é zerada. Só na RAM. Veja [Âncora](#ancora). |
+| `0x18` | **não** | **Encerrar o pulso virtual de CO₂ agora.** Sem argumentos, só na RAM. O ppm informado volta à leitura real (ou aos 600 do sensor desabilitado) no próximo tique de CO₂, até 50 ms depois, e o gatilho cai pela histerese. O próximo sopro começa um pulso novo, inteiro. Sem pulso ativo, não faz nada. O site manda este comando quando a pessoa fecha a composição. Um firmware anterior ignora o opcode. |
 | `0x20` + 4 dígitos ASCII | — | **Destravar** a conexão com o PIN (veja abaixo). |
 
 Qualquer outro opcode é ignorado. Argumentos com mais de 10 bytes derrubam o comando.
