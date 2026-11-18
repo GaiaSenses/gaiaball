@@ -5,10 +5,11 @@ import '@fontsource/ibm-plex-sans/600.css';
 import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/500.css';
 import { GaiaballClient, type StatusDetail } from './ble/gaiaball-client.ts';
+import { attachAutoRead } from './ble/auto-read.ts';
+import { demoConfigRegs, demoWrite } from './demo-config.ts';
 import { mountConnectionPanel } from './panels/connection-panel.ts';
 import { StreamStats } from './metrics/stream-stats.ts';
 import { mountConfigPanel } from './panels/config-panel.ts';
-import { mountMagCalPanel } from './panels/magcal-panel.ts';
 import { mountMetricsPanel } from './panels/metrics-panel.ts';
 import { mountSensorsPanel } from './panels/sensors-panel.ts';
 import { decorateInfo } from './panels/info.ts';
@@ -75,6 +76,7 @@ if (!(navigator as Navigator & { bluetooth?: unknown }).bluetooth) {
     '<div class="banner">Web Bluetooth não está disponível neste navegador. Use Chrome ou Edge em localhost ou HTTPS.</div>';
 }
 
+const isDemo = Boolean(new URLSearchParams(location.search).get('demo'));
 const client = new GaiaballClient();
 // The "firmware desatualizado" warning lives in its own element so it can be cleared without
 // touching the no-Web-Bluetooth banner: on the next connect, or on the first IMU v2 sample.
@@ -94,15 +96,10 @@ client.addEventListener('status', (ev) => {
   if ((ev as CustomEvent<{ connected: boolean }>).detail.connected) stats.reset();
 });
 
-// Read the configuration as soon as a link comes up, so the config panel's snapshot (the
-// "read before applying" guard) and the IMU status line are filled without a click. The
-// panels listen to 'config'; a failed read is non-fatal: "Ler do dispositivo" still works.
-client.addEventListener('status', (ev) => {
-  if (!(ev as CustomEvent<{ connected: boolean }>).detail.connected) return;
-  void client.readConfig()
-    .then((regs) => client.dispatchEvent(new CustomEvent('config', { detail: regs })))
-    .catch((e) => console.warn('leitura automática da configuração falhou', e));
-});
+// Read the configuration as soon as a link comes up (with retries), so the config panel shows
+// what the ball is running without a click. The panels listen to 'config' (registers) and
+// 'config-read' (reading / ok / failed); "Ler do dispositivo" and "Tentar de novo" still work.
+const autoRead = attachAutoRead(client, { isLive: () => client.connected || isDemo });
 
 // Top bar: connection chip mirrors the Conexão panel; theme button flips light/dark.
 const chip = app.querySelector<HTMLElement>('#conn-chip')!;
@@ -123,7 +120,6 @@ themeBtn.addEventListener('click', toggleTheme);
 onThemeChange(renderThemeBtn);
 renderThemeBtn();
 
-const isDemo = Boolean(new URLSearchParams(location.search).get('demo'));
 const bridge = new PdBridge(browserPdDeps());
 client.setRawSink((b) => bridge.forward(b));
 const pdPrefs = loadPdPrefs();
@@ -139,12 +135,11 @@ mountPdChip(app.querySelector<HTMLElement>('#pd-chip')!, bridge);
 mountConnectionPanel(app.querySelector<HTMLElement>('#panel-conexao')!, client);
 mountPdBlock(app.querySelector<HTMLElement>('#panel-conexao')!, bridge, pdPrefs, syncPd);
 syncPd();
-const { advancedSections, band, co2, metric } = mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client);
-// Magnetometer calibration and metrics are bench tools: they live in the Avançado tab,
+const { advancedSections, band, co2, metric } = mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client, undefined, { demo: isDemo });
+// The metrics are a bench tool: they live in the Avançado tab,
 // below its fields, instead of under the configuration for everyone to scroll past.
-advancedSections.innerHTML = '<section id="panel-magcal"></section><section id="panel-metricas"></section>';
+advancedSections.innerHTML = '<section id="panel-metricas"></section>';
 const pausable = [
-  mountMagCalPanel(app.querySelector<HTMLElement>('#panel-magcal')!, client),
   mountMetricsPanel(app.querySelector<HTMLElement>('#panel-metricas')!, client, stats),
   // The spectrum shades the band-pass, the CO2 meter marks the trigger and the threshold line
   // sits on the RMS or the peak chart as the form shows them, so editing a cutoff, the trigger
@@ -259,6 +254,13 @@ if (loadUiMode(uiStorage) === 'palco') void changeMode('palco');
 if (isDemo) {
   chip.dataset.state = 'demo';
   chip.textContent = 'modo demo';
+  // A fake ball for the configuration: it answers reads with the factory register map (ICM-20948)
+  // and remembers writes, so the status strip, the "na bola" marks and Aplicar (n) can be tried.
+  const demoRegs = demoConfigRegs();
+  client.readConfig = async () => new Map(demoRegs);
+  client.writeConfig = async (regs) => demoWrite(demoRegs, regs);
+  client.sendCommand = async () => {};
+  void autoRead.run();
   // Synthetic slow compound rotation (quaternion products only), no BLE needed.
   type Q = { w: number; x: number; y: number; z: number };
   const mul = (a: Q, b: Q) => ({
