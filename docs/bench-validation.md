@@ -146,8 +146,7 @@ os critérios e onde olhar cada número.
 1. **Conectar** (painel Conexão) e escolher `Globo_1`.
 2. **Desbloquear** com o PIN `1234` (botão "Desbloquear"). A mensagem e o selo ao lado do
    botão mostram o que a bola respondeu: "Desbloqueada", "PIN incorreto" ou "Bloqueada por
-   30 s" (5 PINs errados seguidos). Firmware anterior ao TLV `0x37` não confirma: nele, se
-   escritas/comandos forem ignorados, o PIN está errado ou o bloqueio de 30 s está ativo.
+   30 s" (5 PINs errados seguidos).
 3. **Conferir a leitura** (painel Configuração). Ao conectar, o app já lê sozinho a
    configuração da bola; a faixa no topo do painel mostra "Valores lidos da bola às
    HH:MM:SS · IMU em uso: …" (o botão **Ler do dispositivo** só lê de novo). Numa bola com
@@ -219,11 +218,16 @@ debounce 3 s.
 
 **B. Valor fixo**
 
-1. Mude a fonte para **Valor fixo** e ponha a sensibilidade em −35,5 dBFS. Girar o
+0. Com a fonte em **Potenciômetro**, a caixa da Sensibilidade (na mesma linha do nome, sem
+   rótulo ao lado) mostra o valor do botão em dBFS e está travada; girar o botão muda o
+   número na hora e **não** acende "na bola: …" nem o contador do Aplicar.
+1. Mude a fonte para **Valor fixo**: a mesma caixa passa a mostrar o valor gravado e fica
+   editável. Ponha a sensibilidade em −35,5 dBFS. Girar o
    potenciômetro mexe o gráfico do potenciômetro, mas a linha de limiar fica parada.
 2. Mude para −20 dBFS e aplique: a linha sobe para −20 e é preciso soprar mais forte. Use
    **Ler do dispositivo**: o campo continua em −20 (o `0x2B` guarda 2000).
-3. Volte para **Potenciômetro**: a linha volta para a posição do potenciômetro.
+3. Volte para **Potenciômetro**: a linha volta para a posição do potenciômetro, e a caixa
+   volta a mostrar o botão, travada.
 
 **C. Pico**
 
@@ -316,8 +320,7 @@ Quat9 e a calibração (TLV `0x1E`), acessíveis por escrita TLV crua.
 O firmware calcula a posição do globo (modo Espelho ou Joystick) e a envia no `NavPacket`
 (característica `…0006`); o painel Métricas › **Navegação** mostra o que chega. Como tudo
 o que está neste roteiro, é **meta de projeto, ainda não medida em hardware**. Pré-requisito:
-IMU funcionando (seção 3.0), config-app conectado e desbloqueado, e o estado de navegação
-diferente de "sem característica de navegação (firmware antigo)".
+IMU funcionando (seção 3.0) e config-app conectado e desbloqueado.
 
 **Referência.** Ligue a bola apoiada numa superfície plana e parada: essa postura de boot
 é a referência (não há "frente" marcada; o movimento é relativo a ela). Para trocar a
@@ -374,7 +377,7 @@ conexão: a âncora precisa funcionar travada.
 
 | Item | Como verificar | Esperado |
 |---|---|---|
-| Versão | No nRF Connect, assine a `…0006` | Notificações de **23 bytes**; o último byte é o `anchorSeq` (0 logo depois do boot). 22 bytes = firmware sem `0x17` |
+| Versão | No nRF Connect, assine a `…0006` | Notificações de **23 bytes**; o último byte é o `anchorSeq` (0 logo depois do boot) |
 | Aplicar | Bola parada, modo Espelho. Escreva na `…0002` o vetor de São Paulo: `17C8A598FEA46E38FDD204` | A linha Navegação vai na hora para lat −23,5505°, lon −46,6333°, rumo 12,34°, "parado"; o último byte da `…0006` sobe 1 |
 | Joystick | Repita em Joystick (vetor de Paris: `17187EE90248E42300D8DC`) | O globo vai para lat 48,8566°, lon 2,3522°, rumo −90,00°, `anchorSeq` +1. A âncora também zera: a postura do envio passa a ser a neutra, e inclinar a partir dela leva o globo para longe de Paris |
 | Recusa | Escreva `17C8A598FE` (só 4 bytes de argumento) | Nada muda; `anchorSeq` igual; aviso "anchor rejected" no log serial (se ligado) |
@@ -391,6 +394,22 @@ palma a ~1 m: o pulso virtual (2100 ppm, na hora) deve ligar o bit; ele só desl
 ppm reportado cair a 1150 ppm ou menos (ou o sensor ficar "stale" sem pulso ativo), isto é,
 no fim do pulso de 10 s (`virtualHoldMs`). Soprar perto do sensor real (acima de 1200 ppm) liga o bit do mesmo
 modo.
+
+**Fim do pulso (comando `0x18`, sem PIN).** É o que o site manda quando a pessoa fecha a
+composição que o sopro abriu. Com o nRF Connect como segunda central (sem destravar) e o
+config-app mostrando a linha CO₂ no painel Métricas:
+
+| Item | Como verificar | Esperado |
+|---|---|---|
+| Encerrar | Sopre (ou dê uma palma) e, com o pulso ativo, escreva `18` na `…0002` | Na hora (≤ 50 ms) o CO₂ volta à leitura real (ou a 600 ppm com o sensor desligado), o bit `virtualActive` (`0x04`) e o gatilho (`0x08`) apagam, e o LED de som apaga |
+| Pulso novo | Sopre de novo logo depois | Um pulso novo, com a duração inteira (`virtualHoldMs`), não o resto do anterior |
+| Sem pulso | Escreva `18` sem pulso ativo | Nada muda |
+
+**No site** (com a bola conectada): sopre, espere a composição abrir e feche-a por cada
+um dos três caminhos: clique na tela, botão **Back** e tecla **ESC** (em tela cheia, o ESC
+sai da tela cheia e fecha a composição junto). Em todos, a composição **não** reabre
+sozinha durante o resto do pulso, e o CO₂ do cartão de informações volta à leitura real em
+menos de 1 s. Um sopro novo depois disso abre a composição normalmente.
 
 ## 5. CO₂: validar o SC8-CO2-5K
 
@@ -475,4 +494,4 @@ segue) de reboot (uptime volta a zero).
 | Config sumiu após reiniciar | O **Aplicar** só grava na NVS (`0x11`) quando a bola aceita tudo. Se ele avisou "⚠ alguns valores não foram aceitos (desbloqueou com o PIN?)", nada foi gravado: desbloqueie e aplique de novo (sucesso = "Aplicado, verificado e salvo no dispositivo"). Escrita TLV crua, feita fora do app, também precisa do `0x11` (**Salvar no dispositivo**). Apagar a flash (`-t erase`) volta tudo ao padrão de fábrica. |
 | Navegador não lista o dispositivo | Use Chrome/Edge em `localhost` ou HTTPS; confira se o nome BLE continua `Globo_1`. |
 | Erros UART crescendo / CO₂ inválido | Fiação/interferência no GPIO16, ou o SC8 emudeceu após receber uma consulta — religue a alimentação (seção 5). |
-| Site novo não conecta no firmware antigo, ou o contrário | Veja a ordem de deploy no `README.md` da raiz. |
+| Site ou config-app não conecta na bola | O site e a config-app funcionam só com o firmware atual (sem compatibilidade com firmware antigo): grave o firmware do `main` (seção 2). |

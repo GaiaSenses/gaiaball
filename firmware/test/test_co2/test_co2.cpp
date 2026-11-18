@@ -154,6 +154,40 @@ void test_pulse_retrigger_ignored_and_cancel() {
   TEST_ASSERT_FALSE(v.active(7001));
 }
 
+// Command 0x18 (App::dispatch): ending the pulse hands the reported ppm back to the real
+// reading on the very next CO2 tick, which also drops the trigger, and the next breath
+// starts a fresh pulse of the full length.
+void test_pulse_cancel_returns_real_ppm_and_drops_trigger() {
+  VirtualCo2Pulse v;
+  v.configure(2500, 20000);
+  Co2Trigger t;
+  t.configure(1200, 50);
+  const uint16_t realPpm = 600;
+  auto reported = [&](uint32_t now) { return v.active(now) ? v.peakPpm() : realPpm; };
+
+  v.trigger(0);
+  TEST_ASSERT_EQUAL_UINT16(2500, reported(0));
+  TEST_ASSERT_TRUE(t.update(reported(0), false, v.active(0)));
+
+  v.cancel();  // 3 s into a 20 s pulse
+  TEST_ASSERT_FALSE(v.active(3000));
+  TEST_ASSERT_EQUAL_UINT16(realPpm, reported(3000));
+  TEST_ASSERT_FALSE(t.update(reported(3000), false, v.active(3000)));
+
+  v.trigger(4000);  // a new breath: a whole new pulse, not the rest of the old one
+  TEST_ASSERT_TRUE(v.active(23999));
+  TEST_ASSERT_FALSE(v.active(24000));
+}
+
+void test_pulse_cancel_when_idle_is_harmless() {
+  VirtualCo2Pulse v;
+  v.configure(2500, 20000);
+  v.cancel();
+  TEST_ASSERT_FALSE(v.active(0));
+  v.trigger(10);
+  TEST_ASSERT_TRUE(v.active(10));
+}
+
 void test_pulse_zero_hold_never_activates() {
   VirtualCo2Pulse v;
   v.configure(1500, 0);
@@ -235,6 +269,8 @@ int main() {
   RUN_TEST(test_checksum_error_counts);
   RUN_TEST(test_pulse_timing);
   RUN_TEST(test_pulse_retrigger_ignored_and_cancel);
+  RUN_TEST(test_pulse_cancel_returns_real_ppm_and_drops_trigger);
+  RUN_TEST(test_pulse_cancel_when_idle_is_harmless);
   RUN_TEST(test_pulse_zero_hold_never_activates);
   RUN_TEST(test_pulse_millis_wraparound);
   RUN_TEST(test_trigger_starts_off_and_hysteresis_band);

@@ -1,12 +1,12 @@
-// The PIN unlock, as the person sees it. Firmware with the read-only TLV 0x37 reports, on every
-// configuration read, whether the READING connection is unlocked; older firmware cannot tell.
+// The PIN unlock, as the person sees it. The read-only TLV 0x37 reports, on every configuration
+// read, whether the READING connection is unlocked. 'unknown' = no connection (or no answer).
 import { TLV } from '../protocol/tlv.ts';
 
 export type LockState = 'locked' | 'unlocked' | 'locked-out' | 'unknown';
 
 const BY_BYTE: readonly LockState[] = ['locked', 'unlocked', 'locked-out'];
 
-/** This connection's unlock state from a configuration read; 'unknown' without a valid 0x37. */
+/** This connection's unlock state from a configuration read; 'unknown' if 0x37 is missing or invalid. */
 export function lockStateFrom(regs: Map<number, DataView>): LockState {
   const dv = regs.get(TLV.unlockState);
   if (!dv || dv.byteLength !== 1) return 'unknown';
@@ -23,11 +23,11 @@ export function unlockResultMessage(state: LockState): string {
     case 'locked-out':
       return 'Muitas tentativas com PIN errado: a bola recusa novos PINs por 30 s. Espere e tente de novo.';
     default:
-      return 'PIN enviado. O firmware desta bola não confirma o desbloqueio: o Aplicar confere cada valor e avisa se a bola recusar.';
+      return 'PIN enviado, mas a leitura de volta não trouxe o estado do desbloqueio. Tente de novo.';
   }
 }
 
-/** Short label next to the PIN field; empty when the firmware cannot tell. */
+/** Short label next to the PIN field; empty when the state is unknown. */
 export function lockBadgeText(state: LockState): string {
   switch (state) {
     case 'locked': return 'Bloqueada';

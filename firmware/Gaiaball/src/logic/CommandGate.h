@@ -15,10 +15,12 @@ constexpr uint8_t kCmdMountCal = 0x14;
 constexpr uint8_t kCmdMagCalStart = 0x15;
 constexpr uint8_t kCmdMagCalStop = 0x16;
 constexpr uint8_t kCmdAnchor = 0x17;  // map view as the navigation reference (RAM only)
+constexpr uint8_t kCmdEndCo2Pulse = 0x18;  // end the virtual CO2 pulse now (RAM only)
 
-// Unknown opcodes are ignored; Open ones run on any connection (0x17 only: the site
-// anchors the map without a PIN, and the anchor is volatile); PinRequired ones run only
-// if the writer's connection was unlocked when the write arrived.
+// Unknown opcodes are ignored; Open ones run on any connection (0x17 and 0x18: the site
+// anchors the map and ends the virtual CO2 pulse without a PIN, and neither touches the
+// stored config); PinRequired ones run only if the writer's connection was unlocked when
+// the write arrived.
 enum class CommandAccess : uint8_t { Unknown, Open, PinRequired };
 CommandAccess commandAccess(uint8_t opcode);
 // The App task's verdict for a queued command (BleCommand::unlockedAtEnqueue).

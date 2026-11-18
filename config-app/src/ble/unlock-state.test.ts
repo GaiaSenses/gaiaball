@@ -29,7 +29,7 @@ describe('unlock messages', () => {
     expect(unlockResultMessage('locked')).toMatch(/PIN incorreto/);
     expect(unlockResultMessage('locked')).toMatch(/1234/);
     expect(unlockResultMessage('locked-out')).toMatch(/30 s/);
-    expect(unlockResultMessage('unknown')).toMatch(/não confirma/);
+    expect(unlockResultMessage('unknown')).toMatch(/Tente de novo/);
   });
 
   it('labels the badge, and shows none when the ball cannot tell', () => {

@@ -184,6 +184,15 @@ void test_anchor_is_open_while_locked() {
   TEST_ASSERT_TRUE(commandAllowed(kCmdAnchor, true));
 }
 
+void test_end_co2_pulse_is_open_while_locked() {
+  // 0x18 needs no PIN: the site ends the virtual CO2 pulse when the person closes a
+  // composition, and it never unlocks. Volatile, and only shortens a pulse.
+  TEST_ASSERT_EQUAL_HEX8(0x18, kCmdEndCo2Pulse);
+  TEST_ASSERT_TRUE(commandAccess(kCmdEndCo2Pulse) == CommandAccess::Open);
+  TEST_ASSERT_TRUE(commandAllowed(kCmdEndCo2Pulse, false));
+  TEST_ASSERT_TRUE(commandAllowed(kCmdEndCo2Pulse, true));
+}
+
 void test_gated_opcodes_refused_while_locked() {
   const uint8_t gated[] = {kCmdZero,   kCmdSave,        kCmdFactoryReset, kCmdReboot,
                            kCmdMountCal, kCmdMagCalStart, kCmdMagCalStop};
@@ -198,7 +207,7 @@ void test_gated_opcodes_refused_while_locked() {
 
 void test_unknown_opcodes_never_run() {
   // 0x00/0x01: the removed legacy LED command; 0x20 (unlock) never reaches the App task.
-  const uint8_t unknown[] = {0x00, 0x01, 0x0F, 0x18, 0x20, 0xFF};
+  const uint8_t unknown[] = {0x00, 0x01, 0x0F, 0x19, 0x20, 0xFF};
   for (uint8_t op : unknown) {
     TEST_ASSERT_TRUE(commandAccess(op) == CommandAccess::Unknown);
     TEST_ASSERT_FALSE(commandAllowed(op, false));
@@ -284,6 +293,7 @@ int main() {
   RUN_TEST(test_throttle_even_spacing);
   RUN_TEST(test_throttle_resumes_after_idle);
   RUN_TEST(test_anchor_is_open_while_locked);
+  RUN_TEST(test_end_co2_pulse_is_open_while_locked);
   RUN_TEST(test_gated_opcodes_refused_while_locked);
   RUN_TEST(test_unknown_opcodes_never_run);
   RUN_TEST(test_state_locked_then_unlocked_per_connection);

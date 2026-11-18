@@ -129,7 +129,6 @@ mesmo tempo, vale a mais recente. Feche as outras.
 | A config-app mostra "Pd: desligado" | a chave Enviar ao Pd está desligada. |
 | A config-app mostra "Pd: aguardando a bola" | a chave está ligada, mas a bola ainda não foi conectada na config-app: clique em **Conectar**. |
 | `connected 1`, mas `gaia.lat` e `gaia.lon` não chegam | a navegação está desligada na bola. Na config-app, desbloqueie com o PIN e escolha a navegação Espelho ou Joystick. |
-| `connected 1`, `rate` normal, mas nenhum valor `gaia.*` | a bola está com firmware antigo (o pacote de movimento v1 é ignorado). Grave o firmware novo; a config-app mostra o aviso "firmware desatualizado". |
 | `gaia.mic.*` não chega | os microfones não funcionaram quando a bola ligou (a bola deixa de mandar esses canais), ou o sensor de movimento está desligado (eles viajam no pacote de movimento). Desligar o "Detector de sopro" não para esses canais. Confira os microfones no painel "Sensores em tempo real" da config-app e, se preciso, reinicie a bola. |
 | `rate` baixo ou `gap` alto | a página ficou lenta. Feche outras abas pesadas e deixe só uma aba da config-app enviando. |
 | Ângulos "diferentes do site" | não são: é a mesma convenção. O zero e a montagem são ajustados **na bola**: use "Zerar orientação" na config-app (exige o PIN). |
@@ -201,8 +200,7 @@ node pd-gaiaball/tests/e2e/send-goldens.mjs --spawn pd -nogui -stderr \
 
 - A fonte da verdade do protocolo é [`firmware/docs/protocol.md`](../firmware/docs/protocol.md).
   O decodificador confere versão e tipo, aceita pacotes maiores que o mínimo (campos
-  novos são ignorados) e descarta o resto sem travar, incluindo o pacote de movimento v1
-  de firmware antigo.
+  novos são ignorados) e descarta o resto sem travar.
 - A config-app repassa só os pacotes de movimento (`0x01`), CO₂ (`0x02`) e navegação
   (`0x07`), sem alterar, um por mensagem binária.
 - O objeto não confere a origem da página (o domínio definitivo ainda não existe). A

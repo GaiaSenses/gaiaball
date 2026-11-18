@@ -851,12 +851,6 @@ vazio de navegação (uma vez por segundo). Ligue o IMU como no
 [passo 5](#passo-5-só-na-primeira-vez-ligue-o-sensor-de-movimento). Se o **Estado do IMU**
 disser `selecionado, não encontrado`, o modelo escolhido não é o da bola.
 
-### `connected 1` e `rate` perto de 100, mas nenhum `gaia.*` chega
-
-A bola está com um programa (firmware) antigo, cujo pacote de movimento o objeto não
-entende. A config-app mostra o aviso *"Firmware da bola desatualizado"*. É preciso gravar o
-firmware novo na bola: fale com a equipe.
-
 ### `gaia.lat`, `gaia.lon`, `gaia.speed`, `gaia.bearing` e `gaia.settled` não chegam
 
 A navegação está desligada na bola (com isso, o `rate` fica perto de 52). Na config-app,

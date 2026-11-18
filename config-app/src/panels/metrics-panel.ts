@@ -18,8 +18,7 @@ const SPARK = {
 const NAV_MODES = ['desligado', 'espelho', 'joystick'];
 
 /** One-line navigation state for the metrics panel. */
-export function navText(nav: NavSample | null, missing: boolean): string {
-  if (missing) return 'sem característica de navegação (firmware antigo)';
+export function navText(nav: NavSample | null): string {
   if (!nav) return '–';
   const mode = NAV_MODES[nav.mode] ?? `modo ${nav.mode}`;
   if (!nav.valid) return `${mode}, sem dados (modo desligado ou IMU indisponível)`;
@@ -64,8 +63,6 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
   let nav: NavSample | null = null;
   /** Configured notify rate (TLV 0x02) from the latest 'config' event; null until one arrives (rate sparkline auto-scales). */
   let configuredHz: number | null = null;
-  /** Connected to a ball whose firmware has no navigation characteristic. */
-  let navMissing = false;
 
   client.addEventListener('diag', (ev) => { if (paused) return; diag = (ev as CustomEvent<DiagSample>).detail; });
   client.addEventListener('nav', (ev) => { if (paused) return; nav = (ev as CustomEvent<NavSample>).detail; });
@@ -84,7 +81,6 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
   client.addEventListener('status', (ev) => {
     const connected = (ev as CustomEvent<{ connected: boolean }>).detail.connected;
     if (!connected) { $('d-imustate').textContent = '–'; nav = null; }
-    navMissing = connected && !client.navAvailable;
   });
 
   const flag = (name: string, ok: boolean) =>
@@ -130,7 +126,7 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
         $('d-itvl').textContent = '–';
       }
     }
-    $('d-nav').textContent = navText(nav, navMissing);
+    $('d-nav').textContent = navText(nav);
     if (co2) {
       $('d-co2').innerHTML = `${co2.ppm} ppm · gatilho: ${co2.trigger ? 'ligado' : 'desligado'}` +
         (co2.stale ? ' <span class="badge warn">desatualizado</span>' : '') +

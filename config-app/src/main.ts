@@ -78,18 +78,6 @@ if (!(navigator as Navigator & { bluetooth?: unknown }).bluetooth) {
 
 const isDemo = Boolean(new URLSearchParams(location.search).get('demo'));
 const client = new GaiaballClient();
-// The "firmware desatualizado" warning lives in its own element so it can be cleared without
-// touching the no-Web-Bluetooth banner: on the next connect, or on the first IMU v2 sample.
-const clearOutdatedBanner = (): void => { app.querySelector('#banner .fw-outdated')?.remove(); };
-client.addEventListener('firmware-outdated', () => {
-  clearOutdatedBanner();
-  app.querySelector('#banner')!.insertAdjacentHTML('beforeend',
-    '<div class="banner fw-outdated">Firmware da bola desatualizado: grave o firmware novo (o pacote de movimento agora é a versão 2).</div>');
-});
-client.addEventListener('status', (ev) => {
-  if ((ev as CustomEvent<{ connected: boolean }>).detail.connected) clearOutdatedBanner();
-});
-client.addEventListener('imu', clearOutdatedBanner); // a decoded sample is v2: the firmware is current
 export const stats = new StreamStats();
 // Reset on every (re)connect, otherwise a device reboot freezes the stats.
 client.addEventListener('status', (ev) => {
@@ -380,6 +368,7 @@ if (isDemo) {
       lon: -47.060833 + 12 * Math.sin(t * 0.05),
       bearingDeg: ((t * 9 + 180) % 360) - 180,
       speedDegS: moving ? 30 + 20 * Math.sin(t * 0.8) : 0,
+      anchorSeq: 0,
     };
     client.ingest('nav', asView(encodeNavPacket(detail)));
   }, 50);

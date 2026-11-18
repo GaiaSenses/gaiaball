@@ -70,8 +70,8 @@ The full netlist cross-check against the KiCAD board design lives in
   200 Hz),
   over a NimBLE GATT server that accepts **two centrals at once** —
   the site and the config-app side by side. Sensitive commands and configuration
-  writes require a 4-digit PIN unlock per connection (the `0x17` map anchor is the one
-  command that does not).
+  writes require a 4-digit PIN unlock per connection (the `0x17` map anchor and the
+  `0x18` end of the virtual CO₂ pulse are the commands that do not).
 - **Configuration.** Every parameter (rates, filters, thresholds, pins, names) is a
   TLV register, editable live from the config-app; applying persists to NVS, so
   settings survive power cycles.
@@ -138,37 +138,16 @@ needed. With a real ball: connect, unlock with the PIN (factory default `1234`),
 read the configuration, and follow the bench script in
 [`docs/bench-validation.md`](docs/bench-validation.md).
 
-## Deploying with GaiaSenses (order matters)
+## Deploying with GaiaSenses
 
-The current GaiaSenses site reads **only** the binary protocol (there is no JSON
-fallback any more) and takes the globe pose and the CO₂ trigger from the ball: it needs
-characteristic `…0006` (NavPacket) to move the globe and the Co2Packet `trigger` bit to
-open compositions.
+The GaiaSenses site, the config-app and the Pd external support **only the current
+firmware** (this repository's `main`): IMU packet v2, 23-byte NavPacket with `anchorSeq`,
+the navigation characteristic `…0006`, the read-only records `0x35`/`0x37` and the
+commands `0x17` and `0x18`. There is no compatibility path for older firmware: flash
+every ball with the current firmware before using it with the site.
 
-| Combination | Works? |
-|---|---|
-| Current site + navigation firmware | ✅ yes |
-| Current site + v2 firmware older than the navigation build | ⚠️ partly — orientation and CO₂ ppm arrive, but there is no characteristic `…0006` (the globe does not move; the site shows a warning) and the CO₂ `trigger` bit is never set, so CO₂-triggered compositions silently stop opening |
-| Current site + legacy firmware (`firmware-original.ino`, JSON) | ❌ **no** — the site drops the JSON notifications |
-| A site that still parses only JSON + any v2 firmware | ❌ **no** — that site cannot read the binary packets |
-
-The motion packet is now IMU **v2** (acceleration in mg, audio in half-dB, breath bit),
-and it breaks both orders: the site published before the balls rejects v2 (it requires
-version 1 and at least 31 bytes), and the new site rejects v1 (the IMU goes silent; the
-site shows an "update the firmware" warning).
-
-| Combination | Works? |
-|---|---|
-| Old site (IMU v1 only) + new firmware (IMU v2) | ❌ the site drops every IMU packet |
-| New site (IMU v2 only) + old firmware (IMU v1) | ❌ the IMU is silently ignored |
-| New site + new firmware | ✅ yes |
-
-**Flash the balls and publish the site in the same window.** The site's globe patch is
-now `mapa15` ("TesteGlobo2.0"), which replaced paraisoGaia43. Its acceleration
-constants, written for the old raw counts (1 g = 8192), were converted to mg
-(1 g = 1000), the unit `gaia.acc.*` and `gaia.sensors` now arrive in, so it reacts to
-movement as before (the table is in `Gaiasenses-web/docs/musico/README.md`, "Nota
-para quem mantém o patch do globo").
+The site's globe patch is `mapa15` ("TesteGlobo2.0"); `gaia.acc.*` and `gaia.sensors`
+arrive in mg (1 g = 1000; the table is in `Gaiasenses-web/docs/musico/README.md`).
 
 ## Testing
 

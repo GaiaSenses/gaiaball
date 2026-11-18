@@ -17,10 +17,8 @@ Service `19b10000-e8f2-537e-4f6c-d104768a1214`.
 | `19b10005-e8f2-537e-4f6c-d104768a1214` | notify + read | diagnostics (0x03, 1 Hz), live-sensor (0x04, 5 Hz), raw-audio (0x05, ~21 Hz, **only while TLV 0x1F is on**) and raw-magnetometer (0x06, ~3 Hz while calibrating) packets |
 | `19b10006-e8f2-537e-4f6c-d104768a1214` | notify + read | globe-navigation packets (0x07, see [NavPacket](#navpacket-23-bytes-type-0x07-own-characteristic)) |
 
-The navigation characteristic (`…0006`) is **optional for clients**: firmware that
-predates it does not expose it, so a client must treat its absence as "navigation not
-supported" and keep working with the other five. A read on it returns the last value
-the firmware set (an all-zero packet right after boot).
+Every ball exposes all six characteristics. A read on the navigation characteristic
+(`…0006`) returns the last value the firmware set (an all-zero packet right after boot).
 
 **The firmware never acknowledges what it receives.** A command write (`…0002`) or a
 config write (`…0004`) produces no response payload, and a config write that is
@@ -98,7 +96,7 @@ or when nobody is subscribed, so a late subscriber never gets an old breath (ato
 `audioEnabled = 0` (TLV 0x10) the detector does not run and the bit stays 0.
 
 The microphone envelope is measured in the firmware over the `audioWindowMs` window
-(TLV 0x2F, default 50 ms; 20 ms fixed on firmware without that register) that ended
+(TLV 0x2F, default 50 ms) that ended
 with this orientation sample, with the peak tracked at the full 16 kHz. While
 `audioValid` is clear (no microphone / I²S failure) all four fields read 0, the
 −120 dBFS floor. The packet grew from 23 to 31 bytes in firmware v8 and became version 2
@@ -130,8 +128,7 @@ it rises when `ppm > co2TriggerPpm` (TLV 0x29, default 1200) and falls when
 `ppm <= co2TriggerPpm - co2TriggerHystPpm` (TLV 0x2A, default 50; a hysteresis not
 smaller than the trigger level means "falls at 0"). A `stale` reading forces it off
 unless the virtual pulse is active (the pulse then supplies the ppm). A flip changes the
-flags, so the packet is sent immediately instead of waiting for the 1 Hz keepalive. The
-packet stays 12 bytes and older decoders simply ignore the new bit.
+flags, so the packet is sent immediately instead of waiting for the 1 Hz keepalive.
 
 `ppm` is the virtual pulse peak while a pulse is active; otherwise it is the real
 reading when `co2Enabled=1`, or the constant **600** when `co2Enabled=0` — the
@@ -225,12 +222,10 @@ sent on characteristic `19b10006-…` so the site only has to draw it. Needs MTU
 | 20 | 2 | u16 | speedDegSX10 — reported globe speed, deg/s × 10 |
 | 22 | 1 | u8 | anchorSeq — anchors (command `0x17`) applied since boot, wrapping 255 → 0 |
 
-`anchorSeq` was appended (the version byte stays `1`): the first 22 bytes are unchanged,
-and a **22-byte NavPacket means firmware without command `0x17`**. It increments each
-time an anchor is applied, so a client that sent `0x17` sees its anchor take effect when
-`anchorSeq` changes (two anchors sent before the first applies count once: the later
-one wins). Keepalives carry it too. Decoders must accept packets of at least 22 bytes
-and ignore bytes they do not know.
+`anchorSeq` increments each time an anchor is applied, so a client that sent `0x17`
+sees its anchor take effect when `anchorSeq` changes (two anchors sent before the first
+applies count once: the later one wins). Keepalives carry it too. Decoders must accept
+packets of at least 23 bytes and ignore bytes they do not know.
 
 Flags: bit0 `valid` (the pose is live: the IMU orientation is valid), bit1 `settled`,
 bit2 `moving`.
@@ -371,8 +366,6 @@ latE7 900000000, lonE7 −1800000000, bearingX100 −18000, speedDegSX10 65535, 
 01 07 FF FF FF FF FF FF 02 06 00 E9 A4 35 00 2E B6 94 B0 B9 FF FF FF
 ```
 
-Firmware without `0x17` sends the same packets without the last byte (22 bytes).
-
 ## SensorsPacket (23 bytes, type 0x04, 5 Hz, diag characteristic)
 
 Live audio/potentiometer levels for the config-app's real-time charts.
@@ -464,10 +457,12 @@ to tune the band-pass against the live spectrum, then turn it off.
 | `0x15` | start raw magnetometer capture (streams 0x06 packets; auto-stops after 180 s; samples only in Quat9 mode) |
 | `0x16` | stop raw magnetometer capture |
 | `0x17` + 8 or 10 bytes | anchor the navigation to a map view: `i32 latE6`, `i32 lonE6`, optional `i16 bearingX100`. **No PIN**, RAM only; also zeroes the orientation. See [Anchor](#anchor-command-0x17) |
+| `0x18` | end the virtual CO₂ pulse now. **No PIN**, no arguments, RAM only. The reported ppm goes back to the real reading (or the 600 ppm fallback) on the next CO₂ tick (≤ 50 ms; the flags change, so the packet leaves at once) and the trigger falls by its hysteresis. The next breath starts a full new pulse. No pulse active: nothing happens. The GaiaSenses site sends it when the person closes a composition, so the remaining `virtualHoldMs` cannot reopen it |
 | `0x20` + ASCII PIN | unlock (PIN bytes follow the opcode) |
 
 Every opcode from `0x10` to `0x16` needs the connection to be unlocked (`0x20`) when the
-write arrives; `0x17` does not. Unknown opcodes are ignored. Arguments longer than 10
+write arrives; `0x17` and `0x18` do not (neither touches the stored config, and the site
+never unlocks). Unknown opcodes are ignored. Arguments longer than 10
 bytes drop the write.
 
 Unlock is per connection and rate-limited: after 5 consecutive failed attempts the
@@ -476,12 +471,10 @@ after the last failure. A successful unlock or a disconnect clears the streak. A
 PIN also re-locks a connection that was already unlocked.
 The `0x20` write itself has no reply. To confirm it, read the config characteristic:
 the read-only `0x37` (unlockState) reports the **reading** connection's state — 0 locked
-(no PIN yet, or a wrong one), 1 unlocked, 2 locked out (the 30 s window above). Firmware
-older than `0x37` omits the record and cannot confirm the unlock.
+(no PIN yet, or a wrong one), 1 unlocked, 2 locked out (the 30 s window above).
 
 Commands get no response either (see the note under the UUID table): an unlock is
-confirmed by `0x37` in the next config read (firmware without it: by a subsequent config
-write taking effect), a saved config by reading it back after a reboot, and an anchor by
+confirmed by `0x37` in the next config read, a saved config by reading it back after a reboot, and an anchor by
 the NavPacket's `anchorSeq` changing.
 
 ## Config TLV (characteristic `...0004`)
@@ -543,12 +536,12 @@ TLV register and are persisted under their own NVS keys.
 | 0x2C | u8 | 0 | breathMetric — level the detector measures: 0 = RMS, 1 = peak (0–1) |
 | 0x2D | u8 | 0 | breathDetector — 0 = absolute (every 5 ms block, fires when **either** microphone passes the line), 1 = adaptive (every 3rd block, fast envelope − slow baseline of the louder microphone) (0–1) |
 | 0x2E | u8 | 6 | breathRearmDb — the detector re-arms once the level falls below `threshold × 10^(−this/20)`, whole dB (0–20) |
-| 0x2F | u16 | 50 | audioWindowMs — RMS and peak window of the microphone levels, ms (5–200), rounded to whole 5 ms I2S blocks; applied live. Firmware without this register has a fixed 20 ms window |
+| 0x2F | u16 | 50 | audioWindowMs — RMS and peak window of the microphone levels, ms (5–200), rounded to whole 5 ms I2S blocks; applied live |
 | 0x30 | u8 | 2 | soundLedPin (valid output GPIOs only; 6–11 (flash) and nonexistent pins rejected) |
 | 0x31 | u8 | 4 | co2LedPin (same validation as 0x30) |
 | 0x32 | u16 | 2000 | co2AlertPpm |
 | 0x34 | u8 | 0 | imuChip — which IMU is fitted: 0 = unconfigured (IMU off; the factory default, on purpose), 1 = ICM-20948, 2 = GY-91 / MPU-9250. Range 0–2. Persisted in NVS; **takes effect after a reboot** (the driver is chosen once, at boot) |
-| 0x35 | u8 | — | imuDetected — **READ-ONLY.** Sent by the firmware at the start of every config read (firmware before `0x37` appended it at the end); **absent from NVS**. Bits 0–1 = the `imuChip` value in force *at boot*; bit 2 (`0x04`) = the sensor was actually found; bit 3 (`0x08`) = its magnetometer answered (clear in Quat9 means the fusion is running 6-axis). A config write that contains `0x35` fails as a whole, so a client must never include it. Comparing bits 0–1 with `0x34` tells "switched, reboot pending" apart from "sensor missing" |
+| 0x35 | u8 | — | imuDetected — **READ-ONLY.** Sent by the firmware at the start of every config read; **absent from NVS**. Bits 0–1 = the `imuChip` value in force *at boot*; bit 2 (`0x04`) = the sensor was actually found; bit 3 (`0x08`) = its magnetometer answered (clear in Quat9 means the fusion is running 6-axis). A config write that contains `0x35` fails as a whole, so a client must never include it. Comparing bits 0–1 with `0x34` tells "switched, reboot pending" apart from "sensor missing" |
 | 0x37 | u8 | — | unlockState — **READ-ONLY.** Sent by the firmware at the start of every config read, right after `0x35` and before the registers (so it is in the first chunk of a long read, which the firmware builds for the reading connection; the later blob reads come from a value shared by every central); **absent from NVS**. The PIN state of the connection that is reading: 0 = locked (no PIN yet, or a wrong one, which also re-locks), 1 = unlocked (`0x20` accepted), 2 = locked out (5 wrong PINs; refused until 30 s after the last one). A config write that contains `0x37` fails as a whole. Read it right after `0x20` to confirm the PIN. Clients must find records by id, never by position |
 | 0x36 | u8 | 8 | magAxisRemap — mapping of the magnetometer axes onto the accel/gyro frame, 0–23 (index into a fixed table; default 8 = `+Y +X -Z`, i.e. out.x=+in.y, out.y=+in.x, out.z=-in.z). Applied live. The firmware publishes calibration-capture samples already remapped, so **changing it invalidates an existing 0x1E calibration** (remap first, calibrate after). Order: permutation groups lexicographic (XYZ, XZY, YXZ, YZX, ZXY, ZYX), then the four sign patterns whose product equals the permutation's parity, from `+++` with `+` before `-`, leftmost axis slowest; authority `Gaiaball/src/logic/MagAxisRemap.cpp` |
 | 0x40 | char[≤16] | "Globo_1" | bleName |
@@ -584,8 +577,7 @@ replaced by the dBFS threshold 0x2B — this is the TLV id, not the command opco
 0x24 (was virtualDelayMs: the virtual CO2 pulse now starts on the breath itself, so the
 Co2Packet with the peak leaves on the same App loop).
 Like any unknown id, a write that contains one of them is rejected whole, and the lenient
-NVS load skips it; a 0x15 value saved by older firmware is **not** converted, 0x2B starts
-at its default. `0x35` and `0x37` are read-only status registers, not configuration: they
+NVS load skips it. `0x35` and `0x37` are read-only status registers, not configuration: they
 have no NVS key and no write path.
 
 Two more cross-field rules apply to the **resulting** state of a write, exactly like

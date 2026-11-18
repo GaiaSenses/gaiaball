@@ -11,7 +11,6 @@ namespace gaia {
 
 namespace {
 constexpr const char *kNs = "gaia";
-constexpr const char *kKeyLegacyBlob = "cfg";  // pre-v6 whole-struct blob, discarded
 constexpr const char *kKeyTlv = "tlv";
 constexpr const char *kKeyPin = "pin";
 constexpr const char *kKeyMount = "mount";
@@ -47,12 +46,6 @@ bool ConfigStore::begin() {
   if (!open_) {
     GB_LOGE(kTag, "NVS open failed; using defaults");
     return false;
-  }
-  // Pre-v6 schema stored the whole struct as one blob; its layout is not portable
-  // across versions, so it is discarded rather than migrated (no deployed devices).
-  if (g_prefs.isKey(kKeyLegacyBlob)) {
-    g_prefs.remove(kKeyLegacyBlob);
-    GB_LOGW(kTag, "legacy blob config discarded (pre-TLV schema)");
   }
   const size_t tlvLen = g_prefs.getBytesLength(kKeyTlv);
   if (tlvLen > 0 && tlvLen <= kTlvBufCap) {

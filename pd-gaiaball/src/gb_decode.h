@@ -28,7 +28,7 @@ typedef struct {
  * Longer packets are accepted (appended fields ignored). */
 int gb_decode_imu(const uint8_t *p, size_t n, gb_imu *out);  /* v2, 0x01, n >= 27 */
 int gb_decode_co2(const uint8_t *p, size_t n, gb_co2 *out);  /* v1, 0x02, n >= 12 */
-int gb_decode_nav(const uint8_t *p, size_t n, gb_nav *out);  /* v1, 0x07, n >= 22 */
+int gb_decode_nav(const uint8_t *p, size_t n, gb_nav *out);  /* v1, 0x07, n >= 23 */
 
 /* Legacy firmware Euler convention (degrees): qw=w, qx=y, qy=x, qz=-z. */
 void gb_euler_legacy(const float q[4], float *roll, float *pitch, float *yaw);

@@ -74,7 +74,7 @@ struct BleCommand {
 //
 // The App task executes queued commands and enforces the PIN for sensitive opcodes
 // using BleCommand::unlockedAtEnqueue (policy: commandAccess() in CommandGate.h; 0x17
-// anchor is the one open opcode, 0x00/0x01 are unknown). The 0x20 unlock itself
+// anchor and 0x18 end-of-CO2-pulse are the open opcodes, 0x00/0x01 are unknown). The 0x20 unlock itself
 // is rate-limited by CommandGate (5 consecutive failures -> 30 s lockout per slot).
 class BleService {
  public:

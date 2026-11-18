@@ -81,11 +81,6 @@ export function dlpfOptions(chip: number): [number, string][] {
   return [auto, ...[1, 2, 3, 4, 5, 6].map((i): [number, string] => [i, `índice ${i} (depende do IMU)`])];
 }
 
-/** Shown while the ball reports orientationMode 1 (Quat9): the config-app no longer offers it. */
-export const QUAT9_NOTICE = 'Esta bola está em Quat9 (com magnetômetro). O próximo Aplicar volta para Quat6 e reinicia a navegação do globo.';
-/** The write that takes such a ball back to Quat6 (the register is no longer a form field). */
-const BACK_TO_QUAT6: TlvWrite = { id: TLV.orientationMode, value: 0 };
-
 /** Registers that describe one physical ball and must never travel in a preset. */
 export const isPerBall = (f: Field): boolean =>
   f.id === TLV.pin || f.id === TLV.imuChip || f.id === TLV.navRef;
@@ -193,7 +188,7 @@ const GROUPS: Group[] = [
     { id: TLV.breathThresholdNegDbX100, label: 'Sensibilidade (dBFS)', kind: 'number', min: 0, max: 9000,
       scale: 100, negate: true, step: 0.5,
       enabled: (cfg) => cfg.get(TLV.potControlsThreshold) === 0,
-      info: 'No detector absoluto é a linha: o som precisa passar dela para disparar (−35,5 dBFS por padrão; mais perto de 0 = menos sensível). No adaptativo é o quanto o som precisa subir acima do ruído da sala. De −90 a 0, em passos de 0,5. Só vale com a fonte “Valor fixo”; com o potenciômetro, o valor atual aparece ao lado. Unidade: dBFS (0 = fundo de escala).' },
+      info: 'No detector absoluto é a linha: o som precisa passar dela para disparar (−35,5 dBFS por padrão; mais perto de 0 = menos sensível). No adaptativo é o quanto o som precisa subir acima do ruído da sala. De −90 a 0, em passos de 0,5. Só vale com a fonte “Valor fixo”, quando a caixa fica editável; com o potenciômetro, a caixa mostra ao vivo o valor do botão físico e fica travada. Unidade: dBFS (0 = fundo de escala).' },
     { id: TLV.breathRearmDb, label: 'Rearme (dB)', kind: 'number', min: 0, max: 20, step: 1,
       info: 'Quanto o som precisa cair abaixo da linha para um novo sopro poder disparar. Evita que um sopro longo dispare várias vezes. De 0 a 20, de 1 em 1. Unidade: decibéis (dB).' },
     { id: TLV.debounceMs, label: 'Debounce (s)', kind: 'number', min: 0, max: 65535,
@@ -490,22 +485,6 @@ export function stopRuleError(regs: TlvWrite[], snapshot: ReadonlyMap<number, nu
   return null;
 }
 
-/**
- * A firmware older than some registers (e.g. one without navigation) rejects a write
- * WHOLE when it carries an id it does not know, and the read-back would then read as a
- * PIN problem. So, once the device has reported its registers (a non-empty read), only
- * the ids it reported are sent; the PIN always is, being write-only (never read back).
- * Without a read there is nothing to compare against and nothing is filtered.
- */
-export function splitUnknownIds(
-  regs: TlvWrite[], reported: ReadonlySet<number>,
-): { send: TlvWrite[]; skipped: TlvWrite[] } {
-  if (reported.size === 0) return { send: regs, skipped: [] };
-  const send: TlvWrite[] = [], skipped: TlvWrite[] = [];
-  for (const r of regs) (r.id === TLV.pin || reported.has(r.id) ? send : skipped).push(r);
-  return { send, skipped };
-}
-
 /** Tooltip of the Avançado tab. */
 const ADVANCED_TAB_INFO = 'Ajustes da cadeia de sinais: faixa e filtro da IMU, ganho e rejeição da fusão, bias do giroscópio, parâmetros da suavização e dos filtros de áudio e CO₂. Abaixo deles ficam as métricas do fluxo e do firmware. O número diz quantos parâmetros vivem aqui; o ponto acende quando algum está fora do padrão de fábrica.';
 
@@ -522,7 +501,6 @@ export function mountConfigPanel(
   root.innerHTML = `
     <h2>Configuração</h2>
     <div data-el="strip" role="status"></div>
-    <p class="msg cfg-quat9" data-el="quat9" role="status" hidden>${QUAT9_NOTICE}</p>
     <div class="row">
       <button type="button" data-act="read">Ler do dispositivo</button>
       <button type="button" data-act="apply" class="primary">Aplicar</button>
@@ -574,7 +552,7 @@ export function mountConfigPanel(
   const onOff = new Map<number, HTMLButtonElement>();
   /** Connection state: every control is disabled while there is no device. */
   let connected = client.connected || opts.demo === true;
-  /** "na bola: X" / "não informado por este firmware" under each row (the PIN has none). */
+  /** "na bola: X" under each row (the PIN has none). */
   const balls = new Map<number, HTMLElement>();
   /** The row element of every field, so `visible` can hide it. */
   const rows = new Map<number, HTMLElement>();
@@ -584,8 +562,12 @@ export function mountConfigPanel(
   const switches = new Map<number, HTMLButtonElement>();
   /** Description paragraph under a switch row. */
   const descs = new Map<number, HTMLElement>();
-  /** Shows the potentiometer's current threshold next to the sensitivity input. */
-  let potLabel!: HTMLElement;
+  /**
+   * Under the potentiometer source, takes the sensitivity input's place and shows the knob's
+   * threshold live, locked. A separate box, never the register's input: the knob's reading must
+   * not become the stored fixed value, nor mark the field as edited.
+   */
+  let potBox!: HTMLInputElement;
   let lastSensors: SensorsSample | null = null;
 
   /** Where each tier's fieldsets go. */
@@ -710,18 +692,18 @@ export function mountConfigPanel(
         name.prepend(tg);
         toggles.set(f.id, tg);
       }
-      if (f.id === TLV.breathThresholdNegDbX100) {
-        // Current potentiometer level (from 'sensors'), next to the input; only meaningful while the pot is the source.
-        const wrap = document.createElement('span');
-        wrap.className = 'cfg-sens';
-        potLabel = document.createElement('span');
-        potLabel.className = 'cfg-pot';
-        potLabel.hidden = true;
-        potLabel.setAttribute('aria-live', 'off');
-        wrap.append(potLabel, el);
-        extra = wrap;
-      }
       label.append(name, extra ?? el);
+      if (f.id === TLV.breathThresholdNegDbX100) {
+        // After the register's input, so the <label> still names that one (its first control).
+        potBox = document.createElement('input');
+        potBox.type = 'number';
+        potBox.dataset.el = 'pot-dbfs';
+        potBox.disabled = true;
+        potBox.hidden = true;
+        potBox.placeholder = '—';
+        potBox.setAttribute('aria-label', `${f.label}: valor atual do potenciômetro`);
+        label.append(potBox);
+      }
       if (f.kind === 'checkbox') label.append(el);
       if (f.kind === 'switch') {
         label.append(el);
@@ -757,10 +739,6 @@ export function mountConfigPanel(
 
   /** Last values known to be on the device (read or read-back). PIN never appears here. */
   let snapshot = new Map<number, number | string>();
-  /** Every register id the device reported on the last read (what this firmware knows). */
-  let reportedIds = new Set<number>();
-  /** The last read reported orientationMode 1 (Quat9). */
-  let quat9Stored = false;
   /** Fields the user (or a loaded preset) touched that the device never reported. */
   const dirty = new Set<number>();
   for (const [id, el] of inputs) {
@@ -833,7 +811,7 @@ export function mountConfigPanel(
     emitCo2();
     emitMetric();
     refreshDescribe();
-    refreshPotLabel();
+    refreshPotBox();
     refreshMarkers();
   };
   /**
@@ -903,14 +881,17 @@ export function mountConfigPanel(
       if (d && f.describe) d.textContent = f.describe(Number(inputs.get(f.id)!.value));
     }
   };
-  const refreshPotLabel = (): void => {
+  /** One box in the Sensibilidade row: the stored value (Valor fixo) or the knob, live (Potenciômetro). */
+  const refreshPotBox = (): void => {
     const pot = Number(inputs.get(TLV.potControlsThreshold)?.value) === 1;
-    potLabel.hidden = !(pot && lastSensors);
-    if (lastSensors) potLabel.textContent = `Potenciômetro: ${potRawToDbfs(lastSensors.potRaw).toFixed(1).replace('.', ',')} dBFS`;
+    inputs.get(TLV.breathThresholdNegDbX100)!.hidden = pot;
+    potBox.hidden = !pot;
+    // Same format as the input it stands in for (scale 100: two decimals).
+    potBox.value = lastSensors ? potRawToDbfs(lastSensors.potRaw).toFixed(2) : '';
   };
   client.addEventListener('sensors', (ev) => {
     lastSensors = (ev as CustomEvent<SensorsSample>).detail;
-    refreshPotLabel();
+    refreshPotBox();
   });
   /** Live form values by register id, for fields whose options depend on other fields. */
   const formView = (): Map<number, unknown> => {
@@ -955,9 +936,6 @@ export function mountConfigPanel(
    */
   const populate = (regs: Map<number, DataView>, keepEdits: boolean): void => {
     snapshot = new Map();
-    reportedIds = new Set(regs.keys());
-    const om = regs.get(TLV.orientationMode);
-    quat9Stored = om !== undefined && om.byteLength === 1 && om.getUint8(0) === 1;
     const det = regs.get(TLV.imuDetected);
     imuDetected = det && det.byteLength === 1 ? det.getUint8(0) : undefined;
     const fieldOf = new Map<number, Field>();
@@ -1105,36 +1083,31 @@ export function mountConfigPanel(
     return out;
   };
 
-  /** Collect only fields that differ from the snapshot (see changedFields), minus the
-   *  registers this firmware did not report (returned as `skipped`, see splitUnknownIds). */
-  const collectChanged = (): { regs: TlvWrite[]; skipped: TlvWrite[]; error: string | null } => {
+  /** Collect only fields that differ from the snapshot (see changedFields). */
+  const collectChanged = (): { regs: TlvWrite[]; error: string | null } => {
     const regs: TlvWrite[] = [];
     for (const { f, v } of changedFields()) {
       const err = validate(f, v);
-      if (err) return { regs: [], skipped: [], error: err };
+      if (err) return { regs: [], error: err };
       regs.push({ id: f.id, value: v as number | string });
     }
-    const { send, skipped } = splitUnknownIds(regs, reportedIds);
-    const bandErr = bandError(send);
-    if (bandErr) return { regs: [], skipped: [], error: bandErr };
-    const stopErr = stopRuleError(send, snapshot);
-    if (stopErr) return { regs: [], skipped: [], error: stopErr };
-    return { regs: quat9Stored ? [...send, BACK_TO_QUAT6] : send, skipped, error: null };
+    const bandErr = bandError(regs);
+    if (bandErr) return { regs: [], error: bandErr };
+    const stopErr = stopRuleError(regs, snapshot);
+    if (stopErr) return { regs: [], error: stopErr };
+    return { regs, error: null };
   };
 
   /** How many fields Aplicar would send, counted before validation (an invalid one is still pending). */
   const pendingCount = (): number => {
     if (snapshot.size === 0) return 0;
-    const regs = changedFields().map(({ f, v }) => ({ id: f.id, value: v as number | string }));
-    return splitUnknownIds(regs, reportedIds).send.length + (quat9Stored ? 1 : 0);
+    return changedFields().length;
   };
 
   const applyBtn = q<HTMLButtonElement>('[data-act=apply]');
-  const quat9Notice = q('[data-el=quat9]');
   /**
    * Marks, while a read from the ball exists, every field whose form value is not the ball's
-   * ("na bola: X") and every field this firmware did not report; the Aplicar label carries the
-   * number of fields it would send.
+   * ("na bola: X"); the Aplicar label carries the number of fields it would send.
    */
   const refreshMarkers = (): void => {
     const view = snapshot.size > 0 ? formView() : null;
@@ -1142,15 +1115,13 @@ export function mountConfigPanel(
       const el = balls.get(f.id);
       if (!el) continue;
       let text = '';
-      if (view) {
-        if (!reportedIds.has(f.id)) text = 'não informado por este firmware';
-        else if (snapshot.has(f.id) && getValue(f) !== snapshot.get(f.id)) text = `na bola: ${formatBallValue(f, snapshot.get(f.id)!, view)}`;
+      if (view && snapshot.has(f.id) && getValue(f) !== snapshot.get(f.id)) {
+        text = `na bola: ${formatBallValue(f, snapshot.get(f.id)!, view)}`;
       }
       el.textContent = text;
       el.hidden = text === '' || rows.get(f.id)!.hidden;
     }
     applyBtn.textContent = applyLabel(pendingCount());
-    quat9Notice.hidden = !quat9Stored;
   };
   /** Everything derived from the form's current values. */
   const refreshForm = (): void => { refreshAdvCount(); refreshMarkers(); };
@@ -1171,12 +1142,9 @@ export function mountConfigPanel(
   q('[data-act=apply]').addEventListener('click', () => {
     void (async () => {
       if (snapshot.size === 0) { say('Leia a configuração do dispositivo antes de aplicar.'); return; }
-      const { regs, skipped, error } = collectChanged();
+      const { regs, error } = collectChanged();
       if (error) { say(error); return; }
-      const skipNote = skipped.length > 0
-        ? ` Não enviado(s), o firmware desta bola não tem esse registro: ${skipped.map((r) => byId(r.id).label).join(', ')}.`
-        : '';
-      if (regs.length === 0) { say(`Nenhuma alteração para aplicar.${skipNote}`); return; }
+      if (regs.length === 0) { say('Nenhuma alteração para aplicar.'); return; }
       await client.writeConfig(toWireRegs(regs));
       // The firmware cannot signal rejected writes: read back and compare.
       const back = await client.readConfig();
@@ -1184,10 +1152,6 @@ export function mountConfigPanel(
       for (const r of regs) {
         if (r.id === TLV.pin) continue;
         const dv = back.get(r.id);
-        if (r.id === TLV.orientationMode) { // not a form field: the ball must report 0 now
-          if (!dv || dv.byteLength !== 1 || dv.getUint8(0) !== 0) rejected.push('volta para Quat6');
-          continue;
-        }
         const f = byId(r.id);
         const got = dv ? decodeValue(f, dv) : null;
         if (got !== r.value) rejected.push(f.label);
@@ -1198,13 +1162,13 @@ export function mountConfigPanel(
       if (rejected.length > 0) {
         const lock = lockStateFrom(back);
         say(lock === 'locked' || lock === 'locked-out'
-          ? `⚠ A bola está bloqueada e não aceitou as mudanças: digite o PIN em Conexão e clique em Desbloquear (vale só para esta conexão), depois Aplicar de novo.${skipNote}`
-          : `⚠ alguns valores não foram aceitos (desbloqueou com o PIN?): ${rejected.join(', ')}.${pinNote}${skipNote}`);
+          ? `⚠ A bola está bloqueada e não aceitou as mudanças: digite o PIN em Conexão e clique em Desbloquear (vale só para esta conexão), depois Aplicar de novo.`
+          : `⚠ alguns valores não foram aceitos (desbloqueou com o PIN?): ${rejected.join(', ')}.${pinNote}`);
         return;
       }
       // Changes made through this UI are meant to survive power cycles: persist now.
       await client.sendCommand(0x11);
-      say(`Aplicado, verificado e salvo no dispositivo (${regs.length} registro(s)).${pinNote}${skipNote}`);
+      say(`Aplicado, verificado e salvo no dispositivo (${regs.length} registro(s)).${pinNote}`);
     })().catch(fail);
   });
 
@@ -1316,7 +1280,7 @@ export function mountConfigPanel(
     refreshVisibility();
     if (!d.connected) {
       if (snapshot.size > 0) hint.textContent = 'Desconectado. Os campos mostram a última leitura da bola; conecte para ver e aplicar o estado atual.';
-      snapshot = new Map(); reportedIds = new Set(); imuDetected = undefined; quat9Stored = false; refreshImuBanner();
+      snapshot = new Map(); imuDetected = undefined; refreshImuBanner();
     }
     refreshForm();
     renderStrip();

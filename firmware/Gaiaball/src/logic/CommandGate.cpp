@@ -5,6 +5,7 @@ namespace gaia {
 CommandAccess commandAccess(uint8_t opcode) {
   switch (opcode) {
     case kCmdAnchor:
+    case kCmdEndCo2Pulse:
       return CommandAccess::Open;
     case kCmdZero:
     case kCmdSave:
