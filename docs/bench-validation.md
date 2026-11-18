@@ -113,11 +113,8 @@ de na taxa configurada. Compare, em Métricas, **Taxa** e Firmware › **IMU** c
 configurada (ex.: 50 Hz). Se estiverem muito acima, pare: nenhuma medição de latência, jitter
 ou deriva vale até isso ser resolvido.
 
-**Ordem do magnetômetro: remap antes de calibrar.** O campo **Eixos do magnetômetro**
-(Avançado) vale na hora, sem reiniciar, mas **invalida a calibração magnética existente**: o
-firmware publica as amostras da captura já remapeadas e o ajuste hard/soft-iron do navegador é
-feito sobre elas. Portanto: (1) escolha os eixos certos (confira o rumo em Quat9 girando a bola
-sobre a mesa), (2) só então rode a seção 4.2. Trocou os eixos depois? Recalibre.
+**Magnetômetro.** O config-app não oferece mais o modo Quat9 nem os eixos/calibração do
+magnetômetro; o firmware ainda os suporta via escrita TLV crua (ver `docs/protocolo-ble.md`).
 
 ```sh
 cd config-app
@@ -149,12 +146,14 @@ os critérios e onde olhar cada número.
 1. **Conectar** (painel Conexão) e escolher `Globo_1`.
 2. **Desbloquear** com o PIN `1234` (botão "Desbloquear"). O firmware não confirma o PIN:
    se escritas/comandos forem ignorados, o PIN está errado ou o bloqueio de 30 s está ativo.
-3. **Ler do dispositivo** (painel Configuração). O formulário já abre preenchido com os
-   padrões de fábrica; depois da leitura os valores devem continuar iguais aos da tabela
-   de `firmware/README.md` (item 02). O painel tem duas abas: **Básico** (14 parâmetros
-   de operação) e **Avançado** (26 de afinação da cadeia de sinais). A contagem na aba
-   Avançado acende quando algum parâmetro está fora do padrão — confira isso antes de
-   culpar o firmware por um comportamento estranho.
+3. **Conferir a leitura** (painel Configuração). Ao conectar, o app já lê sozinho a
+   configuração da bola; a faixa no topo do painel mostra "Valores lidos da bola às
+   HH:MM:SS · IMU em uso: …" (o botão **Ler do dispositivo** só lê de novo). Numa bola com
+   os padrões de fábrica, os valores lidos devem ser iguais aos da tabela de
+   `firmware/README.md` (item 02). O painel tem duas abas: **Básico** (parâmetros de
+   operação) e **Avançado** (afinação da cadeia de sinais; o número na aba diz quantos
+   parâmetros ficam ali). O ponto na aba Avançado acende quando algum parâmetro está fora
+   do padrão — confira isso antes de culpar o firmware por um comportamento estranho.
 4. Medir em **Métricas**, no fim da aba Configuração › Avançado (deixe a bola em movimento):
 
 | Critério | Onde olhar | Meta |
@@ -287,9 +286,8 @@ debounce 3 s.
    ficam em **Avançado**) e aplique: a vista 3D mostra o quaternion exatamente como chega da bola,
    então o efeito do slerp — e o atraso que ele adiciona — aparece na própria vista.
    Lembre que o site também suaviza por conta própria (mediana + EMA); evite exagerar.
-4. Deriva (item 08): em modo **Quat6 (relativo)**, deixe a bola parada por 5 min e anote a
-   deriva do yaw. Aproxime um ímã ou celular: em Quat6 nada deve mudar. Compare com
-   **Quat9 (absoluto)**.
+4. Deriva (item 08): em modo Quat6 (relativo), deixe a bola parada por 5 min e anote a
+   deriva do yaw. Aproxime um ímã ou celular: em Quat6 nada deve mudar.
 
 ## 4.1 Pipeline do IMU (firmware v7)
 
@@ -301,23 +299,15 @@ Tudo aqui se observa em Métricas › Firmware, que agora publica o estado inter
 | Bias com offset grande | Compare o bias estimado com a leitura crua do giroscópio parado (log serial) | O firmware aprende o offset mesmo acima de 2 °/s — era exatamente o caso que a versão anterior nunca corrigia |
 | Rejeição de aceleração | Dê um tranco lateral na bola, mantendo-a nivelada | “Estado da fusão” mostra **accel ignorado** durante o tranco e o modelo 3D não tomba |
 | Recuperação | Mantenha a bola acelerada/inclinada por mais de 5 s | O selo **accel ignorado** desaparece (o firmware volta a confiar no sensor) |
-| Rejeição magnética (Quat9) | Aproxime um ímã do globo | “Estado da fusão” mostra **mag ignorado** e o rumo não gira atrás do ímã |
 | Saturação do giroscópio | Gire a bola o mais rápido que conseguir | Com faixa ±1000 °/s o selo **saturação** deve ser raro; se aparecer com frequência, suba para ±2000 |
 | Anti-serrilhamento | Em “Filtro anti-serrilhamento (DLPF)” deixe em automático e apoie a bola sobre algo que vibre | Menos tremor do que forçando 41 Hz a 50 Hz de taxa |
 | Filtro 1€ | Modo **filtro 1€**; compare com **slerp fixo** em 100 | Parada: ambos ficam quietos. Em movimento rápido: o 1€ acompanha, o slerp fixo “borracha” (~190 ms) |
 | Espícula da aceleração | Ligue o filtro de espícula (k 3,0) e observe o gráfico de aceleração | Picos isolados desaparecem sem atraso visível; movimento real passa intacto |
 
-## 4.2 Calibração do magnetômetro (Configuração › Avançado › Magnetômetro)
+## 4.2 Calibração do magnetômetro
 
-1. Desbloqueie com o PIN e afaste a bola de metal, caixas de som e computadores.
-2. **Iniciar calibração** e gire devagar desenhando um 8 até os **8 setores** acenderem.
-3. Confira: campo entre 22 e 28 µT (Brasil) e resíduo **abaixo de 3 %**.
-4. **Gravar calibração na bola** (já persiste na NVS) — em Métricas a linha “Calibração
-   magnética” passa a **calibrado**.
-5. Em Quat9, gire a bola 360° sobre a mesa: o rumo deve voltar ao mesmo valor
-   (±5°). Antes da calibração esse erro chega a dezenas de graus.
-6. **Remover calibração** volta ao magnetômetro cru, para comparar.
-5. Para persistir ajustes, **Salvar no dispositivo** (`0x11`). "Aplicar" vale só até reiniciar.
+Não é mais oferecida pelo config-app (a bola é usada só em Quat6). O firmware mantém o
+Quat9 e a calibração (TLV `0x1E`), acessíveis por escrita TLV crua.
 
 ## 4.3 Navegação do globo e gatilho de CO₂ (firmware v9)
 
@@ -368,7 +358,7 @@ N = máx(1, arred(taxa do IMU ÷ taxa de navegação))); o painel Métricas e o 
 mesma sequência.
 
 **Reset do globo:** trocar o modo, trocar o ponto de referência, **Zerar orientação**,
-a âncora (`0x17`, abaixo), **Calibrar montagem** ou alternar Quat6 ↔ Quat9 levam o globo ao
+a âncora (`0x17`, abaixo) ou **Calibrar montagem** levam o globo ao
 ponto de referência (com uma âncora ativa, ao ponto dela). Mexer
 nos demais parâmetros de navegação não.
 
@@ -478,7 +468,7 @@ segue) de reboot (uptime volta a zero).
 | IMU ausente: boot lento (+5 s) | IMU não responde no I²C (fiação SDA 21 / SCL 22, AD0 em GND, alimentação). `imuOk` fica desligada (Firmware › **Saúde**); o resto do firmware segue rodando. |
 | Escritas e comandos ignorados | Não desbloqueado, PIN errado, ou bloqueio de 30 s (5 erros seguidos). Aguarde 30 s ou reconecte e tente de novo. |
 | Valores voltam ao anterior após **Aplicar** | O app avisa "alguns valores não foram aceitos (desbloqueou com o PIN?)". |
-| Config sumiu após reiniciar | Faltou **Salvar no dispositivo** (`0x11`). |
+| Config sumiu após reiniciar | O **Aplicar** só grava na NVS (`0x11`) quando a bola aceita tudo. Se ele avisou "⚠ alguns valores não foram aceitos (desbloqueou com o PIN?)", nada foi gravado: desbloqueie e aplique de novo (sucesso = "Aplicado, verificado e salvo no dispositivo"). Escrita TLV crua, feita fora do app, também precisa do `0x11` (**Salvar no dispositivo**). Apagar a flash (`-t erase`) volta tudo ao padrão de fábrica. |
 | Navegador não lista o dispositivo | Use Chrome/Edge em `localhost` ou HTTPS; confira se o nome BLE continua `Globo_1`. |
 | Erros UART crescendo / CO₂ inválido | Fiação/interferência no GPIO16, ou o SC8 emudeceu após receber uma consulta — religue a alimentação (seção 5). |
 | Site novo não conecta no firmware antigo, ou o contrário | Veja a ordem de deploy no `README.md` da raiz. |

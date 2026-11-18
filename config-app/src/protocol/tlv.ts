@@ -209,20 +209,6 @@ export function buildCommand(opcode: number, arg?: Uint8Array): Uint8Array {
   return out;
 }
 
-/**
- * Builds the 24-byte magnetometer calibration record (TLV 0x1E) from the fixed-point
- * arrays produced by magCalToFixed: hard iron x/y/z, then the soft-iron matrix
- * row-major, all little-endian int16.
- */
-export function encodeMagCalRecord(hard: Int16Array, soft: Int16Array): Uint8Array {
-  if (hard.length !== 3 || soft.length !== 9) throw new RangeError('magCal needs 3 + 9 values');
-  const out = new Uint8Array(24);
-  const dv = new DataView(out.buffer);
-  for (let i = 0; i < 3; i++) dv.setInt16(2 * i, hard[i], true);
-  for (let i = 0; i < 9; i++) dv.setInt16(6 + 2 * i, soft[i], true);
-  return out;
-}
-
 /** Navigation reference point: latitude/longitude in degrees, 6 decimals on the wire (E6). */
 export interface NavRef { lat: number; lon: number }
 

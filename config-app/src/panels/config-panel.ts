@@ -4,6 +4,9 @@ import { decodeNavRef, encodeNavRef, encodeTlv, navRefToString, parseNavRefStrin
 import { potRawToDbfs, type SensorsSample } from '../protocol/packets.ts';
 import { isToggleOn, renderSwitch, renderToggle, setSwitchValue, setToggleValue, type SwitchOptions } from '../ui/switch.ts';
 import { infoDot } from './info.ts';
+import type { ConfigReadDetail, ConfigReadState } from '../ble/auto-read.ts';
+import { applyLabel, populatePlan } from './config-sync.ts';
+import { stripView } from './config-status.ts';
 import type { Co2Levels } from './chart-model.ts';
 
 type Kind = 'number' | 'range' | 'checkbox' | 'select' | 'text' | 'pin' | 'navref' | 'switch';
@@ -77,20 +80,14 @@ export function dlpfOptions(chip: number): [number, string][] {
   return [auto, ...[1, 2, 3, 4, 5, 6].map((i): [number, string] => [i, `índice ${i} (depende do IMU)`])];
 }
 
-/**
- * Labels of the 24 magnetometer axis mappings, "+Y +X -Z" meaning out.x = +in.y, out.y = +in.x,
- * out.z = -in.z. AUTHORITY: firmware/Gaiaball/src/logic/MagAxisRemap.cpp (kMagRemapTable). The
- * order and labels here were copied from it and nothing tests the two against each other, so
- * change them only together.
- */
-const MAG_AXIS_LABELS = [
-  '+X +Y +Z', '+X -Y -Z', '-X +Y -Z', '-X -Y +Z', '+X +Z -Y', '+X -Z +Y', '-X +Z +Y', '-X -Z -Y', '+Y +X -Z', '+Y -X +Z', '-Y +X +Z', '-Y -X -Z', '+Y +Z +X', '+Y -Z -X', '-Y +Z -X', '-Y -Z +X', '+Z +X +Y', '+Z -X -Y', '-Z +X -Y', '-Z -X +Y', '+Z +Y -X', '+Z -Y +X', '-Z +Y +X', '-Z -Y -X',
-];
-const MAG_AXIS_OPTIONS: [number, string][] = MAG_AXIS_LABELS.map((l, i) => [i, l]);
+/** Shown while the ball reports orientationMode 1 (Quat9): the config-app no longer offers it. */
+export const QUAT9_NOTICE = 'Esta bola está em Quat9 (com magnetômetro). O próximo Aplicar volta para Quat6 e reinicia a navegação do globo.';
+/** The write that takes such a ball back to Quat6 (the register is no longer a form field). */
+const BACK_TO_QUAT6: TlvWrite = { id: TLV.orientationMode, value: 0 };
 
 /** Registers that describe one physical ball and must never travel in a preset. */
 export const isPerBall = (f: Field): boolean =>
-  f.id === TLV.pin || f.id === TLV.magCal || f.id === TLV.imuChip || f.id === TLV.magAxisRemap || f.id === TLV.navRef;
+  f.id === TLV.pin || f.id === TLV.imuChip || f.id === TLV.navRef;
 
 /** Display names of the IMU choices (index = TLV 0x34 value). */
 const IMU_NAMES = ['não configurado', 'ICM-20948', 'GY-91 (MPU-9250)'];
@@ -106,22 +103,32 @@ export function imuRebootPending(selected: number, readChip: number | undefined,
   return ref !== undefined && selected !== ref;
 }
 
-/** One-line IMU state from TLV 0x35 (bits 0-1 chip at boot, bit 2 found, bit 3 magnetometer found) and the live selection. */
+/** One-line IMU state from TLV 0x35 (bits 0-1 chip at boot, bit 2 found) and the live selection. */
 export function imuStatusText(detected: number | undefined, selected: number): string {
   if (detected === undefined) return selected === 0 ? 'não configurado' : `${IMU_NAMES[selected] ?? '?'} selecionado`;
-  const boot = detected & 0x03, found = (detected & 0x04) !== 0, mag = (detected & 0x08) !== 0;
+  const boot = detected & 0x03, found = (detected & 0x04) !== 0;
   if (boot !== selected) return 'trocado, aguardando reinício';
   if (boot === 0) return 'não configurado';
   if (!found) return `${IMU_NAMES[boot]} selecionado, não encontrado`;
-  return mag ? `${IMU_NAMES[boot]} ok` : `${IMU_NAMES[boot]} ok (sem magnetômetro)`;
+  return `${IMU_NAMES[boot]} ok`;
+}
+
+/**
+ * Name of the IMU actually running, for the status strip: the chip at boot (imuDetected bits
+ * 0-1), with a note when it was not found. Without 0x35 it falls back to what imuStatusText says
+ * for the stored selection ("não configurado" when none).
+ */
+export function imuInUseName(detected: number | undefined, selected: number): string {
+  if (detected === undefined) return imuStatusText(undefined, selected);
+  const boot = detected & 0x03;
+  if (boot === 0) return imuStatusText(detected, boot);
+  return (detected & 0x04) !== 0 ? IMU_NAMES[boot] : `${IMU_NAMES[boot]} (não encontrado)`;
 }
 
 const isJoystick = (cfg: Map<number, unknown>): boolean => Number(cfg.get(TLV.navMode)) === 2;
 
 const GROUPS: Group[] = [
   { title: 'Aquisição', fields: [
-    { id: TLV.orientationMode, label: 'Modo', kind: 'select', options: [[0, 'Quat6 (relativo)'], [1, 'Quat9 (absoluto)']],
-      info: 'Como o firmware calcula a orientação: Quat6 usa giroscópio + acelerômetro (referência relativa, imune a ímãs); Quat9 acrescenta o magnetômetro (yaw absoluto, porém sensível a interferência magnética — e só confiável depois de calibrar o magnetômetro). Sem unidade.' },
     { id: TLV.imuChip, label: 'IMU', kind: 'select', options: [[0, 'não configurado'], [1, 'ICM-20948'], [2, 'GY-91 (MPU-9250)']],
       info: 'Qual chip de movimento está soldado nesta bola. O mesmo firmware serve aos dois (ICM-20948 ou GY-91/MPU-9250), mas ele não adivinha: a bola sai de fábrica com o IMU DESLIGADO (“não configurado”) de propósito, para que ninguém dependa de um sensor que ninguém escolheu. Trocar o chip só vale depois de REINICIAR a bola (o barramento é inicializado uma vez, no boot). Sem unidade.' },
     { id: TLV.imuNotifyHz, label: 'Taxa (Hz)', kind: 'number', min: 10, max: 200,
@@ -134,19 +141,14 @@ const GROUPS: Group[] = [
       info: 'Passa-baixas interno do IMU (os cortes mostrados dependem do chip escolhido em “IMU”; no ICM-20948 o acelerômetro tem cortes ligeiramente diferentes, e os rótulos são os do giroscópio), aplicado ANTES da decimação para a taxa de saída. A decimação não faz média: o que passar acima da metade da taxa volta dobrado para dentro da banda (aliasing) e depois é indistinguível de movimento real — é assim que vibração entra como tremor lento. “Automático” escolhe o corte mais largo que ainda fica abaixo da metade da taxa (a 50 Hz → 20 Hz no MPU-9250 e 11,6 Hz no ICM-20948, cujos cortes ficam um índice acima do limite e por isso caem um índice mais estreito). O índice 7 (sem filtro útil) não é oferecido. Unidade: hertz (Hz).' },
   ] },
   { title: 'Fusão (AHRS)', fields: [
-    { id: TLV.magAxisRemap, label: 'Eixos do magnetômetro', kind: 'select', options: MAG_AXIS_OPTIONS,
-      info: 'Como os eixos do magnetômetro são rearranjados para coincidir com os do acelerômetro/giroscópio (o magnetômetro tem eixos próprios, diferentes em cada chip). “+Y +X -Z” significa x = +Y lido, y = +X lido, z = -Z lido. Vale na hora, sem reiniciar. ATENÇÃO: mudar isto INVALIDA a calibração magnética existente — o firmware publica as amostras de captura já remapeadas e o ajuste hard/soft-iron do navegador é feito sobre elas. Ordem correta na bancada: primeiro o remap, depois calibrar. Sem unidade.' },
     { id: TLV.fusionGainX100, label: 'Ganho da fusão (×100)', kind: 'number', min: 0, max: 500,
-      info: 'Peso do acelerômetro/magnetômetro contra o giroscópio — na prática, a frequência de corte do filtro complementar. Ganho baixo confia no giroscópio (saída lisa, mais deriva); ganho alto corrige rápido (mais ruído e mais erro durante aceleração). 50 = 0,50, o padrão do algoritmo. Adimensional (×100).' },
+      info: 'Peso do acelerômetro contra o giroscópio — na prática, a frequência de corte do filtro complementar. Ganho baixo confia no giroscópio (saída lisa, mais deriva); ganho alto corrige rápido (mais ruído e mais erro durante aceleração). 50 = 0,50, o padrão do algoritmo. Adimensional (×100).' },
     { id: TLV.accelRejectionDeg, label: 'Rejeição de aceleração (°)', kind: 'number', min: 0, max: 90,
       offValue: 0, onDefault: 10,
       info: 'Se a inclinação indicada pelo acelerômetro discordar da estimada por mais que este ângulo, o acelerômetro é ignorado naquela amostra. É o que impede uma bola arremessada, rolada ou sacudida de “tombar” a orientação: durante a aceleração o sensor aponta para a resultante, não para baixo. 0 desliga. Unidade: graus (°); 10° serve para quase tudo.' },
-    { id: TLV.magRejectionDeg, label: 'Rejeição magnética (°)', kind: 'number', min: 0, max: 90,
-      offValue: 0, onDefault: 10,
-      info: 'Mesmo mecanismo aplicado ao rumo: discordância acima deste ângulo faz o magnetômetro ser ignorado, blindando a orientação de um ímã ou celular que passa perto. Só age no modo Quat9. 0 desliga. Unidade: graus (°).' },
     { id: TLV.rejectionTimeoutS, label: 'Tempo até recuperação (s)', kind: 'number', min: 0, max: 60,
       offValue: 0, onDefault: 5,
-      info: 'Se a discordância persistir por mais que este tempo, o firmware conclui que o errado é a estimativa (e não o sensor) e volta a usá-lo. Sem isso, uma perturbação longa deixaria a bola só com o giroscópio, derivando livremente. 0 desliga as duas rejeições. Unidade: segundos (s).' },
+      info: 'Se a discordância persistir por mais que este tempo, o firmware conclui que o errado é a estimativa (e não o sensor) e volta a usá-lo. Sem isso, uma perturbação longa deixaria a bola só com o giroscópio, derivando livremente. 0 desliga a rejeição de aceleração. Unidade: segundos (s).' },
   ] },
   { title: 'Bias do giroscópio', fields: [
     { id: TLV.biasRestThDpsX100, label: 'Limiar de repouso (×100 °/s)', kind: 'number', min: 1, max: 2000,
@@ -336,7 +338,7 @@ const byId = (id: number): Field => FIELDS.find((f) => f.id === id)!;
  * tuned under Avançado is still collected and applied.
  */
 const BASIC_IDS: ReadonlySet<number> = new Set([
-  TLV.orientationMode, TLV.imuChip, TLV.imuNotifyHz, TLV.quatSmoothMode,
+  TLV.imuChip, TLV.imuNotifyHz, TLV.quatSmoothMode,
   TLV.audioEnabled, TLV.breathDetector, TLV.potControlsThreshold, TLV.breathMetric, TLV.breathThresholdNegDbX100, TLV.breathRearmDb, TLV.debounceMs,
   TLV.audioBpfEnabled,
   // Three of the navigation fields (joyMaxSpeedDegS, joyFullAngleDeg, joyCurveX10) only show in joystick mode.
@@ -355,15 +357,12 @@ const tierOf = (f: Field): Tier => (BASIC_IDS.has(f.id) ? 'basico' : 'avancado')
  * on purpose — it is write-only, and showing one would suggest it had been read.
  */
 export const FIELD_DEFAULTS: ReadonlyMap<number, number | string> = new Map<number, number | string>([
-  [TLV.orientationMode, 0],
   [TLV.imuChip, 0],
   [TLV.imuNotifyHz, 50],
   [TLV.gyroFsSel, 2],
   [TLV.imuDlpfMode, 0],
-  [TLV.magAxisRemap, 8],
   [TLV.fusionGainX100, 50],
   [TLV.accelRejectionDeg, 10],
-  [TLV.magRejectionDeg, 10],
   [TLV.rejectionTimeoutS, 5],
   [TLV.biasRestThDpsX100, 200],
   [TLV.biasMaxDpsX100, 1000],
@@ -432,6 +431,24 @@ function decodeValue(f: Field, dv: DataView): number | string | null {
   }
 }
 
+/**
+ * A value read from the ball, written the way its field shows values ("na bola: X"); selects use the option label.
+ * Decimals use the pt-BR comma, like the rest of the app ("2,5"; the reference point is "lat; lon").
+ */
+export function formatBallValue(f: Field, v: number | string, cfg: Map<number, unknown> = new Map()): string {
+  if (f.kind === 'navref') {
+    const r = parseNavRefString(String(v));
+    return r ? `${r.lat.toFixed(6).replace('.', ',')}; ${r.lon.toFixed(6).replace('.', ',')}` : String(v);
+  }
+  if (f.kind === 'text' || f.kind === 'pin') return String(v);
+  if (f.offValue !== undefined && Number(v) === f.offValue) return 'desligado';
+  if (f.kind === 'checkbox') return Number(v) !== 0 ? 'ligado' : 'desligado';
+  if (f.kind === 'switch') return f.switchOptions!.find((o) => o.value === Number(v))?.label ?? String(v);
+  if (f.kind === 'select') return resolveOptions(f, cfg).find(([o]) => o === Number(v))?.[1] ?? String(v);
+  if (f.scale || f.negate) return toDisplay(f, Number(v)).toFixed(f.decimals ?? (f.scale ? Math.round(Math.log10(f.scale)) : 0)).replace('.', ',');
+  return String(v);
+}
+
 /** Register values as the form holds them -> what goes on the wire (navRef: "lat,lon" -> 8 bytes). */
 export function toWireRegs(regs: TlvWrite[]): TlvWrite[] {
   return regs.map((r) => {
@@ -489,18 +506,22 @@ export function splitUnknownIds(
 }
 
 /** Tooltip of the Avançado tab. */
-const ADVANCED_TAB_INFO = 'Ajustes da cadeia de sinais: faixa e filtro da IMU, ganho e rejeições da fusão, bias do giroscópio, parâmetros da suavização e dos filtros de áudio e CO₂. Abaixo deles ficam a calibração do magnetômetro e as métricas do fluxo e do firmware. O número diz quantos parâmetros vivem aqui; o ponto acende quando algum está fora do padrão de fábrica.';
+const ADVANCED_TAB_INFO = 'Ajustes da cadeia de sinais: faixa e filtro da IMU, ganho e rejeição da fusão, bias do giroscópio, parâmetros da suavização e dos filtros de áudio e CO₂. Abaixo deles ficam as métricas do fluxo e do firmware. O número diz quantos parâmetros vivem aqui; o ponto acende quando algum está fora do padrão de fábrica.';
 
 /**
  * Mounts the configuration panel. Returns the container at the end of the Avançado tab,
- * below its fields, where main.ts places the magnetometer and metrics panels: they are
- * bench tools, not something the person operating the globe needs to see.
+ * below its fields, where main.ts places the metrics panel: it is a
+ * bench tool, not something the person operating the globe needs to see.
  */
 export function mountConfigPanel(
   root: HTMLElement, client: GaiaballClient, store: PresetStore = new PresetStore(),
+  /** demo: no real link, but the form behaves as connected (main.ts fakes the device). */
+  opts: { demo?: boolean } = {},
 ): { advancedSections: HTMLElement; band: BandSource; co2: Co2Source; metric: MetricSource } {
   root.innerHTML = `
     <h2>Configuração</h2>
+    <div data-el="strip" role="status"></div>
+    <p class="msg cfg-quat9" data-el="quat9" role="status" hidden>${QUAT9_NOTICE}</p>
     <div class="row">
       <button type="button" data-act="read">Ler do dispositivo</button>
       <button type="button" data-act="apply" class="primary">Aplicar</button>
@@ -551,7 +572,9 @@ export function mountConfigPanel(
   /** On/off toggles of the on/off fields (kind 'checkbox'); the value lives in a hidden input. */
   const onOff = new Map<number, HTMLButtonElement>();
   /** Connection state: every control is disabled while there is no device. */
-  let connected = client.connected;
+  let connected = client.connected || opts.demo === true;
+  /** "na bola: X" / "não informado por este firmware" under each row (the PIN has none). */
+  const balls = new Map<number, HTMLElement>();
   /** The row element of every field, so `visible` can hide it. */
   const rows = new Map<number, HTMLElement>();
   /** Second input (longitude) of the navRef field; the first one lives in `inputs`. */
@@ -705,6 +728,16 @@ export function mountConfigPanel(
         if (d) label.append(d);
       }
       fs.append(label);
+      if (f.id !== TLV.pin) {
+        // After the row, not inside it: a label's text is the control's accessible name.
+        const ball = document.createElement('p');
+        ball.className = 'cfg-ball';
+        ball.id = `cfg-ball-${f.id}`;
+        ball.hidden = true;
+        fs.append(ball);
+        balls.set(f.id, ball);
+        if (el.type !== 'hidden') el.setAttribute('aria-describedby', ball.id);
+      }
       inputs.set(f.id, el);
       if (f.id === TLV.imuChip) {
         // Visible (not tooltip-only) because a switch silently does nothing until the ball reboots.
@@ -725,12 +758,13 @@ export function mountConfigPanel(
   let snapshot = new Map<number, number | string>();
   /** Every register id the device reported on the last read (what this firmware knows). */
   let reportedIds = new Set<number>();
+  /** The last read reported orientationMode 1 (Quat9). */
+  let quat9Stored = false;
   /** Fields the user (or a loaded preset) touched that the device never reported. */
   const dirty = new Set<number>();
   for (const [id, el] of inputs) {
-    el.addEventListener('input', () => { dirty.add(id); refreshAdvCount(); });
+    el.addEventListener('input', () => { dirty.add(id); refreshForm(); });
     el.addEventListener('change', () => {
-      refreshAdvCount();
       if (id === TLV.imuChip) { refreshDependentOptions(); refreshImuBanner(); }
       if (id === TLV.navMode || id === TLV.breathDetector || id === TLV.potControlsThreshold) refreshVisibility();
       if (GOVERNORS.has(id)) applyEnabled();
@@ -738,13 +772,14 @@ export function mountConfigPanel(
       if (CO2_IDS.has(id)) emitCo2();
       if (id === TLV.breathMetric) emitMetric();
       refreshDescribe();
+      refreshForm();
     });
     if (BAND_IDS.has(id)) el.addEventListener('input', () => emitBand());
     if (CO2_IDS.has(id)) el.addEventListener('input', () => emitCo2());
   }
-  navLon.addEventListener('input', () => { dirty.add(TLV.navRef); refreshAdvCount(); });
-  navLon.addEventListener('change', () => refreshAdvCount());
-  for (const [id, tg] of toggles) tg.addEventListener('change', () => { dirty.add(id); refreshAdvCount(); applyEnabled(); });
+  navLon.addEventListener('input', () => { dirty.add(TLV.navRef); refreshForm(); });
+  navLon.addEventListener('change', () => refreshForm());
+  for (const [id, tg] of toggles) tg.addEventListener('change', () => { dirty.add(id); refreshForm(); applyEnabled(); });
 
   const getValue = (f: Field): number | string | null => {
     const el = inputs.get(f.id)!;
@@ -798,6 +833,7 @@ export function mountConfigPanel(
     emitMetric();
     refreshDescribe();
     refreshPotLabel();
+    refreshMarkers();
   };
   /**
    * Which controls take input. Nothing does without a device; a field governed by an on/off
@@ -905,12 +941,25 @@ export function mountConfigPanel(
     if (!confirm('Reiniciar o dispositivo? A conexão será perdida.')) return;
     void client.sendCommand(0x13).then(() => say('Reiniciar: enviado.'), fail);
   });
-  const populate = (regs: Map<number, DataView>): void => {
+  /** Maps already handed to publishExplicit: a read the person asked for, which discards edits. */
+  const explicitReads = new WeakSet<Map<number, DataView>>();
+  /** Preset loaded into the form and not yet applied or discarded (for the preset message). */
+  let loadedPreset: string | null = null;
+  /**
+   * Shows what the ball reports. keepEdits (automatic read on connect, the stage bar's read-back):
+   * snapshot and reported ids are refreshed and every field the person has NOT edited takes the
+   * ball's value, while edited fields (typed, or set by a preset, since the last explicit read or
+   * apply) keep their value and stay marked as differing from the ball. Otherwise (explicit read,
+   * read-back of Aplicar) every edit is discarded.
+   */
+  const populate = (regs: Map<number, DataView>, keepEdits: boolean): void => {
     snapshot = new Map();
     reportedIds = new Set(regs.keys());
+    const om = regs.get(TLV.orientationMode);
+    quat9Stored = om !== undefined && om.byteLength === 1 && om.getUint8(0) === 1;
     const det = regs.get(TLV.imuDetected);
     imuDetected = det && det.byteLength === 1 ? det.getUint8(0) : undefined;
-    dirty.clear();
+    const fieldOf = new Map<number, Field>();
     for (const f of FIELDS) {
       if (f.id === TLV.pin) continue; // firmware never sends the PIN
       const dv = regs.get(f.id);
@@ -918,14 +967,31 @@ export function mountConfigPanel(
       const v = decodeValue(f, dv);
       if (v === null) continue;
       snapshot.set(f.id, v);
-      setValue(f, v);
+      fieldOf.set(f.id, f);
     }
-    (inputs.get(TLV.pin) as HTMLInputElement).value = '';
+    const plan = populatePlan(snapshot.keys(), dirty, keepEdits);
+    for (const id of plan.overwrite) setValue(fieldOf.get(id)!, snapshot.get(id)!);
+    dirty.clear();
+    for (const id of plan.edited) dirty.add(id);
+    if (!keepEdits) (inputs.get(TLV.pin) as HTMLInputElement).value = '';
     refreshDependentOptions();
+    // An edit that now equals the ball needs no protection from the next automatic read.
+    for (const id of [...dirty]) {
+      const f = fieldOf.get(id);
+      if (f && getValue(f) === snapshot.get(id)) dirty.delete(id);
+    }
     refreshVisibility();
     refreshImuBanner();
-    hint.textContent = 'Lido do dispositivo. Aplicar envia só o que mudou, confere a aceitação e grava de forma permanente.';
-    refreshAdvCount();
+    const kept = pendingCount();
+    if (keepEdits && kept > 0) {
+      hint.textContent = `Lido do dispositivo. ${kept} campo(s) editado(s) foram mantidos e estão marcados com o valor que a bola tem. Aplicar envia só o que mudou, confere a aceitação e grava de forma permanente.`;
+      if (loadedPreset) pmsg.textContent = `Preset "${loadedPreset}" mantido no formulário depois da leitura da bola. Clique em Aplicar para enviar.`;
+    } else {
+      hint.textContent = 'Lido do dispositivo. Aplicar envia só o que mudou, confere a aceitação e grava de forma permanente.';
+      if (loadedPreset) pmsg.textContent = `Preset "${loadedPreset}" não está mais no formulário: ele mostra os valores da bola.`;
+      loadedPreset = null;
+    }
+    refreshForm();
   };
 
   /** Fills every field with the firmware default. Does NOT mark anything dirty, so a
@@ -1020,10 +1086,12 @@ export function mountConfigPanel(
     return null;
   };
 
-  /** Collect only fields that differ from the snapshot (PIN: only when typed), minus the
-   *  registers this firmware did not report (returned as `skipped`, see splitUnknownIds). */
-  const collectChanged = (): { regs: TlvWrite[]; skipped: TlvWrite[]; error: string | null } => {
-    const regs: TlvWrite[] = [];
+  /**
+   * Fields that differ from the ball (PIN: only when typed; a field the ball never reported:
+   * only when edited), with the form's value, before validation or the unknown-id filter.
+   */
+  const changedFields = (): { f: Field; v: number | string | null }[] => {
+    const out: { f: Field; v: number | string | null }[] = [];
     for (const f of FIELDS) {
       const v = getValue(f);
       if (hasPin(f)) {
@@ -1031,6 +1099,16 @@ export function mountConfigPanel(
       } else if (snapshot.has(f.id)) {
         if (snapshot.get(f.id) === v) continue;
       } else if (!dirty.has(f.id)) continue; // never reported by the device and untouched
+      out.push({ f, v });
+    }
+    return out;
+  };
+
+  /** Collect only fields that differ from the snapshot (see changedFields), minus the
+   *  registers this firmware did not report (returned as `skipped`, see splitUnknownIds). */
+  const collectChanged = (): { regs: TlvWrite[]; skipped: TlvWrite[]; error: string | null } => {
+    const regs: TlvWrite[] = [];
+    for (const { f, v } of changedFields()) {
       const err = validate(f, v);
       if (err) return { regs: [], skipped: [], error: err };
       regs.push({ id: f.id, value: v as number | string });
@@ -1040,11 +1118,45 @@ export function mountConfigPanel(
     if (bandErr) return { regs: [], skipped: [], error: bandErr };
     const stopErr = stopRuleError(send, snapshot);
     if (stopErr) return { regs: [], skipped: [], error: stopErr };
-    return { regs: send, skipped, error: null };
+    return { regs: quat9Stored ? [...send, BACK_TO_QUAT6] : send, skipped, error: null };
   };
+
+  /** How many fields Aplicar would send, counted before validation (an invalid one is still pending). */
+  const pendingCount = (): number => {
+    if (snapshot.size === 0) return 0;
+    const regs = changedFields().map(({ f, v }) => ({ id: f.id, value: v as number | string }));
+    return splitUnknownIds(regs, reportedIds).send.length + (quat9Stored ? 1 : 0);
+  };
+
+  const applyBtn = q<HTMLButtonElement>('[data-act=apply]');
+  const quat9Notice = q('[data-el=quat9]');
+  /**
+   * Marks, while a read from the ball exists, every field whose form value is not the ball's
+   * ("na bola: X") and every field this firmware did not report; the Aplicar label carries the
+   * number of fields it would send.
+   */
+  const refreshMarkers = (): void => {
+    const view = snapshot.size > 0 ? formView() : null;
+    for (const f of FIELDS) {
+      const el = balls.get(f.id);
+      if (!el) continue;
+      let text = '';
+      if (view) {
+        if (!reportedIds.has(f.id)) text = 'não informado por este firmware';
+        else if (snapshot.has(f.id) && getValue(f) !== snapshot.get(f.id)) text = `na bola: ${formatBallValue(f, snapshot.get(f.id)!, view)}`;
+      }
+      el.textContent = text;
+      el.hidden = text === '' || rows.get(f.id)!.hidden;
+    }
+    applyBtn.textContent = applyLabel(pendingCount());
+    quat9Notice.hidden = !quat9Stored;
+  };
+  /** Everything derived from the form's current values. */
+  const refreshForm = (): void => { refreshAdvCount(); refreshMarkers(); };
 
   /** Single path for every configuration read (button, Aplicar, connect): the panels listen to 'config'. */
   const publish = (regs: Map<number, DataView>): void => {
+    explicitReads.add(regs); // the person asked for this one (button, Aplicar): it discards edits
     client.dispatchEvent(new CustomEvent('config', { detail: regs }));
   };
   const doRead = async (): Promise<void> => {
@@ -1070,11 +1182,16 @@ export function mountConfigPanel(
       const rejected: string[] = [];
       for (const r of regs) {
         if (r.id === TLV.pin) continue;
-        const f = byId(r.id);
         const dv = back.get(r.id);
+        if (r.id === TLV.orientationMode) { // not a form field: the ball must report 0 now
+          if (!dv || dv.byteLength !== 1 || dv.getUint8(0) !== 0) rejected.push('volta para Quat6');
+          continue;
+        }
+        const f = byId(r.id);
         const got = dv ? decodeValue(f, dv) : null;
         if (got !== r.value) rejected.push(f.label);
       }
+      if (loadedPreset) { pmsg.textContent = `Preset "${loadedPreset}" enviado com Aplicar.`; loadedPreset = null; }
       publish(back);
       const pinNote = regs.some((r) => r.id === TLV.pin) ? ' Novo PIN enviado (não verificável).' : '';
       if (rejected.length > 0) {
@@ -1101,7 +1218,7 @@ export function mountConfigPanel(
   // is readable before anything has been read from the device.
   seedDefaults();
   selectTab('basico');
-  refreshAdvCount();
+  refreshForm();
 
   q('[data-act=psave]').addEventListener('click', () => {
     const name = pname.value.trim();
@@ -1109,7 +1226,7 @@ export function mountConfigPanel(
     if (snapshot.size === 0) { pmsg.textContent = 'Leia a configuração do dispositivo antes de salvar um preset.'; return; }
     const regs: TlvWrite[] = [];
     for (const f of FIELDS) {
-      if (isPerBall(f)) continue; // PIN, magnetometer calibration, IMU chip and axis remap belong to one ball
+      if (isPerBall(f)) continue; // PIN, IMU chip and navigation reference belong to one ball
       const v = getValue(f);
       if (v === null) continue; // empty numeric field (never read): not part of the preset
       const err = validate(f, v);
@@ -1125,11 +1242,13 @@ export function mountConfigPanel(
     if (!p) { pmsg.textContent = 'Selecione um preset.'; return; }
     for (const r of p.regs) {
       const f = FIELDS.find((x) => x.id === r.id);
-      // Per-ball registers (PIN, magnetometer calibration, IMU chip, axis remap) are never
+      // Per-ball registers (PIN, IMU chip, navigation reference) are never
       // part of a preset, even one saved by an older version that did include them.
       if (f && !isPerBall(f) && typeof r.value !== 'object') { setValue(f, r.value); dirty.add(f.id); }
     }
+    loadedPreset = p.name;
     refreshVisibility();
+    refreshForm();
     pmsg.textContent = `Preset "${p.name}" carregado no formulário. Clique em Aplicar para enviar.`;
   });
   q('[data-act=pdel]').addEventListener('click', () => {
@@ -1158,6 +1277,32 @@ export function mountConfigPanel(
     }, () => { pmsg.textContent = 'Não foi possível ler o arquivo.'; }).finally(() => { pfile.value = ''; });
   });
 
+  // ---- status strip: what the automatic read is doing, and when the values were taken ----
+  const strip = q('[data-el=strip]');
+  let readState: ConfigReadState | null = null;
+  let okAt: Date | null = null;
+  const renderStrip = (): void => {
+    const sel = snapshot.get(TLV.imuChip);
+    const view = stripView({
+      connected, read: readState, okAt,
+      chip: imuInUseName(imuDetected, typeof sel === 'number' ? sel : 0),
+    });
+    strip.replaceChildren();
+    strip.className = view ? 'cfg-strip' : '';
+    if (!view) return;
+    const text = document.createElement('span');
+    text.textContent = view.text;
+    strip.append(text);
+    if (view.retry) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.dataset.act = 'retry';
+      b.textContent = 'Tentar de novo';
+      b.addEventListener('click', () => client.dispatchEvent(new CustomEvent('config-retry')));
+      strip.append(b);
+    }
+  };
+
   // ---- connection gating (presets stay usable offline) ----
   const actions = [q<HTMLButtonElement>('[data-act=read]'), q<HTMLButtonElement>('[data-act=apply]')];
   const render = (d: StatusDetail): void => {
@@ -1165,11 +1310,29 @@ export function mountConfigPanel(
     for (const el of actions) el.disabled = !d.connected;
     // Re-applies the enabled state of every field: connection, on/off sections and own rules.
     refreshVisibility();
-    if (!d.connected) { snapshot = new Map(); reportedIds = new Set(); imuDetected = undefined; refreshImuBanner(); }
+    if (!d.connected) {
+      if (snapshot.size > 0) hint.textContent = 'Desconectado. Os campos mostram a última leitura da bola; conecte para ver e aplicar o estado atual.';
+      snapshot = new Map(); reportedIds = new Set(); imuDetected = undefined; quat9Stored = false; refreshImuBanner();
+    }
+    refreshForm();
+    renderStrip();
   };
   client.addEventListener('status', (ev) => render((ev as CustomEvent<StatusDetail>).detail));
-  client.addEventListener('config', (ev) => populate((ev as CustomEvent<Map<number, DataView>>).detail));
-  render({ connected: client.connected, name: null });
+  client.addEventListener('config', (ev) => {
+    const regs = (ev as CustomEvent<Map<number, DataView>>).detail;
+    populate(regs, !explicitReads.has(regs));
+    // Any read from the ball, whoever asked for it, is a fresh set of values.
+    readState = 'ok';
+    okAt = new Date();
+    renderStrip();
+  });
+  client.addEventListener('config-read', (ev) => {
+    const d = (ev as CustomEvent<ConfigReadDetail>).detail;
+    readState = d.state;
+    if (d.state === 'ok' && d.at) okAt = d.at;
+    renderStrip();
+  });
+  render({ connected: client.connected || opts.demo === true, name: null });
   // Descriptions under the switches must read right from the first paint, connected or not (also in demo mode).
   refreshDescribe();
   return {

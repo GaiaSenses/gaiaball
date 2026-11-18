@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  BASIC_FIELD_IDS, CONFIG_FIELDS, FIELD_DEFAULTS, GOVERNORS, dlpfOptions, governedOff, imuRebootPending, imuStatusText, isPerBall, navRefError, resolveOptions,
+  BASIC_FIELD_IDS, CONFIG_FIELDS, FIELD_DEFAULTS, GOVERNORS, dlpfOptions, formatBallValue, governedOff, imuInUseName, imuRebootPending, imuStatusText, isPerBall, navRefError, resolveOptions,
   splitUnknownIds, stopRuleError, toWireRegs, fromDisplay, toDisplay,
 } from './config-panel';
 import { decodeNavRef, decodeTlv, encodeTlv, navRefToString, parseNavRefString, TLV } from '../protocol/tlv';
@@ -47,10 +47,11 @@ describe('config fields', () => {
     // 20, not 16: three joystick fields (max speed, full-scale angle, curve) are only visible in joystick mode.
     // 23: +4 campos do detector de sopro, −1 limiar fixo em contagens.
     // 22: −1 atraso do pulso virtual (TLV 0x24 aposentado; o pulso sai no próprio sopro).
-    expect(basic.length).toBeLessThanOrEqual(22);
-    expect(BASIC_FIELD_IDS.size).toBe(22);
+    // 21: −1 "Modo" (Quat6/Quat9): the app only offers Quat6, see the Quat9 notice in the DOM test.
+    expect(basic.length).toBeLessThanOrEqual(21);
+    expect(BASIC_FIELD_IDS.size).toBe(21);
     // Operating the globe must not require the advanced tab.
-    for (const id of [TLV.orientationMode, TLV.imuNotifyHz, TLV.breathThresholdNegDbX100, TLV.bleName, TLV.pin]) {
+    for (const id of [TLV.imuNotifyHz, TLV.breathThresholdNegDbX100, TLV.bleName, TLV.pin]) {
       expect(BASIC_FIELD_IDS.has(id)).toBe(true);
     }
     // Signal-chain tuning must not clutter the first screen.
@@ -64,45 +65,34 @@ describe('config fields', () => {
     expect([...BASIC_FIELD_IDS].filter((id) => !ids.has(id))).toEqual([]);
   });
 
-  it('lists imuChip in Básico and magAxisRemap in Avançado, both with a tooltip', () => {
+  it('lists imuChip in Básico with a tooltip, and no magnetometer or Quat9 field exists', () => {
     expect(BASIC_FIELD_IDS.has(TLV.imuChip)).toBe(true);
-    expect(BASIC_FIELD_IDS.has(TLV.magAxisRemap)).toBe(false);
-    for (const id of [TLV.imuChip, TLV.magAxisRemap]) {
-      const f = CONFIG_FIELDS.find((x) => x.id === id)!;
-      expect(f.kind).toBe('select');
-      expect(f.info.length).toBeGreaterThan(40);
+    const f = CONFIG_FIELDS.find((x) => x.id === TLV.imuChip)!;
+    expect(f.kind).toBe('select');
+    expect(f.info.length).toBeGreaterThan(40);
+    for (const id of [TLV.orientationMode, TLV.magAxisRemap, TLV.magRejectionDeg, TLV.magCal]) {
+      expect(CONFIG_FIELDS.some((x) => x.id === id)).toBe(false);
+      expect(FIELD_DEFAULTS.has(id)).toBe(false);
     }
-    expect(CONFIG_FIELDS.find((x) => x.id === TLV.magAxisRemap)!.info).toMatch(/calibra/i);
   });
 
-  it('FIELD_DEFAULTS has an entry for every new Field (factory ball: IMU off, remap +Y +X -Z)', () => {
+  it('FIELD_DEFAULTS has an entry for every new Field (factory ball: IMU off)', () => {
     expect(FIELD_DEFAULTS.get(TLV.imuChip)).toBe(0);
-    expect(FIELD_DEFAULTS.get(TLV.magAxisRemap)).toBe(8);
     expect(FIELD_DEFAULTS.has(TLV.imuDetected)).toBe(false); // read-only, never a Field
     expect(CONFIG_FIELDS.some((f) => f.id === TLV.imuDetected)).toBe(false);
   });
 
-  it('offers 24 magnetometer axis options matching MagAxisRemap.cpp anchors', () => {
-    const f = CONFIG_FIELDS.find((x) => x.id === TLV.magAxisRemap)!;
-    const o = resolveOptions(f, new Map());
-    expect(o).toHaveLength(24);
-    const at = (i: number) => o.find(([v]) => v === i)![1];
-    expect(at(0)).toBe('+X +Y +Z');
-    expect(at(1)).toBe('+X -Y -Z');
-    expect(at(4)).toBe('+X +Z -Y');
-    expect(at(8)).toBe('+Y +X -Z');
-    expect(at(12)).toBe('+Y +Z +X');
-    expect(at(23)).toBe('-Z -Y -X');
+  it('never mentions the magnetometer in a tooltip (the app is Quat6 only)', () => {
+    for (const f of CONFIG_FIELDS) expect(f.info, f.label).not.toMatch(/magnet|quat9/i);
   });
 });
 
 describe('presets', () => {
   const field = (id: number) => CONFIG_FIELDS.find((f) => f.id === id)!;
-  it('keeps per-ball registers out of presets (PIN, mag calibration, imuChip, magAxisRemap)', () => {
+  it('keeps per-ball registers out of presets (PIN, imuChip, navRef)', () => {
     expect(isPerBall(field(TLV.imuChip))).toBe(true);
-    expect(isPerBall(field(TLV.magAxisRemap))).toBe(true);
     expect(isPerBall(field(TLV.pin))).toBe(true);
-    expect(isPerBall({ id: TLV.magCal, label: 'x', kind: 'number', info: 'x' })).toBe(true);
+    expect(isPerBall(field(TLV.navRef))).toBe(true);
     expect(isPerBall(field(TLV.imuNotifyHz))).toBe(false);
     expect(isPerBall(field(TLV.imuDlpfMode))).toBe(false);
   });
@@ -143,10 +133,10 @@ describe('IMU status line', () => {
     [undefined, 0, 'não configurado'],
     [0x0E, 2, 'GY-91 (MPU-9250) ok'],
     [0x0D, 1, 'ICM-20948 ok'],
-    [0x05, 1, 'ICM-20948 ok (sem magnetômetro)'], // chip found, AK09916 not
-    [0x06, 2, 'GY-91 (MPU-9250) ok (sem magnetômetro)'],
+    [0x05, 1, 'ICM-20948 ok'], // magnetometer bit (3) is no longer reported on
+    [0x06, 2, 'GY-91 (MPU-9250) ok'],
     [0x01, 1, 'ICM-20948 selecionado, não encontrado'],
-    [0x09, 1, 'ICM-20948 selecionado, não encontrado'], // mag bit without chip: the chip verdict wins
+    [0x09, 1, 'ICM-20948 selecionado, não encontrado'], // bit 3 without bit 2: the chip verdict wins
     [0x05, 2, 'trocado, aguardando reinício'], // boot = ICM + found, current selection = GY-91
   ])('descreve o estado do IMU (%s, %s)', (detected, selected, want) => {
     expect(imuStatusText(detected, selected)).toBe(want);
@@ -443,5 +433,51 @@ describe('RMS window field (TLV 0x2F)', () => {
     const out = decodeTlv(new DataView(encodeTlv([{ id: TLV.audioWindowMs, value: 50 }]).buffer));
     expect(out.get(TLV.audioWindowMs)!.getUint16(0, true)).toBe(50);
     expect(governedOff(TLV.audioWindowMs, new Map([[TLV.audioEnabled, 0]]))).toBe(false);
+  });
+});
+
+describe('formatBallValue ("na bola: X")', () => {
+  const field = (id: number) => CONFIG_FIELDS.find((f) => f.id === id)!;
+
+  it('shows a select by its option label', () => {
+    expect(formatBallValue(field(TLV.navMode), 2)).toBe('Joystick');
+    // DLPF labels follow the chip in the form.
+    expect(formatBallValue(field(TLV.imuDlpfMode), 3, new Map([[TLV.imuChip, 2]]))).toBe('41 Hz');
+  });
+
+  it('shows a switch by its label and an on/off field as ligado/desligado', () => {
+    const sw = field(TLV.breathDetector);
+    expect(formatBallValue(sw, sw.switchOptions![1].value)).toBe(sw.switchOptions![1].label);
+    expect(formatBallValue(field(TLV.audioEnabled), 1)).toBe('ligado');
+    expect(formatBallValue(field(TLV.audioEnabled), 0)).toBe('desligado');
+  });
+
+  it('shows scaled and negated numbers with the input decimals and a pt-BR comma', () => {
+    expect(formatBallValue(field(TLV.joyCurveX10), 25)).toBe('2,5');
+    expect(formatBallValue(field(TLV.breathThresholdNegDbX100), 3550)).toBe('-35,50');
+    expect(formatBallValue(field(TLV.imuNotifyHz), 50)).toBe('50');
+  });
+
+  it('shows a filter that is off as desligado, and text and reference as they read', () => {
+    const f = CONFIG_FIELDS.find((x) => x.offValue !== undefined)!;
+    expect(formatBallValue(f, f.offValue!)).toBe('desligado');
+    expect(formatBallValue(field(TLV.bleName), 'Gaiaball')).toBe('Gaiaball');
+    // pt-BR decimal commas, so the two coordinates are separated by a semicolon.
+    expect(formatBallValue(field(TLV.navRef), '-22.905556,-47.060833')).toBe('-22,905556; -47,060833');
+  });
+});
+
+describe('imuInUseName (status strip)', () => {
+  it('names the chip running since boot', () => {
+    expect(imuInUseName(0x01 | 0x04 | 0x08, 1)).toBe('ICM-20948');
+    expect(imuInUseName(0x02 | 0x04, 2)).toBe('GY-91 (MPU-9250)');
+  });
+  it('flags a chip that was not found, and an IMU that is off', () => {
+    expect(imuInUseName(0x01, 1)).toBe('ICM-20948 (não encontrado)');
+    expect(imuInUseName(0x00, 0)).toBe('não configurado');
+  });
+  it('without 0x35 says what the stored selection says', () => {
+    expect(imuInUseName(undefined, 1)).toBe('ICM-20948 selecionado');
+    expect(imuInUseName(undefined, 0)).toBe('não configurado');
   });
 });

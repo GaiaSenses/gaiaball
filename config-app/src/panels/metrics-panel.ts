@@ -47,10 +47,9 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
       <dt data-info="Quadros do sensor de CO₂ descartados por erro de formato ou de checksum na UART. Adimensional.">Erros UART</dt><dd id="d-uart">–</dd><span></span>
       <dt data-info="Memória RAM livre agora / mínimo desde o boot — um mínimo que só cai indica vazamento. Unidade: kilobytes (KB).">Heap livre / mín</dt><dd id="d-heap">–</dd><span></span>
       <dt data-info="Autoteste de cada subsistema (IMU, áudio, CO₂) reportado pelo firmware. Sem unidade.">Saúde</dt><dd id="d-flags">–</dd><span></span>
-      <dt data-info="O que a fusão está fazendo agora: “partida” = ganho ainda em rampa (converge depois do boot); “saturação” = o giroscópio passou do fundo de escala e o filtro reiniciou; “accel ignorado” / “mag ignorado” = a rejeição está agindo, protegendo a orientação de aceleração ou de um ímã. Sem unidade.">Estado da fusão</dt><dd id="d-ahrs">–</dd><span></span>
-      <dt data-info="Discordância entre a inclinação estimada e a que o acelerômetro indica (e, no Quat9, o mesmo para o rumo e o magnetômetro). É o valor comparado com os limiares de rejeição. Unidade: graus (°).">Discordância incl./rumo</dt><dd id="d-err">–</dd><span></span>
+      <dt data-info="O que a fusão está fazendo agora: “partida” = ganho ainda em rampa (converge depois do boot); “saturação” = o giroscópio passou do fundo de escala e o filtro reiniciou; “accel ignorado” = a rejeição está agindo, protegendo a orientação de uma aceleração brusca. Sem unidade.">Estado da fusão</dt><dd id="d-ahrs">–</dd><span></span>
+      <dt data-info="Discordância entre a inclinação estimada e a que o acelerômetro indica. É o valor comparado com o limiar de rejeição de aceleração. Unidade: graus (°).">Discordância de inclinação</dt><dd id="d-err">–</dd><span></span>
       <dt data-info="Offset de velocidade angular estimado em repouso e subtraído de cada leitura — é ele que, se não fosse removido, viraria deriva de rumo. “aprendendo” aparece enquanto a bola está parada e a estimativa se refina. Unidade: graus por segundo (°/s).">Bias do giroscópio</dt><dd id="d-bias">–</dd><span></span>
-      <dt data-info="Se há uma calibração hard/soft-iron gravada na bola. Sem ela, o modo Quat9 pode errar o rumo em dezenas de graus. Sem unidade.">Calibração magnética</dt><dd id="d-magcal">–</dd><span></span>
       <dt data-info="Intervalo de conexão BLE concedido por este navegador. O firmware pede 7,5–15 ms; o navegador decide. É o teto de qualquer taxa de notificação: notificações por segundo ≤ (pacotes por evento de conexão) ÷ intervalo. Com 15 ms e 3 pacotes por evento o teto é 200/s. Unidade: milissegundos (ms).">Intervalo de conexão</dt><dd id="d-itvl">–</dd><span></span>
       <dt data-info="Posição do globo calculada pela bola: modo (Desligado / Espelho / Joystick), latitude e longitude em graus, rumo (ângulo da direção que aponta para cima na tela, em relação ao norte, no padrão do Mapbox), velocidade angular do globo e se ele está parado ou em movimento. “parado” vale sempre que a bola indica parado, mesmo que a velocidade instantânea ainda esteja acima do limiar de parada. Bola com firmware antigo não tem essa característica. Unidades: graus (°), graus por segundo (°/s).">Navegação</dt><dd id="d-nav">–</dd><span></span>
       <dt data-info="Última leitura de CO₂. “virtual” = pulso disparado por sopro; “desatualizado” = sem quadro novo do sensor dentro do timeout. “gatilho” = o bit que o site usa para abrir a composição: ligado quando o CO₂ passou do “Gatilho de CO₂ (ppm)” e ainda não caiu abaixo do gatilho menos a histerese (firmware sem navegação nunca liga esse bit). Unidade: ppm.">CO₂</dt><dd id="d-co2">–</dd><span></span>
@@ -115,17 +114,12 @@ export function mountMetricsPanel(root: HTMLElement, client: GaiaballClient, sta
       if (diag.startup) state.push('<span class="badge warn">partida</span>');
       if (diag.ahrsFlags & AHRS_FLAG_OVERRANGE) state.push('<span class="badge warn">saturação</span>');
       if (diag.accelIgnored) state.push('<span class="badge warn">accel ignorado</span>');
-      if (diag.magIgnored) state.push('<span class="badge warn">mag ignorado</span>');
-      if (diag.magCapturing) state.push('<span class="badge">capturando mag</span>');
       $('d-ahrs').innerHTML = state.length ? state.join(' ') : '<span class="ok">estável</span>';
-      $('d-err').textContent = `${diag.accelErrDeg}° / ${diag.magErrDeg}°`;
+      $('d-err').textContent = `${diag.accelErrDeg}°`;
       const bias = diag.gyroBiasDps.map((v) => v.toFixed(2)).join(' / ');
       $('d-bias').innerHTML = `${bias} °/s` +
         (diag.biasAdapting ? ' <span class="badge">aprendendo</span>'
           : diag.biasAtRest ? ' <span class="badge">em repouso</span>' : '');
-      $('d-magcal').innerHTML = diag.magCalibrated
-        ? '<span class="ok">calibrado</span>'
-        : '<span class="badge warn">não calibrado</span>';
       // The granted interval sets the notify ceiling; show the headroom next to it so
       // a disappointing rate has a visible cause instead of looking like a firmware bug.
       if (diag.connItvlMs > 0) {

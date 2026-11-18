@@ -34,8 +34,8 @@ The full netlist cross-check against the KiCAD board design lives in
 ## How it works (short version)
 
 - **Orientation.** The selected IMU (ICM-20948 or MPU-9250) is read at the configured rate (10–200 Hz) and fused
-  on the ESP32 with a **Madgwick filter** (6-axis relative mode by default; 9-axis
-  with the magnetometer as an option). A gyro-bias tracker adapts only while the
+  on the ESP32 with a **Madgwick filter** (6-axis relative mode; the firmware still has a 9-axis
+  magnetometer mode, but the config-app no longer offers it). A gyro-bias tracker adapts only while the
   ball rests, so a stationary globe stays stationary. Mounting calibration and a
   "zero orientation" command align the physical ball with the virtual one.
 - **Blow and breath detection.** The mics are band-passed (configurable HP/LP biquads,

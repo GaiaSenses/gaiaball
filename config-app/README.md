@@ -43,9 +43,11 @@ A chave **Modo ajuste ⟷ Modo palco** fica no topo.
 
 O painel **Configuração** tem duas abas. **Básico** traz o que se muda para operar o globo
 (detector de sopro, navegação, CO₂, nome e PIN). **Avançado** traz o ajuste da cadeia de
-sinais e, abaixo dos campos, a **calibração do magnetômetro** e as **Métricas** (taxa,
+sinais e, abaixo dos campos, as **Métricas** (taxa,
 jitter, perda, idade da amostra, navegação e o diagnóstico do firmware): são ferramentas de
 bancada, que não precisam ficar à vista de quem opera.
+
+O app só oferece o modo **Quat6** (giroscópio + acelerômetro). O magnetômetro (Quat9) e a calibração dele saíram da interface; o firmware continua com o código. Se a bola vier gravada em Quat9, o painel avisa e o próximo **Aplicar** a devolve ao Quat6 (e reinicia a navegação do globo).
 
 ### Interruptores liga/desliga
 
@@ -145,7 +147,7 @@ A bola calcula sozinha para onde o globo virtual aponta e envia o resultado num 
   - Joystick: velocidade máxima (1–720 °/s), ângulo da velocidade máxima (5–90°) e curva de resposta p (1,0–4,0; 3,0 = cúbica).
   - Taxa de envio (10–200 Hz) e ponto de referência (lat, lon; padrão Campinas/SP). O ponto de referência não entra nos presets.
   - Limiares de partida/parada do Espelho (°/s) e do Joystick (°/s, uma casa decimal) e o tempo para considerar parado (ms). A parada precisa ser menor que a partida, nos dois pares; senão o firmware rejeita a escrita inteira. No Espelho, a velocidade é medida numa janela de ~100 ms (o tremor da mão não conta como movimento) e, parado, o globo volta a "em movimento" depois de um giro de 3°, mesmo lento.
-  - Os parâmetros do joystick e os limiares valem na hora e não movem o globo. Só trocar o modo, trocar o ponto de referência ou mudar a referência do IMU (**Zerar orientação**, **Calibrar montagem**, Quat6 ↔ Quat9) leva o globo de volta ao ponto de referência. Com uma âncora ativa (comando `0x17`, que o site do GaiaSenses envia ao conectar), o globo volta ao ponto da âncora, não ao de referência; trocar o ponto de referência descarta a âncora.
+  - Os parâmetros do joystick e os limiares valem na hora e não movem o globo. Só trocar o modo, trocar o ponto de referência ou mudar a referência do IMU (**Zerar orientação**, **Calibrar montagem**) leva o globo de volta ao ponto de referência. Com uma âncora ativa (comando `0x17`, que o site do GaiaSenses envia ao conectar), o globo volta ao ponto da âncora, não ao de referência; trocar o ponto de referência descarta a âncora.
 - **Referência e Zerar orientação** (painel Conexão): ligue a bola apoiada numa superfície plana e parada — a postura em que ela liga é a referência, sem “frente” marcada (o movimento é relativo a ela). O zero **não é gravado** e não precisa ser: ao religar, a referência volta a ser a postura do boot. **Zerar orientação** só troca a referência sem religar (bola parada na superfície). O lado da bola voltado para o público no instante da referência define como os gestos aparecem na tela.
 - **Gatilho de CO₂** (Configuração › CO₂): nível e histerese do bit de gatilho do pacote de CO₂; Métricas (Configuração › Avançado) mostra o bit na linha CO₂ ("gatilho: ligado/desligado"). O sopro só liga o gatilho se o pico virtual (`0x23`, padrão 2100 ppm) ficar acima do nível.
 - **Firmware antigo:** **Aplicar** só envia os registradores que a bola informou na leitura (o PIN sempre vai). Um firmware sem navegação recusaria a escrita inteira por causa de um registrador desconhecido; os que ficaram de fora são listados na mensagem.
@@ -172,15 +174,15 @@ npm run preview    # serve dist/ localmente (ou sirva dist/ com qualquer servido
 npm test           # testes (vitest)
 ```
 
-**Modo demo:** abra `http://localhost:5173/?demo=1` para ver a visualização 3D, as métricas e o painel de sensores com dados sintéticos, sem dispositivo.
+**Modo demo:** abra `http://localhost:5173/?demo=1` para ver a visualização 3D, as métricas e o painel de sensores com dados sintéticos, sem dispositivo. O demo também simula a leitura da configuração (uma bola falsa com os registradores de fábrica, que guarda o que você aplica), então dá para experimentar a faixa de status, as marcas "na bola: …" e o **Aplicar (n)**.
 
 ## Roteiro de bancada
 
 1. **Conectar** (painel Conexão) e escolher o Gaiaball na lista do navegador.
 2. **Desbloquear** com o PIN (padrão de fábrica: `1234`). O firmware não confirma o PIN; sem ele, comandos e escritas sensíveis são ignorados.
-3. **Ler do dispositivo** (painel Configuração) para preencher o formulário.
+3. Ao conectar, o app **lê sozinho a configuração da bola** (até 3 tentativas) e preenche o formulário; a faixa no topo do painel Configuração mostra "Lendo…", "Valores lidos da bola às HH:MM:SS · IMU em uso: …" ou, se falhar, "Tentar de novo". **Ler do dispositivo** lê de novo e descarta o que você editou. Um campo editado (ou vindo de um preset) que difere da bola mostra "na bola: …" embaixo, e o botão vira **Aplicar (n)**.
 4. Em **superfície plana**, gire a bola e acompanhe **Taxa**, **Perda** e **Jitter** em Configuração › Avançado › Métricas.
-5. Acompanhe a vista 3D — ela mostra o quaternion tratado exatamente como chega da bola — e ajuste Modo e Taxa (Hz). Para suavizar o movimento, use **Suavização do quaternion (slerp)** no painel Configuração: como a vista reflete o fluxo real, o efeito do slerp (e o atraso que ele adiciona) aparece nela ao aplicar.
+5. Acompanhe a vista 3D — ela mostra o quaternion tratado exatamente como chega da bola — e ajuste a Taxa (Hz). Para suavizar o movimento, use **Suavização do quaternion (slerp)** no painel Configuração: como a vista reflete o fluxo real, o efeito do slerp (e o atraso que ele adiciona) aparece nela ao aplicar.
 6. **Aplicar**: só os campos alterados são enviados; em seguida o app relê o dispositivo para verificar. Se algum valor voltar ao anterior, aparece o aviso "alguns valores não foram aceitos (desbloqueou com o PIN?)".
-7. **Salvar no dispositivo** (painel Conexão) para persistir. "Aplicar" vale somente até reiniciar.
+7. Se tudo foi aceito, o **Aplicar** já grava na NVS (comando `0x11`), como descrito em "Persistência": a configuração sobrevive a desligar/reiniciar a bola.
 8. **Presets**: salve a configuração atual com um nome, carregue (só preenche o formulário; clique em Aplicar para enviar), exclua, exporte/importe JSON. O PIN nunca entra nos presets nem é lido do dispositivo.
