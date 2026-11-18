@@ -68,8 +68,9 @@ constexpr Reg kRegs[] = {
 // statusLedPin; removed with the legacy LED command); 0x15 (was thresholdFixed,
 // replaced by the dB-based breath threshold 0x2B); 0x24 (was virtualDelayMs: the
 // virtual CO2 pulse now starts on the breath itself).
-// 0x35 (imuDetected) is read-only status appended by BleService::onConfigRead; it is
-// deliberately NOT a register here, so a client write of it is an unknown id.
+// 0x35 (imuDetected) and 0x37 (unlockState) are read-only status put in every config read by
+// BleService::onConfigRead; deliberately NOT registers here, so a client write of either is an
+// unknown id.
 
 const Reg *findReg(uint8_t id) {
   for (const Reg &r : kRegs)

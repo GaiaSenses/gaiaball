@@ -39,7 +39,8 @@ enum class GateState : uint8_t {
 // length) counts as a failure. After kMaxFailures consecutive failures, unlock()
 // refuses without comparing until kLockoutMs have elapsed since the last failure;
 // after that one attempt is compared, and another failure re-arms the lockout.
-// Success and onDisconnect reset the streak. Times are wrap-safe uint32 ms.
+// Success and onDisconnect reset the streak; a wrong PIN also re-locks a connection that was
+// unlocked. Times are wrap-safe uint32 ms.
 class CommandGate {
  public:
   static constexpr uint8_t kMaxConns = 2;

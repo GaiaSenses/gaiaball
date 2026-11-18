@@ -128,6 +128,17 @@ describe('lockout badge', () => {
     expect(badge().textContent).toBe('Bloqueada');
   });
 
+  it('another refused PIN during the lockout does not extend it (the ball counts from the last wrong PIN it compared)', async () => {
+    vi.useFakeTimers();
+    client.result = 'locked-out';
+    q<HTMLInputElement>('[data-el=pin]').value = '9999';
+    q('[data-act=unlock]').click();
+    await vi.advanceTimersByTimeAsync(20_000);
+    q('[data-act=unlock]').click(); // refused without comparing: the window does not move
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(badge().textContent).toBe('Bloqueada');
+  });
+
   it('a later answer wins over the pending switch', async () => {
     vi.useFakeTimers();
     client.result = 'locked-out';

@@ -198,7 +198,8 @@ describe('GaiaballClient.connect retries a link that drops during setup (Windows
       disconnect: gatt.disconnect,
       getPrimaryService: async () => {
         const e = failures.shift();
-        if (e) { gatt.connected = false; throw e; }
+        // Like Chrome: the link drop is announced on the device, then the pending call fails.
+        if (e) { gatt.connected = false; device.dispatchEvent(new Event('gattserverdisconnected')); throw e; }
         return service;
       },
     };
@@ -242,6 +243,24 @@ describe('GaiaballClient.connect retries a link that drops during setup (Windows
     const c = new GaiaballClient();
     await expect(c.connect()).rejects.toThrow('No Services matching');
     expect(ball.connects()).toBe(1);
+  });
+
+  it('a listener left by an earlier connection does not fire during the next setup (same device object)', async () => {
+    vi.useFakeTimers();
+    const failures: Error[] = [];
+    const ball = fakeBall(failures);
+    const c = new GaiaballClient();
+    await c.connect();
+    ball.device.gatt.connected = false;
+    ball.device.dispatchEvent(new Event('gattserverdisconnected')); // the ball rebooted: unexpected drop
+    const statuses: boolean[] = [];
+    c.addEventListener('status', (e) => statuses.push((e as CustomEvent<{ connected: boolean }>).detail.connected));
+    failures.push(netErr()); // the next Conectar lands on a dying link once
+    const p = c.connect();
+    await vi.runAllTimersAsync();
+    await p;
+    expect(statuses).toEqual([true]);
+    expect(c.connected).toBe(true);
   });
 
   it('a link that drops after setup is still reported as a disconnect', async () => {

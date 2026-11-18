@@ -579,23 +579,24 @@ void test_serialized_config_leaves_room_for_status_record(void) {
 
 // --- unlockState (0x37): read-only, per reading connection, outside the codec table ---
 
-void test_status_records_append_imu_then_unlock_state(void) {
-  uint8_t buf[16] = {0x02, 1, 50};
-  const size_t n = appendStatusRecords(buf, 3, sizeof(buf), 0x0D, 1);
-  const uint8_t want[] = {0x02, 1, 50, 0x35, 1, 0x0D, 0x37, 1, 1};
-  TEST_ASSERT_EQUAL_UINT32(sizeof(want), n);
+void test_status_records_come_first(void) {
+  // First, so they always sit in the first chunk of a long read: NimBLE calls onRead only for
+  // that chunk and serves the blob reads from one shared value, so with two centrals a record
+  // in a later chunk could carry the OTHER connection's unlock state.
+  uint8_t buf[16];
+  TEST_ASSERT_EQUAL_UINT32(kStatusRecordsLen, writeStatusRecords(buf, sizeof(buf), 0x0D, 1));
+  const uint8_t want[] = {0x35, 1, 0x0D, 0x37, 1, 1};
+  TEST_ASSERT_EQUAL_UINT32(sizeof(want), kStatusRecordsLen);
   TEST_ASSERT_EQUAL_UINT8_ARRAY(want, buf, sizeof(want));
   TEST_ASSERT_EQUAL_UINT8(0x35, kTlvImuDetected);
   TEST_ASSERT_EQUAL_UINT8(0x37, kTlvUnlockState);
+  TEST_ASSERT_TRUE(kStatusRecordsLen <= 20);  // inside the first chunk even at the minimum MTU (23 - 3)
 }
 
-void test_status_records_skip_what_does_not_fit(void) {
-  uint8_t buf[9] = {0x02, 1, 50};
-  TEST_ASSERT_EQUAL_UINT32(6, appendStatusRecords(buf, 3, 8, 0x05, 2));  // only 0x35 fits
-  TEST_ASSERT_EQUAL_UINT8(0x35, buf[3]);
-  TEST_ASSERT_EQUAL_UINT32(3, appendStatusRecords(buf, 3, 5, 0x05, 2));  // neither fits
-  TEST_ASSERT_EQUAL_UINT32(9, appendStatusRecords(buf, 3, 9, 0x05, 2));  // exactly both
-  TEST_ASSERT_EQUAL_UINT8(2, buf[8]);
+void test_status_records_need_room_for_both(void) {
+  uint8_t buf[8] = {0};
+  TEST_ASSERT_EQUAL_UINT32(0, writeStatusRecords(buf, 5, 0x05, 2));
+  TEST_ASSERT_EQUAL_UINT8(0, buf[0]);
 }
 
 void test_0x37_is_rejected_on_write(void) {
@@ -1078,8 +1079,8 @@ int main(int, char **) {
   RUN_TEST(test_0x35_is_rejected_on_write);
   RUN_TEST(test_0x35_never_appears_in_serialized_config);
   RUN_TEST(test_serialized_config_leaves_room_for_status_record);
-  RUN_TEST(test_status_records_append_imu_then_unlock_state);
-  RUN_TEST(test_status_records_skip_what_does_not_fit);
+  RUN_TEST(test_status_records_come_first);
+  RUN_TEST(test_status_records_need_room_for_both);
   RUN_TEST(test_0x37_is_rejected_on_write);
   RUN_TEST(test_0x37_never_appears_in_serialized_config);
   RUN_TEST(test_default_config_has_no_imu_selected);

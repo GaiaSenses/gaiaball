@@ -18,7 +18,7 @@ export function demoConfigRegs(): Map<number, DataView> {
   const body = encodeTlv(toWireRegs(regs));
   const out = new Uint8Array(body.length + 6);
   out.set(body);
-  // Not writable registers, so they are appended by hand.
+  // Not writable registers, so they are added by hand (the ball sends them first; order is irrelevant here).
   out.set([TLV.imuDetected, 1, 0x01 | 0x04 | 0x08, TLV.unlockState, 1, 1], body.length);
   return decodeTlv(asView(out));
 }

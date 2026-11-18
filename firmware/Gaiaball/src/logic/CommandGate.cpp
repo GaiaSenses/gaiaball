@@ -46,6 +46,8 @@ bool CommandGate::unlock(uint8_t connId, const uint8_t *pin, size_t len, uint32_
     ok = diff == 0;
   }
   if (!ok) {
+    // A wrong PIN also re-locks an unlocked connection: whoever checks a PIN must learn it is wrong.
+    unlocked_[connId] = false;
     if (failures_[connId] < 0xFF) failures_[connId]++;
     lastFailMs_[connId] = nowMs;
     return false;

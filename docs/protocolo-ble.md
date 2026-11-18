@@ -859,8 +859,8 @@ ASCII. Com o PIN de fábrica `1234`:
 - A escrita do `0x20` não tem resposta. Para **confirmar**, leia a característica 4 logo
   depois: o registro somente-leitura `0x37` (`unlockState`) diz como está **a conexão que
   leu** — 0 travada (sem PIN ou com PIN errado), 1 destravada, 2 bloqueada por erros (os
-  30 s abaixo). Firmware anterior ao `0x37` não manda esse registro e não tem como
-  confirmar.
+  30 s abaixo). Um PIN errado também trava de novo uma conexão que estava destravada.
+  Firmware anterior ao `0x37` não manda esse registro e não tem como confirmar.
 - Errar **5 vezes seguidas** bloqueia os pedidos daquela conexão por **30 s** contados da
   última falha; durante o bloqueio, até o PIN certo é recusado. Passados os 30 s, a contagem
   de falhas **continua** (5 ou mais): a próxima tentativa é comparada, e se errar começa outro
@@ -886,7 +886,9 @@ Toda a configuração da bola é uma lista de **registradores**. Cada registrado
 Uma leitura ou escrita é simplesmente vários registros colados um atrás do outro.
 
 **Ler** (sem PIN) devolve **todos** os registradores, mais os registros somente-leitura
-`0x35` e `0x37`: cerca de 252 bytes com o nome de fábrica. Isso é mais que um MTU, mas o Web
+`0x35` e `0x37`, que vêm **primeiro**: cerca de 252 bytes com o nome de fábrica (procure
+cada registro pelo id, nunca pela posição; firmware anterior ao `0x37` mandava o `0x35` no
+fim). Isso é mais que um MTU, mas o Web
 Bluetooth, o bleak e o NimBLE buscam a leitura longa em pedaços sozinhos. Um trecho da
 leitura de fábrica:
 
@@ -1070,7 +1072,7 @@ sequenceDiagram
   C->>B: write …0002 com 20 31 32 33 34 (PIN)
   C->>B: write …0004 com registros TLV
   C->>B: read …0004
-  B-->>C: configuração completa, cerca de 242 bytes
+  B-->>C: configuração completa, cerca de 252 bytes
   C->>B: write …0002 com 11 (salvar)
 ```
 

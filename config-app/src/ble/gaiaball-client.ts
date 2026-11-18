@@ -146,8 +146,10 @@ export class GaiaballClient extends EventTarget {
    * Chrome on Windows fails about 0.6% of reads and writes with "GATT operation failed for unknown
    * reason." while the ball's notifications flow (measured: 4 of 642 with the streams on, 0 of 654
    * without), and the link stays up: the same operation succeeds right after. Every operation that
-   * goes through gatt() can be repeated safely (PIN, config read/write, notifications on/off, the
-   * bench commands), so a transient failure is retried before the caller hears of it.
+   * goes through gatt() can be repeated (config read/write, notifications on/off, the bench
+   * commands, the PIN), so a transient failure is retried before the caller hears of it. The one
+   * cost: if the failed write had in fact reached the ball, a WRONG PIN counts twice toward the
+   * 5-failure lockout.
    */
   private async withRetry<T>(op: () => Promise<T>): Promise<T> {
     for (let attempt = 1; ; attempt++) {
@@ -168,6 +170,9 @@ export class GaiaballClient extends EventTarget {
       );
     }
     const device = await bt.requestDevice({ filters: [{ services: [SERVICE_UUID] }] });
+    // Chrome hands back the same device object every time, and a link that dropped on its own
+    // (reboot, range) left the listener on it: it must not fire during this setup.
+    device.removeEventListener('gattserverdisconnected', this.onDisconnected);
     this.device = device;
     try {
       const gatt = device.gatt;

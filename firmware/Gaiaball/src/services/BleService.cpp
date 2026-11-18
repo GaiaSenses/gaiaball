@@ -334,14 +334,14 @@ void BleService::onConfigWrite(uint16_t connHandle, const uint8_t *data, size_t 
 
 void BleService::onConfigRead(NimBLECharacteristic *chr, uint16_t connHandle) {
   uint8_t buf[kConfigReadBuf];
-  size_t n = store_->serializeTlv(buf, sizeof(buf));
-  // Read-only status outside the codec table: imuDetected (0x35) and the reading
-  // connection's unlockState (0x37), so a client can confirm its PIN. Host task, like
-  // every gate access, so no lock is needed.
+  // Read-only status outside the codec table, FIRST (see StatusRecords.h): imuDetected (0x35)
+  // and the reading connection's unlockState (0x37), so a client can confirm its PIN. Host
+  // task, like every gate access, so no lock is needed.
   // kNoHandle must not go through slotOf(): it matches the FREE slots.
   const uint8_t slot = connHandle == kNoHandle ? kNoSlot : slotOf(connHandle);
   const GateState lock = slot == kNoSlot ? GateState::Locked : gate_->state(slot, millis());
-  n = appendStatusRecords(buf, n, sizeof(buf), imuStatus_.load(), static_cast<uint8_t>(lock));
+  size_t n = writeStatusRecords(buf, sizeof(buf), imuStatus_.load(), static_cast<uint8_t>(lock));
+  n += store_->serializeTlv(buf + n, sizeof(buf) - n);
   chr->setValue(buf, n);
 }
 

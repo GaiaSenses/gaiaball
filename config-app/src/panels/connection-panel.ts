@@ -41,12 +41,15 @@ export function mountConnectionPanel(root: HTMLElement, client: GaiaballClient):
   /** What the ball says about this connection (TLV 0x37); hidden when it cannot tell or the link is down. */
   let lockoutEnd: ReturnType<typeof setTimeout> | undefined;
   const showLock = (state: LockState): void => {
+    // The ball's window runs from the last wrong PIN it COMPARED; the ones it refuses during the
+    // lockout do not move it, so an answer that finds the window already open keeps its end.
+    if (state === 'locked-out' && lockoutEnd !== undefined) return;
     clearTimeout(lockoutEnd);
+    lockoutEnd = undefined;
     lock.textContent = lockBadgeText(state);
     lock.dataset.state = state;
     lock.hidden = state === 'unknown';
-    // The firmware's window runs from the last wrong PIN, sent just before this answer.
-    if (state === 'locked-out') lockoutEnd = setTimeout(() => showLock('locked'), LOCKOUT_MS);
+    if (state === 'locked-out') lockoutEnd = setTimeout(() => { lockoutEnd = undefined; showLock('locked'); }, LOCKOUT_MS);
   };
 
   for (const c of COMMANDS) {

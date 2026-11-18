@@ -245,6 +245,18 @@ void test_state_lockout_wraparound() {
   TEST_ASSERT_EQUAL_UINT8(2, st(g, 0, t + 0x200u));  // wrapped, 512 ms later: still out
 }
 
+void test_wrong_pin_relocks_an_unlocked_connection() {
+  // Someone checking a new PIN on a connection that is already unlocked must learn it is wrong.
+  CommandGate g = makeGate();
+  const uint8_t bad[4] = {'9', '9', '9', '9'};
+  TEST_ASSERT_TRUE(g.unlock(0, GOOD, 4, 0));
+  TEST_ASSERT_FALSE(g.unlock(0, bad, 4, 10));
+  TEST_ASSERT_FALSE(g.isUnlocked(0));
+  TEST_ASSERT_EQUAL_UINT8(0, st(g, 0, 10));
+  TEST_ASSERT_TRUE(g.unlock(0, GOOD, 4, 20));
+  TEST_ASSERT_EQUAL_UINT8(1, st(g, 0, 20));
+}
+
 void test_state_out_of_range_conn_is_locked() {
   CommandGate g = makeGate();
   TEST_ASSERT_EQUAL_UINT8(0, st(g, 2, 0));
@@ -278,5 +290,6 @@ int main() {
   RUN_TEST(test_state_wrong_pin_is_locked_until_the_fifth);
   RUN_TEST(test_state_lockout_wraparound);
   RUN_TEST(test_state_out_of_range_conn_is_locked);
+  RUN_TEST(test_wrong_pin_relocks_an_unlocked_connection);
   return UNITY_END();
 }
