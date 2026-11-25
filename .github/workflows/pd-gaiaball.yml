@@ -16,6 +16,14 @@ name: pd-gaiaball
 #     paths: ['pd-gaiaball/**', '.github/workflows/pd-gaiaball.yml']
 on:
   workflow_dispatch:
+    inputs:
+      release:
+        description: >-
+          Criar uma Release (rascunho) com os pacotes de Windows, macOS e Linux. A partir de
+          uma tag vX.Y.Z, a Release usa essa tag; a partir de uma branch, é um rascunho de
+          teste (teste-pd-gaiaball-N). Ver pd-gaiaball/PUBLICAR-NO-GITHUB.md.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -112,6 +120,15 @@ jobs:
           ls -l "gaiaball.$EXT"
           file "gaiaball.$EXT" || true
 
+      - name: Ad-hoc signature (macOS)
+        # Apple Silicon only loads signed code; an ad-hoc signature is enough for Pd.
+        if: matrix.name == 'macos'
+        working-directory: pd-gaiaball
+        run: |
+          codesign --force --sign - "gaiaball.$EXT"
+          codesign --verify --verbose "gaiaball.$EXT"
+          lipo -archs "gaiaball.$EXT"
+
       - uses: actions/upload-artifact@v7
         with:
           name: gaiaball-bin-${{ matrix.name }}-${{ matrix.floatsize }}
@@ -141,6 +158,8 @@ jobs:
           mkdir -p gaiaball/src gaiaball/pd-lib-builder
           cp pd-gaiaball/src/*.c pd-gaiaball/src/*.h gaiaball/src/
           cp pd-gaiaball/pd-lib-builder/Makefile.pdlibbuilder gaiaball/pd-lib-builder/
+          # Pd 0.51-0.53 on 64-bit ARM Linux only knows the legacy name.
+          cp gaiaball/gaiaball.linux-arm64-32.so gaiaball/gaiaball.l_arm64
           ls -lR gaiaball
 
       - name: Package with Deken
@@ -162,3 +181,74 @@ jobs:
           name: gaiaball-deken
           path: dek
           if-no-files-found: error
+
+  pacotes:
+    name: pacotes (Windows, macOS, Linux)
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: gaiaball-bin-*
+          merge-multiple: true
+          path: bin
+
+      - name: Install pandoc
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq pandoc zip
+
+      - name: Build the three packages
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = tag ]; then VERSION="${REF_NAME#v}"; REF="$REF_NAME"; else VERSION=0.0.0-dev; REF="$GITHUB_SHA"; fi
+          pd-gaiaball/pacotes/montar.sh "$VERSION" bin pacotes "$REF"
+          ls -l pacotes
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: gaiaball-pacotes
+          path: pacotes
+          if-no-files-found: error
+
+  release:
+    name: release (rascunho)
+    needs: pacotes
+    if: inputs.release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: gaiaball-pacotes
+          path: pacotes
+
+      - name: Create or update the draft Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          if [ "$REF_TYPE" = tag ]; then
+            case "$REF_NAME" in v[0-9]*) ;; *) echo "a tag precisa ser vX.Y.Z" >&2; exit 1;; esac
+            TAG="$REF_NAME"; VERSION="${REF_NAME#v}"; TITLE="[gaiaball] $VERSION para Pure Data"
+          else
+            TAG="teste-pd-gaiaball-$RUN_NUMBER"; VERSION=0.0.0-dev; TITLE="TESTE, nao publicar: [gaiaball] $VERSION"
+          fi
+          PRE=(); case "$VERSION" in 0.*|*-*) PRE=(--prerelease);; esac
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != true ]; then
+              echo "A Release $TAG ja foi publicada: publique uma versao nova." >&2; exit 1
+            fi
+            gh release upload "$TAG" pacotes/*.zip --clobber
+            gh release edit "$TAG" --notes-file pacotes/notas-da-versao.md
+          else
+            gh release create "$TAG" pacotes/*.zip --draft "${PRE[@]}" --target "$GITHUB_SHA" \
+              --title "$TITLE" --notes-file pacotes/notas-da-versao.md
+          fi
+          gh release view "$TAG" --json url,isDraft,assets --jq '{url, isDraft, assets: [.assets[].name]}'

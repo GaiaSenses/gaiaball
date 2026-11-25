@@ -1,0 +1,124 @@
+/* Estilo dos HTML dos pacotes (LEIA-ME.html e TUTORIAL.html). Embutido em cada arquivo
+   pelo pandoc (--embed-resources): os HTML abrem sem internet. */
+
+:root {
+  color-scheme: light dark;
+  --fundo: #fbfaf7;
+  --texto: #1f2328;
+  --suave: #57606a;
+  --linha: #d8dee4;
+  --caixa: #f1efe9;
+  --destaque: #0b6e4f;
+  --link: #0a58ca;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fundo: #15181c;
+    --texto: #e6e8eb;
+    --suave: #9aa4ae;
+    --linha: #343b43;
+    --caixa: #1f2429;
+    --destaque: #4fc79a;
+    --link: #7ab4ff;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { background: var(--fundo); }
+
+body {
+  margin: 0 auto;
+  max-width: 50rem;
+  padding: 2.5rem 1.25rem 4rem;
+  color: var(--texto);
+  background: var(--fundo);
+  font: 1.0625rem/1.6 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+h1, h2, h3, h4 { line-height: 1.25; margin: 2.2em 0 0.6em; }
+h1 { font-size: 2rem; margin-top: 0; letter-spacing: -0.01em; }
+h2 {
+  font-size: 1.45rem;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--linha);
+}
+h3 { font-size: 1.15rem; }
+h4 { font-size: 1rem; }
+
+/* Um respiro acima do título quando um link pula para ele. */
+h2[id], h3[id], h4[id] { scroll-margin-top: 1rem; }
+
+p, ul, ol, table, pre, blockquote { margin: 0 0 1em; }
+li { margin: 0.25em 0; }
+li > p { margin: 0.4em 0; }
+
+a { color: var(--link); text-underline-offset: 0.15em; }
+a:hover { text-decoration-thickness: 2px; }
+
+strong { font-weight: 650; }
+
+code, pre {
+  font-family: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  font-size: 0.9em;
+}
+
+code {
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: var(--caixa);
+  overflow-wrap: anywhere;
+}
+
+pre {
+  padding: 0.9em 1em;
+  border: 1px solid var(--linha);
+  border-radius: 8px;
+  background: var(--caixa);
+  overflow-x: auto;
+  line-height: 1.35;
+}
+
+/* white-space: o estilo padrão do pandoc quebra as linhas do código; os desenhos em texto
+   precisam das linhas inteiras (rolam para o lado se não couberem). */
+pre code { padding: 0; background: none; overflow-wrap: normal; white-space: pre; font-size: 1em; }
+
+/* Nomes de arquivo e de dado numa tabela não se partem no meio. */
+td code { white-space: nowrap; overflow-wrap: normal; }
+
+blockquote {
+  padding: 0.6em 1em;
+  border-left: 4px solid var(--destaque);
+  background: var(--caixa);
+  border-radius: 0 8px 8px 0;
+}
+blockquote > :last-child { margin-bottom: 0; }
+
+table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.95em;
+}
+
+th, td {
+  padding: 0.45em 0.75em;
+  border: 1px solid var(--linha);
+  text-align: left;
+  vertical-align: top;
+}
+
+th { background: var(--caixa); font-weight: 650; }
+
+hr { border: 0; border-top: 1px solid var(--linha); margin: 2.5em 0; }
+
+img { max-width: 100%; }
+
+@media print {
+  body { max-width: none; padding: 0; font-size: 11pt; }
+  a { color: inherit; }
+  pre, table { break-inside: avoid; }
+}
