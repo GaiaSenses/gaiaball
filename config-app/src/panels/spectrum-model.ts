@@ -1,5 +1,6 @@
 // Pure helpers for the audio spectrum chart (no DOM, no Plotly): the frequency-axis scale the
-// person picked, and the stretches of the spectrum the band-pass removes.
+// person picked and the axes of the chart. The band-pass response itself is in metrics/filter-response.ts.
+import type { BandSpec } from '../metrics/filter-response.ts';
 
 export type SpectrumScale = 'linear' | 'log';
 export const SPECTRUM_SCALE_KEY = 'gaiaball-spectrum-scale';
@@ -32,18 +33,11 @@ export function saveSpectrumScale(storage: Pick<Storage, 'setItem'> | null, s: S
   }
 }
 
-export interface Band { enabled: boolean; hpHz: number; lpHz: number }
-export interface ShadeSpan { x0: number; x1: number }
+/** Left axis (spectrum, dBFS) and right axis (filter gain, dB): same 120 dB span, ticks every 20 dB. */
+export const SPEC_DBFS_RANGE: [number, number] = [-120, 0];
+export const SPEC_GAIN_RANGE: [number, number] = [-100, 20];
 
-/**
- * Stretches of [lo, hi] outside the pass band: below the high-pass and above the low-pass.
- * Nothing when the band-pass is off. A band with LP <= HP passes nothing, so it shades all.
- */
-export function bandShading(band: Band, [lo, hi]: readonly [number, number]): ShadeSpan[] {
-  if (!band.enabled) return [];
-  if (band.lpHz <= band.hpHz) return [{ x0: lo, x1: hi }];
-  const spans: ShadeSpan[] = [];
-  if (band.hpHz > lo) spans.push({ x0: lo, x1: Math.min(band.hpHz, hi) });
-  if (band.lpHz < hi) spans.push({ x0: Math.max(band.lpHz, lo), x1: hi });
-  return spans;
+/** One string per distinct band, for caches and redraw keys. */
+export function bandKey(b: BandSpec): string {
+  return `${b.enabled}|${b.hp.hz}|${b.hp.qX100}|${b.hp.slopeDbOct}|${b.lp.hz}|${b.lp.qX100}|${b.lp.slopeDbOct}`;
 }

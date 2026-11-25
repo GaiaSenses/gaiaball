@@ -276,3 +276,35 @@ describe('Sensibilidade: one box, the knob shows inside it', () => {
     expect(potBox().disabled).toBe(true);
   });
 });
+
+describe('band-pass controls (slope, Q) and the spectrum band', () => {
+  const mountWithBand = () => {
+    document.body.innerHTML = '<div id="root"></div>';
+    root = document.getElementById('root')!;
+    const { band } = mountConfigPanel(root, client as unknown as GaiaballClient, store);
+    client.status(true);
+    client.config();
+    return band;
+  };
+
+  it('a slope changed and put back is not a pending band', () => {
+    const band = mountWithBand();
+    expect(band.current()).toMatchObject({ hpSlopeDbOct: 12, hpQX100: 71, edited: false });
+    type(TLV.audioHpSlopeDbOct, '24');
+    expect(band.current()).toMatchObject({ hpSlopeDbOct: 24, edited: true });
+    type(TLV.audioHpSlopeDbOct, '12');
+    expect(band.current().edited).toBe(false);
+    expect(applyLabel()).toBe('Aplicar');
+  });
+
+  it('6 dB/oct hides the Q; an emptied hidden Q does not block Aplicar', async () => {
+    mountWithBand();
+    const qRow = (): HTMLElement => input(TLV.audioLpQX100).closest('.cfg-field') as HTMLElement;
+    type(TLV.audioLpQX100, '');
+    type(TLV.audioLpSlopeDbOct, '6');
+    expect(qRow().closest('[hidden]')).not.toBeNull();
+    q('[data-act=apply]').click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(root.textContent).not.toMatch(/informe um número/);
+  });
+});

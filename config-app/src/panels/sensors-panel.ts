@@ -48,7 +48,10 @@ import {
   type Co2Levels,
   type WindowS,
 } from './chart-model.ts';
-import { bandShading, loadSpectrumScale, saveSpectrumScale, specXRange, type SpectrumScale } from './spectrum-model.ts';
+import { SPEC_DBFS_RANGE, SPEC_GAIN_RANGE, bandKey, loadSpectrumScale, saveSpectrumScale, specXRange, type SpectrumScale } from './spectrum-model.ts';
+import {
+  DEFAULT_SLOPE_DB_OCT, bandGainDb, responseCurve, slopeLabel, type BandSpec, type CutSpec,
+} from '../metrics/filter-response.ts';
 
 const TICK_MS = 100; // chart sampling period (10 Hz)
 const FFT_SIZE = 512; // 256 ms window at 2 kHz -> 3.9 Hz bins
@@ -72,6 +75,10 @@ interface ChartPalette {
   peak: string;
   rms: string;
   spectrum: string;
+  /** The raw spectrum times the band-pass response (what feeds the detector). */
+  filtered: string;
+  /** The band-pass response curve (right-hand axis). */
+  response: string;
   grid: string;
   /** Light outline around each chart's plot area, a step stronger than the grid. */
   frame: string;
@@ -82,13 +89,13 @@ const PALETTES: Record<'dark' | 'light', ChartPalette> = {
     euler: ['#60a5fa', '#2563eb', '#bfdbfe'],
     acc: ['#fb923c', '#ea580c', '#fed7aa'],
     micL: '#4ade80', micR: '#2dd4bf', co2: '#c084fc', pot: '#f472b6', threshold: '#9ca3af', breath: '#38bdf8',
-    peak: '#f87171', rms: '#fbbf24', spectrum: '#eac23d', grid: '#27333f', frame: '#3e4c59', font: '#8da0ab',
+    peak: '#f87171', rms: '#fbbf24', spectrum: '#eac23d', filtered: '#38bdf8', response: '#f1f5f9', grid: '#27333f', frame: '#3e4c59', font: '#8da0ab',
   },
   light: {
     euler: ['#2563eb', '#1e3a8a', '#60a5fa'],
     acc: ['#ea580c', '#9a3412', '#fb923c'],
     micL: '#15803d', micR: '#0f766e', co2: '#7c3aed', pot: '#be185d', threshold: '#6b7280', breath: '#0369a1',
-    peak: '#dc2626', rms: '#b45309', spectrum: '#9a6a10', grid: '#d3dcd8', frame: '#b3c0bb', font: '#5a6c74',
+    peak: '#dc2626', rms: '#b45309', spectrum: '#9a6a10', filtered: '#0369a1', response: '#111827', grid: '#d3dcd8', frame: '#b3c0bb', font: '#5a6c74',
   },
 };
 const pal = (): ChartPalette => PALETTES[resolvedTheme()];
@@ -152,8 +159,8 @@ const axesCard = (key: string, title: string, axes: [string, string][], unit: { 
         </dl>
         <small>${note}</small>
       </div>`;
-/** Light grey over the parts of the spectrum the band-pass removes. */
-const SHADE: Record<'dark' | 'light', string> = { dark: 'rgba(148, 163, 184, 0.16)', light: 'rgba(100, 116, 139, 0.14)' };
+/** Behind the spectrum's text, so a label stays readable over the curves. */
+const LABEL_BG: Record<'dark' | 'light', string> = { dark: 'rgba(17, 24, 32, 0.8)', light: 'rgba(255, 255, 255, 0.85)' };
 /** Card tint per sensor: the color of its line in the charts below. */
 const cardTints = (p: ChartPalette): Record<string, string> => ({
   'card-ori': p.euler[0], 'card-acc': p.acc[0], 'card-micl': p.micL,
@@ -197,7 +204,7 @@ export function mountSensorsPanel(
       <h3 class="spec-title">Espectro do áudio (cru) — ajuste do passa-banda</h3>
       <span class="spec-scale" data-el="spec-scale"></span>
     </div>
-    <p class="msg">FFT de 512 pontos calculado aqui no navegador sobre o fluxo bruto de 2 kHz vindo da bola (janela de 256 ms, bins de ~3,9 Hz). A frequência pode ficar em escala linear (0 a 1000 Hz) ou log (10 a 1000 Hz). Sopre na bola e observe quais frequências sobem. As linhas tracejadas marcam os cortes HP/LP como estão na Configuração, e o cinza cobre o que o passa-banda corta; mudar os cortes lá move a faixa aqui na hora, antes mesmo de aplicar.</p>
+    <p class="msg">FFT de 512 pontos calculado aqui no navegador sobre o fluxo bruto de 2 kHz vindo da bola (janela de 256 ms, bins de ~3,9 Hz): é o som <em>antes</em> do passa-banda, o que chega aos filtros. A frequência pode ficar em escala linear (0 a 1000 Hz) ou log (10 a 1000 Hz). Sopre na bola e observe quais frequências sobem. A curva grossa (branca no tema escuro, preta no claro) é a resposta real do passa-banda (eixo da direita, em dB: 0 dB passa inteiro, −20 dB sobra um décimo da amplitude), com a inclinação e o Q da Configuração; a linha azul é o espectro cru multiplicado por essa resposta, uma estimativa do que o detector de sopro recebe (calculada aqui, não medida; vale para o som abaixo de 1 kHz: o que estiver entre 1 e 8 kHz chega a este gráfico dobrado pela redução para 2 kHz e aparece maior do que o detector o recebe). Mudar os filtros lá move tudo na hora, antes mesmo de aplicar: até aplicar, as duas curvas ficam tracejadas e os cortes marcados “não aplicado”.</p>
     <div data-el="spectrum" class="sensor-chart sensor-spectrum" role="img" aria-label="Espectro de frequências do áudio"></div>
     <div class="chart-window" role="group" aria-label="Janela de tempo dos gráficos">
       <span>Últimos</span>
@@ -257,105 +264,158 @@ export function mountSensorsPanel(
     for (const v of c.samples) audioRing.push(v);
     if (audioRing.length > FFT_SIZE * 2) audioRing.splice(0, audioRing.length - FFT_SIZE * 2);
   });
+  // Three traces: the raw spectrum (what reaches the filters), that spectrum times the band-pass
+  // response (an estimate of what feeds the detector), and the response itself in dB on the
+  // right-hand axis. The estimate holds for sound below 1 kHz: the detector filters at 16 kHz,
+  // but the stream is decimated by an average of 8, which droops ~4 dB at 1 kHz and folds what
+  // lies between 1 and 8 kHz back into 0-1 kHz, where it then gets the passband gain. Such sound
+  // shows larger here than the detector receives it.
   void Plotly.newPlot(
     specEl,
-    [{
-      name: 'espectro (dBFS)',
-      x: [] as number[],
-      y: [] as number[],
-      mode: 'lines',
-      line: { color: p0.spectrum, width: 1.5 },
-      hovertemplate: '%{x:.0f} Hz · %{y:.1f} dBFS<extra></extra>',
-    }],
+    [
+      {
+        name: 'espectro cru',
+        x: [] as number[], y: [] as number[], mode: 'lines',
+        line: { color: p0.spectrum, width: 1.5 },
+        hovertemplate: '%{x:.0f} Hz · %{y:.1f} dBFS<extra>cru</extra>',
+      },
+      {
+        name: 'após o filtro (calculado)',
+        x: [] as number[], y: [] as number[], mode: 'lines',
+        line: { color: p0.filtered, width: 1.5 },
+        hovertemplate: '%{x:.0f} Hz · %{y:.1f} dBFS<extra>após o filtro</extra>',
+      },
+      {
+        name: 'resposta do filtro (dB, eixo direito)',
+        x: [] as number[], y: [] as (number | null)[], mode: 'lines', yaxis: 'y2',
+        line: { color: p0.response, width: 2.5 },
+        hovertemplate: '%{x:.0f} Hz · %{y:.1f} dB<extra>filtro</extra>',
+      },
+    ],
     {
-      height: 260,
-      // r: room for the "1000" label at the right end of the frequency axis.
-      margin: { l: 56, r: 24, t: 8, b: 40 },
+      height: 300,
+      // r: room for the right-hand gain axis; t: the legend sits above the plot.
+      margin: { l: 56, r: 60, t: 28, b: 40 },
       paper_bgcolor: 'rgba(0,0,0,0)',
       plot_bgcolor: 'rgba(0,0,0,0)',
       font: { color: p0.font, size: 11 },
-      showlegend: false,
+      showlegend: true,
+      legend: { orientation: 'h', x: 0, xanchor: 'left', y: 1.02, yanchor: 'bottom', font: { size: 10 } },
       xaxis: { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font, ...frameAxis(p0), ...xAxisFor(scale) },
-      yaxis: { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font, ...frameAxis(p0), title: axisTitle('nível (dBFS)'), range: [-120, 0] },
+      // Both axes span 120 dB in steps of 20, so their ticks share the grid lines: 0 dB of the
+      // filter sits on the -20 dBFS line.
+      yaxis: { gridcolor: p0.grid, zerolinecolor: p0.grid, color: p0.font, ...frameAxis(p0),
+        title: axisTitle('nível (dBFS)'), range: SPEC_DBFS_RANGE, dtick: 20 },
+      yaxis2: { overlaying: 'y', side: 'right', range: SPEC_GAIN_RANGE, dtick: 20, showgrid: false,
+        zeroline: true, zerolinecolor: p0.frame, color: p0.font, title: axisTitle('ganho do filtro (dB)') },
     },
     { responsive: true, displaylogo: false },
   );
+  /** Band-pass gain (dB) at each FFT bin of the last spectrum, cached per band. */
+  let binGain: { key: string; gains: number[] } = { key: '', gains: [] };
   const refreshSpectrum = (): void => {
     // The raw stream is opt-in (TLV 0x1F) because it costs ~45 ms/s of BLE air time.
     // When it is off there is simply nothing to transform, so say so on the chart
     // instead of leaving a dead plot: the RMS and peak readouts keep working, they
-    // come measured from the firmware on every orientation packet.
+    // come measured from the firmware on every orientation packet. The filter's response
+    // still shows: it comes from the form, not from the stream.
     const idle = performance.now() - lastChunkAt > 2000;
     if (idle !== specIdle) {
       specIdle = idle;
-      specShapesKey = '';  // force the HP/LP markers to redraw when it comes back
+      specShapesKey = ''; // the idle notice is part of the overlay
       if (idle) {
-        audioRing.length = 0;  // never splice pre-pause samples into a fresh FFT
-        void Plotly.restyle(specEl, { x: [[] as number[]], y: [[] as number[]] }, [0]);
-        void Plotly.relayout(specEl, {
-          shapes: [],
-          annotations: [{
-            xref: 'paper', yref: 'paper', x: 0.5, y: 0.5, showarrow: false, align: 'center',
-            text: 'Stream de áudio cru desligado.<br>Ligue em Configuração › Avançado › Áudio'
-              + ' para ver o espectro.',
-            font: { size: 12, color: pal().font },
-          }],
-        });
+        audioRing.length = 0; // never splice pre-pause samples into a fresh FFT
+        void Plotly.restyle(specEl, { x: [[], []], y: [[], []] }, [0, 1]);
       }
+      drawBand();
     }
     if (idle || !lastChunk || audioRing.length < FFT_SIZE) return;
     const sp = computeSpectrum(audioRing.slice(-FFT_SIZE), FFT_SIZE, lastChunk.sampleRateHz || 2000);
     // Bin 0 (0 Hz) has no place on a log axis.
     const freqs = Array.from(sp.freqsHz).slice(1);
     const levels = Array.from(sp.dbfs).slice(1);
-    void Plotly.restyle(specEl, { x: [freqs], y: [levels] }, [0]);
+    const band = currentBand();
+    let filtered: number[] = [];
+    if (band?.spec?.enabled) {
+      const key = `${bandKey(band.spec)}|${freqs.length}|${freqs[0]}`;
+      if (binGain.key !== key) binGain = { key, gains: freqs.map((f) => bandGainDb(band.spec!, f)) };
+      // Floor at the chart's bottom, like the FFT itself (-120 dBFS).
+      filtered = levels.map((l, i) => Math.max(SPEC_DBFS_RANGE[0], l + binGain.gains[i]!));
+    }
+    void Plotly.restyle(specEl, {
+      x: [freqs, band?.spec?.enabled ? freqs : []], y: [levels, filtered],
+      'line.dash': ['solid', band?.pending ? 'dash' : 'solid'],
+    }, [0, 1]);
     drawBand();
   };
   /**
-   * Grey over what the band-pass removes, plus a dashed line at each cutoff. The band is the
-   * one in the Configuração form (it moves as the person edits it); the firmware echoes the
-   * band it is actually using in every chunk, and a cutoff that differs from that echo is
-   * labelled "não aplicado". Without the form, the echo is drawn.
+   * The band-pass as the firmware will run it: the Configuração form's values (they move as the
+   * person edits them), drawn as the real response of the filter. The firmware echoes the cutoffs
+   * it is using in every chunk; a band edited and not applied yet, or one whose cutoffs differ from
+   * that echo, is marked "não aplicado" and drawn dashed. Without the form, only the echoed cutoffs
+   * are drawn (the echo carries no Q or slope, so there is no curve to draw).
    */
   let formBand: FormBand | null = null;
-  const currentBand = (): { enabled: boolean; hpHz: number; lpHz: number; pending: boolean } | null => {
-    const echo = lastChunk;
+  const currentBand = (): { spec: BandSpec | null; hpHz: number; lpHz: number; enabled: boolean; pending: boolean } | null => {
+    // The echo rides on the stream: once it stops, the last one says nothing about later applies.
+    const echo = specIdle === false ? lastChunk : null;
     if (formBand && formBand.hpHz !== null && formBand.lpHz !== null) {
-      const pending = echo !== null && (echo.bpfEnabled !== formBand.enabled
-        || (formBand.enabled && (echo.hpHz !== formBand.hpHz || echo.lpHz !== formBand.lpHz)));
-      return { enabled: formBand.enabled, hpHz: formBand.hpHz, lpHz: formBand.lpHz, pending };
+      const pending = formBand.edited || (echo !== null && (echo.bpfEnabled !== formBand.enabled
+        || (formBand.enabled && (echo.hpHz !== formBand.hpHz || echo.lpHz !== formBand.lpHz))));
+      const spec: BandSpec = {
+        enabled: formBand.enabled,
+        hp: { hz: formBand.hpHz, qX100: formBand.hpQX100 ?? 71, slopeDbOct: formBand.hpSlopeDbOct ?? DEFAULT_SLOPE_DB_OCT },
+        lp: { hz: formBand.lpHz, qX100: formBand.lpQX100 ?? 71, slopeDbOct: formBand.lpSlopeDbOct ?? DEFAULT_SLOPE_DB_OCT },
+      };
+      return { spec, hpHz: formBand.hpHz, lpHz: formBand.lpHz, enabled: formBand.enabled, pending };
     }
-    return echo ? { enabled: echo.bpfEnabled, hpHz: echo.hpHz, lpHz: echo.lpHz, pending: false } : null;
+    return echo ? { spec: null, hpHz: echo.hpHz, lpHz: echo.lpHz, enabled: echo.bpfEnabled, pending: false } : null;
   };
   const drawBand = (): void => {
-    if (specIdle !== false) return; // no spectrum on screen: the idle notice owns the chart
     const band = currentBand();
     const theme = resolvedTheme();
-    const key = band ? `${scale}|${theme}|${band.enabled}|${band.hpHz}|${band.lpHz}|${band.pending}` : `${scale}|none`;
+    const key = `${scale}|${theme}|${specIdle}|${band ? `${band.enabled}|${band.hpHz}|${band.lpHz}|${band.spec ? bandKey(band.spec) : '-'}|${band.pending}` : 'none'}`;
     if (key === specShapesKey) return;
     specShapesKey = key;
+    const p = pal();
     const range = specXRange(scale);
     const inView = (hz: number): boolean => hz >= range[0] && hz <= range[1];
-    const cuts = band && band.enabled
-      ? [{ hz: band.hpHz, label: 'HP', y: -4 }, { hz: band.lpHz, label: 'LP', y: -12 }].filter((c) => inView(c.hz))
-      : [];
     const note = band?.pending ? ' (não aplicado)' : '';
+    const cutText = (label: string, hz: number, c?: CutSpec): string =>
+      `${label} ${hz} Hz${c ? ` · ${slopeLabel(c.slopeDbOct)}${c.slopeDbOct === 6 ? '' : ` · Q ${fmt(c.qX100 / 100, 2)}`}` : ''}${note}`;
+    // Labels at the foot of the plot, each reading from its line into the band (HP to the right,
+    // LP to the left), on two rows so close cutoffs do not collide; the top is left to the
+    // response curve, whose resonant peaks would otherwise run under the text.
+    const cuts = band && band.enabled
+      ? [
+          { hz: band.hpHz, text: cutText('HP', band.hpHz, band.spec?.hp), row: 1, anchor: 'left' },
+          { hz: band.lpHz, text: cutText('LP', band.lpHz, band.spec?.lp), row: 0, anchor: 'right' },
+        ].filter((c) => inView(c.hz))
+      : [];
+    const curve = band?.spec?.enabled ? responseCurve(band.spec, range, scale === 'log') : { x: [], y: [] };
+    void Plotly.restyle(specEl, {
+      x: [curve.x], y: [curve.y], 'line.dash': band?.pending ? 'dash' : 'solid',
+    }, [2]);
+    const annotations: Record<string, unknown>[] = cuts.map((c) => ({
+      x: scale === 'log' ? Math.log10(c.hz) : c.hz, yref: 'paper', y: 0.015 + 0.075 * c.row, yanchor: 'bottom',
+      text: c.text, showarrow: false, font: { size: 10, color: p.font }, xanchor: c.anchor,
+      xshift: c.anchor === 'left' ? 3 : -3, bgcolor: LABEL_BG[theme], borderpad: 2,
+    }));
+    if (specIdle) {
+      annotations.push({
+        xref: 'paper', yref: 'paper', x: 0.5, y: 0.45, showarrow: false, align: 'center', bgcolor: LABEL_BG[theme],
+        text: 'Stream de áudio cru desligado: só a resposta do filtro aparece.<br>Ligue em Configuração › Avançado › Áudio'
+          + ' para ver o espectro.',
+        font: { size: 12, color: p.font },
+      });
+    }
     void Plotly.relayout(specEl, {
       // Shapes take data values (Hz) even on a log axis; annotations take log10(Hz) there.
-      shapes: [
-        ...(band ? bandShading(band, range) : []).map((s) => ({
-          type: 'rect', xref: 'x', yref: 'paper', x0: s.x0, x1: s.x1, y0: 0, y1: 1,
-          fillcolor: SHADE[theme], line: { width: 0 }, layer: 'below',
-        })),
-        ...cuts.map((c) => ({
-          type: 'line', x0: c.hz, x1: c.hz, y0: -120, y1: 0,
-          line: { color: pal().threshold, width: 1, dash: 'dot' },
-        })),
-      ],
-      annotations: cuts.map((c) => ({
-        x: scale === 'log' ? Math.log10(c.hz) : c.hz, y: c.y, text: `${c.label} ${c.hz} Hz${note}`,
-        showarrow: false, font: { size: 10, color: pal().font }, xanchor: 'left',
+      shapes: cuts.map((c) => ({
+        type: 'line', x0: c.hz, x1: c.hz, y0: SPEC_DBFS_RANGE[0], y1: SPEC_DBFS_RANGE[1],
+        line: { color: p.threshold, width: 1, dash: 'dot' },
       })),
+      annotations,
     });
   };
   opts.band?.subscribe((b) => { formBand = b; drawBand(); });
@@ -488,13 +548,15 @@ export function mountSensorsPanel(
       }
     }
     void Plotly.relayout(chartEl, re);
-    void Plotly.restyle(specEl, { 'line.color': p.spectrum }, [0]);
+    void Plotly.restyle(specEl, { 'line.color': [p.spectrum, p.filtered, p.response] }, [0, 1, 2]);
     void Plotly.relayout(specEl, {
       'font.color': p.font,
       'xaxis.gridcolor': p.grid, 'xaxis.zerolinecolor': p.grid, 'xaxis.color': p.font, 'xaxis.linecolor': p.frame,
       'yaxis.gridcolor': p.grid, 'yaxis.zerolinecolor': p.grid, 'yaxis.color': p.font, 'yaxis.linecolor': p.frame,
+      'yaxis2.zerolinecolor': p.frame, 'yaxis2.color': p.font,
     });
     specShapesKey = ''; // force the HP/LP markers to redraw with the new colors
+    drawBand();
   };
   onThemeChange(applyChartTheme);
 

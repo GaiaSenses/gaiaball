@@ -78,9 +78,10 @@ struct GaiaConfig {
   uint8_t breathMetric = 0;    // 0 = RMS, 1 = peak
   uint8_t breathDetector = 0;  // 0 = absolute, 1 = adaptive
   uint8_t breathRearmDb = 6;   // re-arm below threshold - this many dB (0..20)
-  // Breath band-pass (HP then LP biquads) applied to the mic stream before the RMS /
-  // peak detector. Q is x100 (500 = 5.00). NOTE: Q > 0.707 adds a resonant peak of
-  // ~20*log10(Q) dB at the cutoff; validation enforces lpHz > hpHz.
+  // Breath band-pass (HP then LP, see FilterCascade) applied to the mic stream before the
+  // RMS / peak detector. Q is x100 and is the gain exactly at the cutoff at any slope:
+  // 71 = 0.71 = flat Butterworth (-3 dB), 100 = 0 dB, 500 = +14 dB resonant peak.
+  // Slopes in dB/octave: 6, 12, 18, 24, 36 or 48. Validation enforces lpHz > hpHz.
   uint8_t audioBpfEnabled = 1;
   // Raw 2 kHz audio stream (AudioChunkPacket). Off by default: it is only needed to
   // tune the band-pass against the live spectrum, and while on it costs ~45 ms/s of
@@ -89,10 +90,12 @@ struct GaiaConfig {
   // RMS (and peak) window of the microphone levels, ms (TLV 0x2F, 5..200, applied live).
   // Rounded to whole 5 ms I2S blocks. Was fixed at 20 ms before this register existed.
   uint16_t audioWindowMs = 50;
-  uint16_t audioHpHz = 10;      // 1..7000
-  uint16_t audioHpQX100 = 500;  // 10..2000
-  uint16_t audioLpHz = 200;     // 1..7000
-  uint16_t audioLpQX100 = 500;  // 10..2000
+  uint16_t audioHpHz = 10;     // 1..7000
+  uint16_t audioHpQX100 = 71;  // 10..2000 (500 until schema v8, see migrateStoredConfig)
+  uint16_t audioLpHz = 200;    // 1..7000
+  uint16_t audioLpQX100 = 71;  // 10..2000
+  uint8_t audioHpSlopeDbOct = 12;  // TLV 0x38: 6, 12, 18, 24, 36, 48
+  uint8_t audioLpSlopeDbOct = 12;  // TLV 0x39
   // Potentiometer EMA alpha x1000 (300 = legacy 0.3).
   uint16_t potEmaAlphaX1000 = 300;
 
@@ -141,5 +144,21 @@ struct GaiaConfig {
   char bleName[17] = {'G', 'l', 'o', 'b', 'o', '_', '1', 0};  // 1..16 printable ASCII
   char pin[5] = {'1', '2', '3', '4', 0};                       // write-only: never serialized
 };
+
+// Band-pass Q of a config saved before schema v9. Its default was 500 (Q 5.00: a +14 dB
+// resonant peak at both cutoffs); v9 made the band flat by default (71, Butterworth). Every
+// "Aplicar" persists the whole config, so a ball that was only ever tuned elsewhere still
+// stores the old default: a stored 500 is taken to be that untouched default and moves to
+// the new one. Any other value is the person's choice and stays. A config saved by v9 or
+// later is never touched, so choosing 500 again sticks once it is saved.
+constexpr uint8_t kBandFlatQSchemaVersion = 9;
+constexpr uint16_t kOldBandQX100Default = 500;
+
+inline void migrateStoredConfig(GaiaConfig &c, uint8_t storedVersion) {
+  if (storedVersion >= kBandFlatQSchemaVersion) return;
+  const GaiaConfig defaults;
+  if (c.audioHpQX100 == kOldBandQX100Default) c.audioHpQX100 = defaults.audioHpQX100;
+  if (c.audioLpQX100 == kOldBandQX100Default) c.audioLpQX100 = defaults.audioLpQX100;
+}
 
 }  // namespace gaia

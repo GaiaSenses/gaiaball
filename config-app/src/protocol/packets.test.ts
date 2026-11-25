@@ -211,7 +211,7 @@ describe('invalid input returns null', () => {
 
 describe('TLV', () => {
   it('registry ids', () => {
-    expect(Object.keys(TLV)).toHaveLength(64);
+    expect(Object.keys(TLV)).toHaveLength(66);
     expect(TLV.orientationMode).toBe(0x01);
     expect(TLV.imuNotifyHz).toBe(0x02);
     expect(TLV.slerpAmount).toBe(0x03);
@@ -224,6 +224,11 @@ describe('TLV', () => {
     expect(TLV.imuDetected).toBe(0x35);
     expect(TLV.unlockState).toBe(0x37);
     expect(TLV.magAxisRemap).toBe(0x36);
+    expect([TLV.audioHpSlopeDbOct, TLV.audioLpSlopeDbOct]).toEqual([0x38, 0x39]);
+  });
+  it('band-pass slopes are one byte each', () => {
+    expect(Array.from(encodeTlv([{ id: TLV.audioHpSlopeDbOct, value: 24 }, { id: TLV.audioLpSlopeDbOct, value: 48 }])))
+      .toEqual([0x38, 1, 24, 0x39, 1, 48]);
   });
   it('imuDetected is read-only: it cannot be encoded for a write', () => {
     expect(() => encodeTlv([{ id: TLV.imuDetected, value: 1 }])).toThrow(RangeError);

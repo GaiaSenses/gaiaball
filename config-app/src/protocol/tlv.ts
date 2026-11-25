@@ -32,6 +32,8 @@ export const TLV = {
   audioHpQX100: 0x18,
   audioLpHz: 0x19,
   audioLpQX100: 0x1a,
+  audioHpSlopeDbOct: 0x38, // 6, 12, 18, 24, 36 or 48 dB/octave (any other value fails the whole write)
+  audioLpSlopeDbOct: 0x39,
   potEmaAlphaX1000: 0x1b,
   co2Enabled: 0x20,
   // 0x21 is reserved (was co2ChecksumVariant; the SC8-CO2-5K frame format is fixed).
@@ -116,6 +118,8 @@ const SPECS: Record<number, Spec> = {
   [TLV.audioHpQX100]: U16,
   [TLV.audioLpHz]: U16,
   [TLV.audioLpQX100]: U16,
+  [TLV.audioHpSlopeDbOct]: U8,
+  [TLV.audioLpSlopeDbOct]: U8,
   [TLV.potEmaAlphaX1000]: U16,
   [TLV.co2EmaAlphaX1000]: U16,
   [TLV.co2TriggerPpm]: U16,

@@ -1,6 +1,18 @@
-import type { TlvWrite } from '../protocol/tlv.ts';
+import { TLV, type TlvWrite } from '../protocol/tlv.ts';
 
 export interface Preset { name: string; savedAt: string; regs: TlvWrite[] }
+
+/**
+ * A preset saved before the band-pass slopes existed (it has no 0x38/0x39) snapshotted the
+ * whole form, so its band-pass Q of 500 is most likely the old default (Q 5.00), not a choice.
+ * Same rule as the firmware's migrateStoredConfig: that 500 becomes the new flat default, 71.
+ * Presets with the slopes are taken as they are.
+ */
+export function migratePresetRegs(regs: TlvWrite[]): TlvWrite[] {
+  if (regs.some((r) => r.id === TLV.audioHpSlopeDbOct || r.id === TLV.audioLpSlopeDbOct)) return regs;
+  return regs.map((r) =>
+    (r.id === TLV.audioHpQX100 || r.id === TLV.audioLpQX100) && r.value === 500 ? { ...r, value: 71 } : r);
+}
 export interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;

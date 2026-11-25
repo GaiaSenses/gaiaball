@@ -147,7 +147,8 @@ config write that lands both LED functions on the same GPIO is rejected atomical
   anti-alias filter and gyro range, the AHRS gain and its acceleration rejection, the
   gyro-bias tracker, orientation smoothing (fixed slerp or the 1-euro
   filter), the accel spike filter and EMA, the breath band-pass on the mics (HP 10 Hz /
-  LP 200 Hz, Q 5.00 default — tune against the live spectrum), the potentiometer EMA and
+  LP 200 Hz, 12 dB/oct each, Q 0.71 = flat Butterworth by default; slopes 6–48 dB/oct —
+  tune against the live spectrum, which draws the filter's real response), the potentiometer EMA and
   the CO2 EMA. See [Signal processing chains](#signal-processing-chains).
   The magnetic rejection (TLV `0x09`, Quat9 only) is no longer offered by the
   config-app; the firmware still supports it, and Quat9, through raw TLV writes.
@@ -345,9 +346,10 @@ carries it as milli-g, converted in `makeImuPacket`), gyro full scale selectable
 ```
    2x INMP441 ──> I2S, 32-bit stereo @ 16 kHz, 80-frame blocks (5 ms)
         │
-   [1] >>8 to 24-bit samples, DC removal
+   [1] >>8 to 24-bit samples, DC blocker (first order, 2 Hz)     (src/logic/AudioFrontEnd.h)
         │
-        ├──> [2] breath band-pass: HP biquad then LP biquad
+        ├──> [2] breath band-pass: HP then LP, Butterworth 6..48 dB/oct each,
+        │          Q = gain at the cutoff (src/logic/FilterCascade.*)
         │          │
         │     [3] per-block sum of squares + max |sample| (16 kHz, float)
         │          │
@@ -370,8 +372,8 @@ carries it as milli-g, converted in `makeImuPacket`), gyro full scale selectable
 
 | # | Stage | What goes wrong without it | What it buys |
 |---|---|---|---|
-| 1 | 24-bit extraction + DC removal | The INMP441 pushes 24-bit data inside 32-bit slots and carries a DC offset that would bias every RMS value. | A zero-mean signal, so RMS measures sound and not the offset. The 5 ms block exists because the envelope published on the orientation packet can never be fresher than one block, and that packet goes out at up to 200 Hz. |
-| 2 | Breath band-pass (`audioBpfEnabled`, HP/LP + Q) | Handling noise and table thumps live below the breath band; speech and room tone above it. Both fire the detector. | Only the breath band reaches the detector. The cut-offs are tuned against the live spectrum in the config-app, which is what the opt-in raw stream is for. |
+| 1 | 24-bit extraction + DC blocker | The INMP441 pushes 24-bit data inside 32-bit slots and carries a DC offset that would bias every RMS value. | A zero-mean signal, so RMS measures sound and not the offset. A continuous first-order high-pass at 2 Hz (-0.17 dB at 10 Hz), seeded with the first sample so the offset never comes out as a step. Until v9 this was the mean of each 5 ms block subtracted from it, which is not a DC remover but a time-varying high-pass: ~-3 dB at 90 Hz, -21 dB at 10 Hz, and it moved low-frequency energy to multiples of 200 Hz, in the detector and in the spectrum alike. The 5 ms block exists because the envelope published on the orientation packet can never be fresher than one block, and that packet goes out at up to 200 Hz. |
+| 2 | Breath band-pass (`audioBpfEnabled`, HP/LP: cutoff, slope `0x38`/`0x39`, Q) | Handling noise and table thumps live below the breath band; speech and room tone above it. Both fire the detector. | Only the breath band reaches the detector, rolled off at the chosen slope (6, 12, 18, 24, 36 or 48 dB/oct: a Butterworth of order slope/6), not cut like a wall. Q is the gain exactly at the cutoff (0.71 = flat). Each filter is a cascade of TPT state-variable sections, chosen over direct-form biquads because they stay accurate in float32 with a cutoff of a few Hz at 16 kHz (48 dB/oct at 1 Hz: error ~100 dB below the signal, against ~45 dB for a DF2T cascade). Cost per sample and microphone: 7 multiplies per second-order section, so the default 12+12 dB/oct is two sections and the worst case 48+48 is eight (~25 instructions each on the LX6). The raw stream is tapped before the band-pass; the config-app draws the filter's analytic response over it. |
 | 3 | Sum of squares + peak, in `float` | Instantaneous amplitude swings sample to sample; a threshold on it would chatter. A peak measured on the decimated stream (as the browser used to) is averaged over 8 samples, so it under-reads every transient. | Energy and the true 16 kHz peak of the same signal, so peak/RMS is a meaningful crest factor. `float`, not `double`: the Xtensa LX6 FPU is single-precision, so every double operation here was emulated in software — more cycles than the rest of the audio front end put together, for an error of 1e-4 dB. |
 | 4 | Pooled window, `audioWindowMs` (TLV 0x2F, default 50 ms; `src/logic/AudioFeatures.*`) | At 200 Hz a block is 5 ms — shorter than one period of the low end of the breath band (10 ms at 100 Hz) — so a single block measures instantaneous amplitude, not energy, and the value wobbles with the waveform. | An energy window (50 ms by default, 5–200 ms configurable live) that still refreshes every block: a stable number at a fast rate, instead of having to choose. Longer = steadier, slower to rise and fall. |
 | 5 | Envelope on the wire (`audioRmsHalfDb`, `audioPeakHalfDb`) | The envelope used to reach the host at 5 Hz (SensorsPacket) or had to be re-derived in the browser from the decimated stream — a 200 ms-old number, or a wrong one. | The signal the application actually uses as a control arrives at the orientation rate (up to 200 Hz), with the same timestamp, for 4 bytes on a packet that was already being sent. |
@@ -485,7 +487,8 @@ persisted only by command `0x11`. Full table with types: [`docs/protocol.md`](do
 | `0x1E` | magCal — 24-byte hard/soft-iron record (see protocol.md) | identity |
 | `0x10`–`0x14` | audio: enabled, fast/slow alpha ×1000 (adaptive detector only), debounceMs, potControlsThreshold (1 pot / 0 fixed `0x2B`) | 1, 250, 995, 3000, 1 |
 | `0x2B`–`0x2E` | breath: threshold as −dBFS ×100 (0–9000), metric (0 RMS / 1 peak), detector (0 absolute / 1 adaptive), re-arm dB (0–20) | 3550 (−35.5 dBFS), 0, 0, 6 |
-| `0x16`–`0x1A` | breath band-pass: enabled, HP Hz, HP Q×100, LP Hz, LP Q×100 (LP > HP enforced) | 1, 10, 500, 200, 500 |
+| `0x16`–`0x1A` | breath band-pass: enabled, HP Hz, HP Q×100, LP Hz, LP Q×100 (LP > HP enforced; Q = gain at the cutoff, 71 = flat) | 1, 10, 71, 200, 71 |
+| `0x38`, `0x39` | band-pass slopes, HP and LP, dB/octave: 6, 12, 18, 24, 36 or 48 | 12, 12 |
 | `0x1F` | audioRawStream — raw 2 kHz stream on/off (costs ~4.3 kB/s; only the spectrum view needs it) | 0 |
 | `0x2F` | audioWindowMs — RMS/peak window, ms (5–200, whole 5 ms blocks, applied live) | 50 |
 | `0x1B` | potEmaAlphaX1000 (the pot maps 0…4095 to −60…0 dBFS, 0.5 dB hysteresis) | 300 |

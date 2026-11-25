@@ -142,15 +142,35 @@ espremidos no canto esquerdo; ou **linear, de 0 a 1000 Hz**.
 > ~53 % do total quando ligado) e nada mais depende dele: o RMS e o pico vêm medidos do
 > firmware. Desligue ao terminar o ajuste.
 
-Sopre na bola e observe quais frequências sobem. As linhas tracejadas marcam os cortes
-HP/LP e um **cinza claro cobre o que o passa-banda corta**. Os dois seguem os campos
-**High-pass** e **Low-pass** da Configuração enquanto você digita, antes de aplicar; um
-corte diferente do que o firmware ecoa em cada pacote aparece como "(não aplicado)". Com o
-passa-banda desligado, o cinza e as linhas somem. Os
-filtros (HP 10 Hz / LP 200 Hz, Q 5,00 por padrão) são aplicados **no firmware**,
-antes do detector de pico — o espectro mostra o sinal **cru**, justamente para
-escolher os cortes. Atenção: Q > 0,71 cria um pico ressonante de ~20·log₁₀(Q) dB
-exatamente no corte; a inclinação da atenuação vem da ordem do filtro, não do Q.
+Sopre na bola e observe quais frequências sobem. O espectro é o som **antes** do
+passa-banda (o que chega aos filtros). Por cima dele o gráfico desenha:
+
+- a **resposta real do passa-banda** (curva grossa, eixo da direita em dB: 0 dB passa
+  inteiro, −20 dB sobra um décimo da amplitude), calculada com o mesmo projeto do firmware
+  (Butterworth da inclinação escolhida, Q = ganho no corte, transformada bilinear a 16 kHz).
+  Medido no firmware compilado no PC, o modelo bate com ele em 463 pontos com diferença
+  máxima de 0,03 dB;
+- o **espectro após o filtro** (linha azul): o espectro cru somado, em dB, à resposta. É uma
+  estimativa do que o detector de sopro recebe, calculada aqui, não medida. Vale para o som
+  abaixo de 1 kHz: o detector filtra a 16 kHz, mas o fluxo cru é reduzido a 2 kHz por média
+  de 8 amostras, que cai ~4 dB em 1 kHz e dobra o que está entre 1 e 8 kHz para dentro de
+  0–1 kHz. Esse som aparece aqui maior do que o detector o recebe;
+- uma linha pontilhada em cada corte, com a inclinação e o Q.
+
+Tudo segue os campos **High-pass**, **Low-pass**, **Inclinação** e **Q** da Configuração
+enquanto você edita, antes de aplicar; até aplicar (ou se o corte for diferente do que o
+firmware ecoa em cada pacote do stream), as duas curvas ficam tracejadas e os cortes
+marcados "(não aplicado)". Presets salvos antes das inclinações existirem trazem Q 5,00 (o
+padrão antigo) como 0,71, a mesma regra do firmware. Com o
+stream cru desligado, só a resposta aparece. Com o passa-banda desligado, a curva e as
+linhas somem.
+
+Os filtros rodam **no firmware**, antes do detector, do RMS e do pico. Cada corte tem uma
+**inclinação** de 6, 12, 18, 24, 36 ou 48 dB/oitava (Butterworth de ordem inclinação ÷ 6;
+padrão 12) e um **Q** que é o ganho exatamente no corte, em qualquer inclinação: 0,71 =
+−3 dB (banda plana, o padrão), 1,00 = 0 dB, 5,00 = +14 dB (pico ressonante). Em 6 dB/oit
+não existe Q e o campo some. Bolas gravadas com firmware anterior guardavam Q 5,00 (o
+padrão antigo): ao ligar com o firmware novo, um Q guardado igual a 5,00 passa a 0,71.
 
 ## Navegação do globo
 

@@ -165,9 +165,9 @@ CORE 0 (PRO_CPU) - radio only              CORE 1 (APP_CPU) - acquisition + app 
 │                               │          │    (each sample stamped with zeroEpoch)     │
 │  RX config TLV → ConfigStore  │          ├─────────────────────────────────────────────┤
 │   (mutex) → dirty flag        │          │ audio task · prio 2 · blocks on i2s_read    │
-├───────────────────────────────┤          │  block DC-removal → mono → decimator 2 kHz  │
+├───────────────────────────────┤          │  DC blocker → mono → decimator 2 kHz        │
 │ BLE controller + radio ISRs   │          │  → chunk 48 ms ─▶ app (mux)                 │
-└───────────────────────────────┘          │  → HP/LP biquads → RMS/peak → breath detect │
+└───────────────────────────────┘          │  → HP/LP 6-48 dB/oct → RMS/peak → breath    │
         ▲        │                         ├─────────────────────────────────────────────┤
         │ notify │ commands                │ co2 task · prio 1 · 20 ms tick              │
         │        ▼                         │  drain RX → SC8 frame parse → EMA → ppm    │

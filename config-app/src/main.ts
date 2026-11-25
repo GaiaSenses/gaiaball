@@ -10,6 +10,7 @@ import { demoConfigRegs, demoUnlock, demoWrite } from './demo-config.ts';
 import { mountConnectionPanel } from './panels/connection-panel.ts';
 import { StreamStats } from './metrics/stream-stats.ts';
 import { mountConfigPanel } from './panels/config-panel.ts';
+import { TLV } from './protocol/tlv.ts';
 import { mountMetricsPanel } from './panels/metrics-panel.ts';
 import { mountSensorsPanel } from './panels/sensors-panel.ts';
 import { decorateInfo } from './panels/info.ts';
@@ -328,6 +329,8 @@ if (isDemo) {
   let audioSeq = 0;
   let audioIdx = 0;
   setInterval(() => {
+    // Like the firmware: chunks only while the raw stream (TLV 0x1F) is on in the (fake) ball.
+    if ((demoRegs.get(TLV.audioRawStream)?.getUint8(0) ?? 0) === 0) return;
     const samples = new Int16Array(96);
     for (let i = 0; i < 96; i++, audioIdx++) {
       const ts = audioIdx / 2000;
@@ -343,9 +346,10 @@ if (isDemo) {
       sampleRateHz: 2000,
       samples,
       flags: 1,
-      bpfEnabled: true,
-      hpHz: 10,
-      lpHz: 200,
+      // Like the firmware: the chunk echoes the band the (fake) ball is running.
+      bpfEnabled: (demoRegs.get(TLV.audioBpfEnabled)?.getUint8(0) ?? 1) !== 0,
+      hpHz: demoRegs.get(TLV.audioHpHz)?.getUint16(0, true) ?? 10,
+      lpHz: demoRegs.get(TLV.audioLpHz)?.getUint16(0, true) ?? 200,
     };
     emit('audio', detail);
   }, 48);

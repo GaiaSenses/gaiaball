@@ -529,8 +529,9 @@ Conversões: RMS, `dBFS = 20·log10(rms·√2 / 2²³)`; pico, `dBFS = 20·log10
 ### Áudio cru — tipo `0x05`, 208 bytes (característica 5, só se ligado)
 
 Amostras de áudio para o analisador de espectro da config-app (a FFT roda no navegador).
-Mono (média de esquerdo e direito), sem componente contínua, reduzido de 16 kHz para 2 kHz
-por média de 8 amostras. **Desligado por padrão:** só sai enquanto o registrador `0x1F`
+Mono (média de esquerdo e direito), depois do bloqueador de componente contínua (passa-altas
+de 1ª ordem em 2 Hz) e **antes** do passa-banda, reduzido de 16 kHz para 2 kHz por média de 8
+amostras. **Desligado por padrão:** só sai enquanto o registrador `0x1F`
 (`audioRawStream`) vale 1 **e** alguém assina a característica 5. Ligado, ele sozinho ocupa
 cerca de 4,3 kB/s, mais que todo o resto junto.
 
@@ -890,7 +891,7 @@ Toda a configuração da bola é uma lista de **registradores**. Cada registrado
 Uma leitura ou escrita é simplesmente vários registros colados um atrás do outro.
 
 **Ler** (sem PIN) devolve **todos** os registradores, mais os registros somente-leitura
-`0x35` e `0x37`, que vêm **primeiro**: cerca de 252 bytes com o nome de fábrica (procure
+`0x35` e `0x37`, que vêm **primeiro**: cerca de 258 bytes com o nome de fábrica (procure
 cada registro pelo id, nunca pela posição). Isso é mais que um MTU, mas o Web Bluetooth, o
 bleak e o NimBLE buscam a leitura longa em pedaços sozinhos. Um trecho da
 leitura de fábrica:
@@ -987,9 +988,11 @@ e [`GaiaConfig.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gai
 | `0x14` | `potControlsThreshold` | u8 | 0–255 | 1 | ≠ 0: o potenciômetro define o limiar (ADC 0…4095 → −60…0 dBFS, linear, histerese de 0,5 dB); 0: usa `0x2B` |
 | `0x16` | `audioBpfEnabled` | u8 | 0–1 | 1 | Passa-banda do sopro antes do detector |
 | `0x17` | `audioHpHz` | u16 | 1–7000 | 10 | Corte do passa-altas, Hz |
-| `0x18` | `audioHpQX100` | u16 | 10–2000 | 500 | Q do passa-altas × 100 |
+| `0x18` | `audioHpQX100` | u16 | 10–2000 | 71 | Q do passa-altas × 100 = ganho exatamente no corte, em qualquer inclinação: 71 = −3 dB (Butterworth, plano), 100 = 0 dB, 500 = +14 dB. Sem efeito em 6 dB/oit. Era 500 até o esquema v9 (um 500 guardado vira 71 ao carregar) |
 | `0x19` | `audioLpHz` | u16 | 1–7000 | 200 | Corte do passa-baixas, Hz; precisa ser > `0x17` |
-| `0x1A` | `audioLpQX100` | u16 | 10–2000 | 500 | Q do passa-baixas × 100 |
+| `0x1A` | `audioLpQX100` | u16 | 10–2000 | 71 | Q do passa-baixas × 100, mesmo sentido de `0x18` |
+| `0x38` | `audioHpSlopeDbOct` | u8 | só 6, 12, 18, 24, 36, 48 | 12 | Inclinação do passa-altas, dB/oitava (Butterworth de ordem valor ÷ 6). Outro valor recusa a escrita inteira |
+| `0x39` | `audioLpSlopeDbOct` | u8 | só 6, 12, 18, 24, 36, 48 | 12 | Inclinação do passa-baixas, dB/oitava |
 | `0x1B` | `potEmaAlphaX1000` | u16 | 1–1000 | 300 | Suavização do potenciômetro, × 1000 |
 | `0x1F` | `audioRawStream` | u8 | 0–1 | 0 | Liga o pacote de áudio cru (`0x05`) |
 | `0x2B` | `breathThresholdNegDbX100` | u16 | 0–9000 | 3550 | Limiar fixo do sopro, guardado **sem sinal** como −dBFS × 100 (3550 = −35,5 dBFS), na escala da medida `0x2C`. Vale com `0x14` = 0. Absoluto: a linha de disparo; adaptativo: quanto o som precisa subir acima da linha de base |
@@ -1074,7 +1077,7 @@ sequenceDiagram
   C->>B: write …0002 com 20 31 32 33 34 (PIN)
   C->>B: write …0004 com registros TLV
   C->>B: read …0004
-  B-->>C: configuração completa, cerca de 252 bytes
+  B-->>C: configuração completa, cerca de 258 bytes
   C->>B: write …0002 com 11 (salvar)
 ```
 
