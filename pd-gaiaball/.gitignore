@@ -1,13 +1,4 @@
-build-test/
-# Pd headers fetched for local builds (the CI fetches its own)
-build-deps/
-# pd-lib-builder outputs
-*.o
-*.pd_linux
-*.pd_darwin
-*.d_fat
-*.dll
-*.so
-*.dylib
+# Release packaging output (pacotes/montar.py writes to the folder it is given; the CI uses dist/)
+*.zip
 *.dek
 *.dek.*
