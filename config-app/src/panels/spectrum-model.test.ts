@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_SPECTRUM_SCALE, SPECTRUM_SCALE_KEY, bandShading, loadSpectrumScale, saveSpectrumScale, specXRange,
+  DEFAULT_SPECTRUM_SCALE, SPECTRUM_SCALE_KEY, SPEC_DBFS_RANGE, SPEC_GAIN_RANGE, bandKey, loadSpectrumScale,
+  saveSpectrumScale, specXRange,
 } from './spectrum-model';
 
 const store = (v: string | null) => ({ getItem: () => v });
@@ -28,28 +29,23 @@ describe('spectrum scale', () => {
   });
 });
 
-describe('bandShading', () => {
-  const lin = [0, 1000] as const;
-  const log = [10, 1000] as const;
-
-  it('shades below the high-pass and above the low-pass', () => {
-    expect(bandShading({ enabled: true, hpHz: 10, lpHz: 200 }, lin)).toEqual([{ x0: 0, x1: 10 }, { x0: 200, x1: 1000 }]);
+describe('spectrum axes', () => {
+  it('both y axes span 120 dB, so 20 dB ticks share the grid (0 dB gain on -20 dBFS)', () => {
+    expect(SPEC_DBFS_RANGE[1] - SPEC_DBFS_RANGE[0]).toBe(120);
+    expect(SPEC_GAIN_RANGE[1] - SPEC_GAIN_RANGE[0]).toBe(120);
+    expect(Math.abs(SPEC_GAIN_RANGE[0] % 20)).toBe(0);
   });
+});
 
-  it('nothing below a high-pass at the left edge of the log axis', () => {
-    expect(bandShading({ enabled: true, hpHz: 10, lpHz: 200 }, log)).toEqual([{ x0: 200, x1: 1000 }]);
-  });
+describe('bandKey', () => {
+  const band = { enabled: true, hp: { hz: 10, qX100: 71, slopeDbOct: 12 }, lp: { hz: 200, qX100: 71, slopeDbOct: 12 } };
 
-  it('cutoffs outside the axis are clamped or dropped', () => {
-    expect(bandShading({ enabled: true, hpHz: 5, lpHz: 2000 }, log)).toEqual([]);
-    expect(bandShading({ enabled: true, hpHz: 1500, lpHz: 3000 }, lin)).toEqual([{ x0: 0, x1: 1000 }]);
-  });
-
-  it('no shading with the band-pass off', () => {
-    expect(bandShading({ enabled: false, hpHz: 10, lpHz: 200 }, lin)).toEqual([]);
-  });
-
-  it('a band with LP <= HP passes nothing', () => {
-    expect(bandShading({ enabled: true, hpHz: 300, lpHz: 100 }, lin)).toEqual([{ x0: 0, x1: 1000 }]);
+  it('changes with every parameter that moves the response', () => {
+    const k = bandKey(band);
+    expect(bandKey({ ...band })).toBe(k);
+    expect(bandKey({ ...band, enabled: false })).not.toBe(k);
+    expect(bandKey({ ...band, hp: { ...band.hp, slopeDbOct: 24 } })).not.toBe(k);
+    expect(bandKey({ ...band, lp: { ...band.lp, qX100: 500 } })).not.toBe(k);
+    expect(bandKey({ ...band, lp: { ...band.lp, hz: 300 } })).not.toBe(k);
   });
 });

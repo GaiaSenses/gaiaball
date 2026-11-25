@@ -448,3 +448,34 @@ describe('imuInUseName (status strip)', () => {
     expect(imuInUseName(undefined, 0)).toBe('não configurado');
   });
 });
+
+describe('band-pass slope and Q fields (TLV 0x38, 0x39, 0x18, 0x1A)', () => {
+  const byId = new Map(CONFIG_FIELDS.map((f) => [f.id, f]));
+  const slopeIds = [TLV.audioHpSlopeDbOct, TLV.audioLpSlopeDbOct];
+
+  it('a slope is a select of the standard values, 12 dB/oct by default', () => {
+    for (const id of slopeIds) {
+      const f = byId.get(id)!;
+      expect(f.kind).toBe('select');
+      expect(resolveOptions(f, new Map()).map(([v]) => v)).toEqual([6, 12, 18, 24, 36, 48]);
+      expect(FIELD_DEFAULTS.get(id)).toBe(12);
+    }
+  });
+
+  it('Q defaults to 0.71 (flat Butterworth) and hides at 6 dB/oct, which has no Q', () => {
+    for (const [q, slope] of [[TLV.audioHpQX100, TLV.audioHpSlopeDbOct], [TLV.audioLpQX100, TLV.audioLpSlopeDbOct]]) {
+      const f = byId.get(q!)!;
+      expect(FIELD_DEFAULTS.get(q!)).toBe(71);
+      expect(f.visible!(new Map([[slope!, 6]]))).toBe(false);
+      expect(f.visible!(new Map([[slope!, 24]]))).toBe(true);
+      expect(f.visible!(new Map())).toBe(true); // nothing read yet: the default 12 has a Q
+    }
+  });
+
+  it('every band control is switched off with the band-pass and stays out of the first screen', () => {
+    for (const id of [...slopeIds, TLV.audioHpQX100, TLV.audioLpQX100]) {
+      expect(governedOff(id, new Map([[TLV.audioBpfEnabled, 0]]))).toBe(true);
+      expect(BASIC_FIELD_IDS.has(id)).toBe(false);
+    }
+  });
+});

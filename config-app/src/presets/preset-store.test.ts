@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { PresetStore, type StorageLike } from './preset-store.ts';
+import { PresetStore, migratePresetRegs, type StorageLike } from './preset-store.ts';
+import { TLV } from '../protocol/tlv.ts';
 
 function memStorage(): StorageLike & { data: Record<string, string> } {
   const data: Record<string, string> = {};
@@ -74,5 +75,19 @@ describe('PresetStore', () => {
     const s = new PresetStore(bad);
     s.save('a', regs);
     expect(s.list()).toHaveLength(1);
+  });
+});
+
+describe('presets saved before the band-pass slopes', () => {
+  it('an old preset (no 0x38/0x39) brings Q 500, the old default, as 71', () => {
+    const old = [{ id: TLV.audioHpQX100, value: 500 }, { id: TLV.audioLpQX100, value: 300 }, { id: TLV.audioHpHz, value: 500 }];
+    expect(migratePresetRegs(old)).toEqual([
+      { id: TLV.audioHpQX100, value: 71 }, { id: TLV.audioLpQX100, value: 300 }, { id: TLV.audioHpHz, value: 500 },
+    ]);
+  });
+
+  it('a preset with the slopes keeps Q 500 as chosen', () => {
+    const now = [{ id: TLV.audioHpQX100, value: 500 }, { id: TLV.audioHpSlopeDbOct, value: 24 }];
+    expect(migratePresetRegs(now)).toEqual(now);
   });
 });

@@ -9,6 +9,8 @@ import { applyLabel, populatePlan } from './config-sync.ts';
 import { stripView } from './config-status.ts';
 import type { Co2Levels } from './chart-model.ts';
 import { bleErrorMessage, lockStateFrom } from '../ble/unlock-state.ts';
+import { DEFAULT_SLOPE_DB_OCT, SLOPES_DB_OCT, slopeLabel } from '../metrics/filter-response.ts';
+import { migratePresetRegs } from '../presets/preset-store.ts';
 
 type Kind = 'number' | 'range' | 'checkbox' | 'select' | 'text' | 'pin' | 'navref' | 'switch';
 export interface Field {
@@ -46,6 +48,22 @@ export interface Field {
   enabled?: (cfg: Map<number, unknown>) => boolean;
 }
 interface Group { title: string; fields: Field[] }
+
+/** Band-pass slopes on offer (TLV 0x38 / 0x39): Butterworth of order slope/6 (the order is in the info). */
+const SLOPE_OPTIONS: [number, string][] = SLOPES_DB_OCT.map((s) => [s, slopeLabel(s)]);
+const SLOPE_INFO = (side: 'abaixo' | 'acima'): string =>
+  `Quanto o filtro atenua a cada oitava ${side} do corte, longe dele: um Butterworth de ordem = inclinação ÷ 6 `
+  + '(6 = 1ª ordem, 12 = 2ª, 18 = 3ª, 24 = 4ª, 36 = 6ª, 48 = 8ª). 12 dB/oit (um biquad) é o padrão; 24 dB/oit corta o dobro por oitava, e assim por diante. Cada 12 dB/oit a mais '
+  + 'custa mais um estágio de filtro no ESP32 por microfone (48 dB/oit = 4 estágios), ainda leve. Em 6 dB/oit '
+  + '(1ª ordem) não há Q. Unidade: decibéis por oitava (dB/oit).';
+const Q_INFO = 'Ganho exatamente no corte, ×100, em qualquer inclinação: 71 = 0,71 = −3 dB (Butterworth, banda plana, '
+  + 'o padrão); 100 = 0 dB; 500 = +14 dB, um pico ressonante que realça justamente a frequência do corte. A inclinação '
+  + 'longe do corte não muda com o Q: vem da opção Inclinação. Some em 6 dB/oit, que não tem Q. Adimensional.';
+/** Slope in the form, the default while the field is empty or the ball never reported it. */
+const slopeOf = (cfg: Map<number, unknown>, id: number): number => {
+  const v = cfg.get(id);
+  return typeof v === 'number' ? v : DEFAULT_SLOPE_DB_OCT;
+};
 
 /** Wire value -> number shown in the form (scale and negate applied). */
 export function toDisplay(f: Pick<Field, 'scale' | 'negate'>, wire: number): number {
@@ -206,15 +224,19 @@ const GROUPS: Group[] = [
       offValue: 1000, onDefault: 300,
       info: 'Média móvel exponencial da leitura do potenciômetro (tira o chiado do ADC). Valor = alfa ×1000: 1000 = sem filtro. Adimensional.' },
     { id: TLV.audioBpfEnabled, label: 'Filtro passa-banda (sopro)', kind: 'checkbox',
-      info: 'Mantém só a faixa de frequências típica do sopro (entre o high-pass e o low-pass) antes do detector. Ajuste os cortes olhando o espectro no painel Sensores. Liga/desliga, sem unidade.' },
+      info: 'Atenua o que fica fora da faixa típica do sopro (abaixo do high-pass e acima do low-pass) antes do detector, do RMS e do pico. O corte é gradual, na inclinação escolhida, não uma parede: o painel Sensores desenha a resposta real do filtro sobre o espectro. Liga/desliga, sem unidade.' },
     { id: TLV.audioHpHz, label: 'High-pass (Hz)', kind: 'number', min: 1, max: 7000,
       info: 'Corte inferior do passa-banda: atenua o que fica abaixo dele (vibração, manuseio da bola). Unidade: hertz (Hz).' },
+    { id: TLV.audioHpSlopeDbOct, label: 'Inclinação do high-pass', kind: 'select', options: SLOPE_OPTIONS,
+      info: SLOPE_INFO('abaixo') },
     { id: TLV.audioHpQX100, label: 'Q do high-pass (×100)', kind: 'number', min: 10, max: 2000,
-      info: 'Fator de qualidade do corte ×100 (71 = 0,71 = resposta plana). Acima disso cria pico ressonante de ~20·log₁₀(Q) dB no corte; a inclinação vem da ordem do filtro, não do Q. Adimensional.' },
+      visible: (cfg) => slopeOf(cfg, TLV.audioHpSlopeDbOct) !== 6, info: Q_INFO },
     { id: TLV.audioLpHz, label: 'Low-pass (Hz)', kind: 'number', min: 1, max: 7000,
       info: 'Corte superior do passa-banda: atenua o que fica acima dele. Precisa ficar acima do high-pass. Unidade: hertz (Hz).' },
+    { id: TLV.audioLpSlopeDbOct, label: 'Inclinação do low-pass', kind: 'select', options: SLOPE_OPTIONS,
+      info: SLOPE_INFO('acima') },
     { id: TLV.audioLpQX100, label: 'Q do low-pass (×100)', kind: 'number', min: 10, max: 2000,
-      info: 'Fator de qualidade do corte ×100 (71 = 0,71 = resposta plana); valores altos criam pico ressonante no corte. Adimensional.' },
+      visible: (cfg) => slopeOf(cfg, TLV.audioLpSlopeDbOct) !== 6, info: Q_INFO },
     { id: TLV.audioRawStream, label: 'Stream de áudio cru (2 kHz)', kind: 'checkbox',
       info: 'Envia o áudio mono decimado a 2 kHz para desenhar o espectro no painel Sensores. Ligue só para ajustar os cortes do passa-banda: enquanto está ligado ele consome ~4,3 kB/s e ~45 ms de tempo de ar por segundo — mais que todos os outros pacotes somados. O RMS e o pico não dependem dele (vêm medidos do firmware em cada pacote de orientação). Liga/desliga, sem unidade.' },
   ] },
@@ -289,7 +311,9 @@ export const GOVERNORS: ReadonlyMap<number, readonly number[]> = new Map([
     TLV.breathDetector, TLV.potControlsThreshold, TLV.breathMetric, TLV.breathThresholdNegDbX100,
     TLV.breathRearmDb, TLV.debounceMs, TLV.audioFastAlphaX1000, TLV.audioSlowAlphaX1000,
   ]],
-  [TLV.audioBpfEnabled, [TLV.audioHpHz, TLV.audioHpQX100, TLV.audioLpHz, TLV.audioLpQX100]],
+  [TLV.audioBpfEnabled, [
+    TLV.audioHpHz, TLV.audioHpSlopeDbOct, TLV.audioHpQX100, TLV.audioLpHz, TLV.audioLpSlopeDbOct, TLV.audioLpQX100,
+  ]],
   [TLV.co2Enabled, [TLV.co2StaleTimeoutMs, TLV.co2EmaAlphaX1000, TLV.co2RawLogMode]],
   [TLV.serialLogEnabled, [TLV.co2RawLogMode]],
 ]);
@@ -302,15 +326,28 @@ export function governedOff(id: number, cfg: ReadonlyMap<number, unknown>): bool
   return false;
 }
 
-/** Spectrum band as the form shows it right now (the cutoffs the person is choosing). */
-export interface FormBand { enabled: boolean; hpHz: number | null; lpHz: number | null }
+/** Spectrum band as the form shows it right now (the filters the person is choosing); an empty field is null. */
+export interface FormBand {
+  enabled: boolean;
+  hpHz: number | null;
+  hpQX100: number | null;
+  hpSlopeDbOct: number | null;
+  lpHz: number | null;
+  lpQX100: number | null;
+  lpSlopeDbOct: number | null;
+  /** Some band control was edited since the last read or apply (it is not on the ball yet). */
+  edited: boolean;
+}
 export interface BandSource {
   current(): FormBand;
   /** Calls `fn` now and on every change of the band-pass controls. */
   subscribe(fn: (b: FormBand) => void): void;
 }
 /** Registers whose edits move the spectrum's band. */
-const BAND_IDS: ReadonlySet<number> = new Set([TLV.audioBpfEnabled, TLV.audioHpHz, TLV.audioLpHz]);
+const BAND_IDS: ReadonlySet<number> = new Set([
+  TLV.audioBpfEnabled, TLV.audioHpHz, TLV.audioHpQX100, TLV.audioHpSlopeDbOct,
+  TLV.audioLpHz, TLV.audioLpQX100, TLV.audioLpSlopeDbOct,
+]);
 /** CO2 trigger and virtual peak as the form shows them (the CO2 meter's mark and scale). */
 export interface Co2Source {
   current(): Co2Levels;
@@ -381,9 +418,11 @@ export const FIELD_DEFAULTS: ReadonlyMap<number, number | string> = new Map<numb
   [TLV.potEmaAlphaX1000, 300],
   [TLV.audioBpfEnabled, 1],
   [TLV.audioHpHz, 10],
-  [TLV.audioHpQX100, 500],
+  [TLV.audioHpQX100, 71],
+  [TLV.audioHpSlopeDbOct, DEFAULT_SLOPE_DB_OCT],
   [TLV.audioLpHz, 200],
-  [TLV.audioLpQX100, 500],
+  [TLV.audioLpQX100, 71],
+  [TLV.audioLpSlopeDbOct, DEFAULT_SLOPE_DB_OCT],
   [TLV.audioRawStream, 0],
   [TLV.audioWindowMs, 50],
   [TLV.co2Enabled, 1],
@@ -745,7 +784,8 @@ export function mountConfigPanel(
     el.addEventListener('input', () => { dirty.add(id); refreshForm(); });
     el.addEventListener('change', () => {
       if (id === TLV.imuChip) { refreshDependentOptions(); refreshImuBanner(); }
-      if (id === TLV.navMode || id === TLV.breathDetector || id === TLV.potControlsThreshold) refreshVisibility();
+      if (id === TLV.navMode || id === TLV.breathDetector || id === TLV.potControlsThreshold
+        || id === TLV.audioHpSlopeDbOct || id === TLV.audioLpSlopeDbOct) refreshVisibility();
       if (GOVERNORS.has(id)) applyEnabled();
       if (BAND_IDS.has(id)) emitBand();
       if (CO2_IDS.has(id)) emitCo2();
@@ -839,12 +879,21 @@ export function mountConfigPanel(
   };
   /** The band-pass as the form shows it, for the spectrum's shading (it follows the controls, applied or not). */
   const formBand = (): FormBand => {
-    const hp = getValue(byId(TLV.audioHpHz));
-    const lp = getValue(byId(TLV.audioLpHz));
+    const num = (id: number): number | null => { const v = getValue(byId(id)); return typeof v === 'number' ? v : null; };
     return {
       enabled: getValue(byId(TLV.audioBpfEnabled)) === 1,
-      hpHz: typeof hp === 'number' ? hp : null,
-      lpHz: typeof lp === 'number' ? lp : null,
+      hpHz: num(TLV.audioHpHz),
+      hpQX100: num(TLV.audioHpQX100),
+      hpSlopeDbOct: num(TLV.audioHpSlopeDbOct),
+      lpHz: num(TLV.audioLpHz),
+      lpQX100: num(TLV.audioLpQX100),
+      lpSlopeDbOct: num(TLV.audioLpSlopeDbOct),
+      // Differs from the ball, like Aplicar judges it (changedFields): touching a control and
+      // putting it back is not a pending change.
+      edited: [...BAND_IDS].some((id) => {
+        const v = getValue(byId(id));
+        return snapshot.has(id) ? snapshot.get(id) !== v : dirty.has(id);
+      }),
     };
   };
   const bandListeners = new Set<(b: FormBand) => void>();
@@ -1078,6 +1127,8 @@ export function mountConfigPanel(
       } else if (snapshot.has(f.id)) {
         if (snapshot.get(f.id) === v) continue;
       } else if (!dirty.has(f.id)) continue; // never reported by the device and untouched
+      // A hidden row the person emptied (e.g. the Q of a 6 dB/oct cut) has nothing to send.
+      if (v === null && rows.get(f.id)?.hidden) continue;
       out.push({ f, v });
     }
     return out;
@@ -1208,7 +1259,7 @@ export function mountConfigPanel(
   q('[data-act=pload]').addEventListener('click', () => {
     const p = store.list().find((x) => x.name === plist.value);
     if (!p) { pmsg.textContent = 'Selecione um preset.'; return; }
-    for (const r of p.regs) {
+    for (const r of migratePresetRegs(p.regs)) {
       const f = FIELDS.find((x) => x.id === r.id);
       // Per-ball registers (PIN, IMU chip, navigation reference) are never
       // part of a preset, even one saved by an older version that did include them.
