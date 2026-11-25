@@ -1,7 +1,6 @@
 #include <unity.h>
 #include <cmath>
 #include <vector>
-#include "../../Gaiaball/src/logic/AudioBlock.h"
 #include "../../Gaiaball/src/logic/AudioDecimator.h"
 #include "../../Gaiaball/src/logic/AudioFeatures.h"
 #include "../../Gaiaball/src/logic/BreathDetector.h"
@@ -11,55 +10,6 @@ using namespace gaia;
 
 void setUp() {}
 void tearDown() {}
-
-// Interleaved stereo block of 256 frames; 8 whole cycles per block (exact RMS = A/sqrt2).
-// Values are 24-bit sample units, stored left-aligned (<<8) like the INMP441 DMA data.
-static std::vector<int32_t> makeBlock(double ampL, double offL, double ampR, double offR) {
-  const int frames = 256;
-  std::vector<int32_t> v(frames * 2);
-  for (int i = 0; i < frames; i++) {
-    double ph = 2.0 * M_PI * 8.0 * i / frames;
-    v[2 * i] = (int32_t)std::lround(offL + ampL * std::sin(ph)) * 256;
-    v[2 * i + 1] = (int32_t)std::lround(offR + ampR * std::sin(ph)) * 256;
-  }
-  return v;
-}
-
-void test_rms_dc_removal() {
-  auto b = makeBlock(10000, 200000, 10000, -300000);
-  StereoRms r = computeStereoRms(b.data(), b.size());
-  const float expect = 10000.f / std::sqrt(2.f);
-  TEST_ASSERT_FLOAT_WITHIN(expect * 0.01f, expect, r.left);
-  TEST_ASSERT_FLOAT_WITHIN(expect * 0.01f, expect, r.right);
-}
-
-void test_rms_stereo_split() {
-  auto b = makeBlock(2000, 0, 8000, 5000);
-  StereoRms r = computeStereoRms(b.data(), b.size());
-  TEST_ASSERT_FLOAT_WITHIN(2000.f / 1.41421f * 0.01f, 2000.f / 1.41421f, r.left);
-  TEST_ASSERT_FLOAT_WITHIN(8000.f / 1.41421f * 0.01f, 8000.f / 1.41421f, r.right);
-}
-
-void test_rms_degenerate() {
-  int32_t d[3] = {1 << 8, 2 << 8, 3 << 8};
-  StereoRms r = computeStereoRms(d, 3);  // < 4 samples
-  TEST_ASSERT_EQUAL_FLOAT(0.f, r.left);
-  TEST_ASSERT_EQUAL_FLOAT(0.f, r.right);
-  r = computeStereoRms(nullptr, 0);
-  TEST_ASSERT_EQUAL_FLOAT(0.f, r.left);
-  // Constant signal (pure DC) -> zero RMS.
-  std::vector<int32_t> dc(64, 123456 * 256);
-  r = computeStereoRms(dc.data(), dc.size());
-  TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.f, r.left);
-  TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.f, r.right);
-}
-
-void test_rms_odd_trailing_ignored() {
-  auto b = makeBlock(4000, 0, 4000, 0);
-  b.push_back(0x7FFFFF00);  // stray odd sample must not affect the result
-  StereoRms r = computeStereoRms(b.data(), b.size());
-  TEST_ASSERT_FLOAT_WITHIN(4000.f / 1.41421f * 0.01f, 4000.f / 1.41421f, r.left);
-}
 
 // Adaptive steps are 15 ms (3 blocks of 5 ms), the real cadence of the adaptive mode.
 static uint32_t t = 0;
@@ -226,19 +176,6 @@ void test_dbfs_to_counts() {
   TEST_ASSERT_FLOAT_WITHIN(0.0005f, 0.70795f, dbToAmplitudeRatio(3.f));
 }
 
-// --- RMS accumulator precision (float, not double) -------------------------
-// A full-scale sine is the worst case for a float sum of squares: 256 terms of up to
-// 2^46. If the accumulator is adequate the error stays far below the 0.01 dB
-// resolution of the wire format (0.115 % in amplitude).
-void test_rms_float_accumulator_precision() {
-  const double amp = 8388607.0;  // 2^23 - 1
-  auto b = makeBlock(amp, 0, amp, 0);
-  StereoRms r = computeStereoRms(b.data(), b.size());
-  const float expect = (float)(amp / std::sqrt(2.0));
-  TEST_ASSERT_FLOAT_WITHIN(expect * 0.0005f, expect, r.left);
-  TEST_ASSERT_FLOAT_WITHIN(expect * 0.0005f, expect, r.right);
-}
-
 // --- dBFS encoding ---------------------------------------------------------
 void test_rms_dbfs_is_aes17() {
   // RMS of a full-scale sine reads 0.00 dBFS, not -3.01.
@@ -376,11 +313,6 @@ void test_decimator_reset_drops_partial_chunk() {
 
 int main() {
   UNITY_BEGIN();
-  RUN_TEST(test_rms_dc_removal);
-  RUN_TEST(test_rms_stereo_split);
-  RUN_TEST(test_rms_degenerate);
-  RUN_TEST(test_rms_odd_trailing_ignored);
-  RUN_TEST(test_rms_float_accumulator_precision);
   RUN_TEST(test_rms_dbfs_is_aes17);
   RUN_TEST(test_peak_dbfs_is_amplitude);
   RUN_TEST(test_dbfs_floor_and_saturation);

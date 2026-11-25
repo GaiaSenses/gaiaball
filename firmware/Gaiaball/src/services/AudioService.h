@@ -8,7 +8,7 @@
 
 #include "../logic/AudioDecimator.h"
 #include "../logic/AudioFeatures.h"
-#include "../logic/Biquad.h"
+#include "../logic/AudioFrontEnd.h"
 #include "../logic/BreathDetector.h"
 #include "../logic/GaiaConfig.h"
 
@@ -18,13 +18,14 @@ namespace gaia {
 // streamer.
 //
 // Pipeline per 80-frame block (5 ms at 16 kHz, 32-bit I2S, samples >> 8 = 24-bit
-// counts):
-//   i2s_read -> per-block DC removal ->
+// counts), the per-sample part in AudioFrontEnd (logic/, host-tested):
+//   i2s_read -> continuous DC blocker (2 Hz, first order) ->
 //     (a) raw mono mix -> AudioDecimator -> 2 kHz int16 chunks for the config-app
-//         spectrum analyzer (the FFT runs in the frontend). OPT-IN: only while
-//         GaiaConfig::audioRawStream is set, because this one stream used to be 53 %
-//         of all the BLE air time on the link;
-//     (b) optional breath band-pass (HP then LP biquads, config TLV 0x16..0x1A)
+//         spectrum analyzer (the FFT runs in the frontend). Taken BEFORE the band-pass.
+//         OPT-IN: only while GaiaConfig::audioRawStream is set, because this one stream
+//         used to be 53 % of all the BLE air time on the link;
+//     (b) optional breath band-pass (HP then LP, Butterworth 6..48 dB/oct with Q = gain at
+//         the cutoff, config TLV 0x16..0x1A, 0x38, 0x39; see FilterCascade)
 //         -> per-channel sum of squares and max |sample| -> AudioLevelWindow (audioWindowMs,
 //            TLV 0x2F, default 50 ms, pooled energy, fresh every block) ->
 //              - levels(), published on every ImuPacket (RMS + peak per channel) and
@@ -33,8 +34,12 @@ namespace gaia {
 //                (TLV 0x2C: RMS or peak) -> peak callback on the firing edge, and
 //                the breath bit (recognized + latch) for the ImuPacket. The absolute
 //                detector runs on every block; the adaptive one every 3rd block.
-// With the band-pass disabled the RMS math is identical to the reference
-// computeStereoRms() (logic/AudioBlock.h), which stays as the host-tested spec.
+// The DC blocker replaced a per-block mean subtraction (v9), which acted as a hidden
+// high-pass near 90 Hz and folded low frequencies to multiples of 200 Hz.
+//
+// CPU: per sample and channel, 1 multiply for the DC blocker and 7 per second-order
+// section of the band-pass (12 dB/oct = one section). The worst case, 48 + 48 dB/oct, is
+// 8 sections per channel.
 //
 // WHY the block is 5 ms and not 16 ms: the published envelope can never be fresher
 // than one block, and the orientation notify rate goes up to 200 Hz. The per-sample
@@ -108,7 +113,8 @@ class AudioService {
   std::atomic<bool> enabled_{true};
   std::atomic<bool> bpfEnabled_{true};
   std::atomic<bool> rawStreamEnabled_{false};
-  std::atomic<uint16_t> hpHz_{10}, hpQX100_{500}, lpHz_{200}, lpQX100_{500};
+  std::atomic<uint16_t> hpHz_{10}, hpQX100_{71}, lpHz_{200}, lpQX100_{71};
+  std::atomic<uint8_t> hpSlope_{12}, lpSlope_{12};
   std::atomic<uint16_t> windowMs_{50};
   std::atomic<bool> cfgDirty_{true};
 
@@ -137,8 +143,7 @@ class AudioService {
   float activeDbfs_ = 0.0f;
   AudioDecimator decim_;
   AudioLevelWindow window_;
-  Biquad hpL_, lpL_, hpR_, lpR_;
-  bool bpfActive_ = true;
+  AudioFrontEnd frontEnd_;
   bool rawStreamActive_ = false;
   uint8_t detectorPhase_ = 0;
 };

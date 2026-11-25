@@ -1,6 +1,7 @@
 #include <unity.h>
 #include <cstdio>
 #include <cstring>
+#include <initializer_list>
 #include "../../Gaiaball/src/logic/GaiaConfig.h"
 #include "../../Gaiaball/src/logic/ImuStatus.h"
 #include "../../Gaiaball/src/logic/MagAxisRemap.h"
@@ -40,9 +41,11 @@ void test_defaults_match_legacy() {
   TEST_ASSERT_EQUAL(0, c.accelLpAlphaX1000);   // accel filter off = legacy raw
   TEST_ASSERT_EQUAL(1, c.audioBpfEnabled);     // breath band-pass on by default
   TEST_ASSERT_EQUAL(10, c.audioHpHz);
-  TEST_ASSERT_EQUAL(500, c.audioHpQX100);      // Q = 5.00 (requested "high Q")
+  TEST_ASSERT_EQUAL(71, c.audioHpQX100);       // Q = 0.71: flat Butterworth band (was 5.00 until v9)
   TEST_ASSERT_EQUAL(200, c.audioLpHz);
-  TEST_ASSERT_EQUAL(500, c.audioLpQX100);
+  TEST_ASSERT_EQUAL(71, c.audioLpQX100);
+  TEST_ASSERT_EQUAL(12, c.audioHpSlopeDbOct);  // 12 dB/oct = the single biquad of before v9
+  TEST_ASSERT_EQUAL(12, c.audioLpSlopeDbOct);
   TEST_ASSERT_EQUAL(300, c.potEmaAlphaX1000);  // legacy 0.3
   TEST_ASSERT_EQUAL(1000, c.co2EmaAlphaX1000); // 1000 = no smoothing (legacy)
   TEST_ASSERT_EQUAL(0, c.serialLogEnabled);    // serial log OFF by default
@@ -359,6 +362,72 @@ void test_raw_audio_stream_defaults_off_and_roundtrips() {
   const uint8_t off[] = {0x1F, 1, 0};
   TEST_ASSERT_TRUE(tlvApply(c, off, sizeof off));
   TEST_ASSERT_EQUAL(0, c.audioRawStream);
+}
+
+// Band-pass slopes (0x38 HP, 0x39 LP): only the standard 6/12/18/24/36/48 dB/oct; any
+// other value fails the whole write, and the pair round-trips through the serializer.
+void test_band_slopes_accept_only_standard_values() {
+  for (uint8_t v : {6, 12, 18, 24, 36, 48}) {
+    GaiaConfig c;
+    const uint8_t buf[] = {0x38, 1, v, 0x39, 1, v};
+    TEST_ASSERT_TRUE(tlvApply(c, buf, sizeof buf));
+    TEST_ASSERT_EQUAL(v, c.audioHpSlopeDbOct);
+    TEST_ASSERT_EQUAL(v, c.audioLpSlopeDbOct);
+  }
+  for (uint8_t v : {0, 5, 7, 30, 42, 49, 54, 255}) {
+    const uint8_t hp[] = {0x02, 1, 20, 0x38, 1, v};  // a valid record first: all or nothing
+    assertRejected(hp, sizeof hp);
+    const uint8_t lp[] = {0x39, 1, v};
+    assertRejected(lp, sizeof lp);
+  }
+  const uint8_t u16[] = {0x38, 2, 24, 0};  // u8 register
+  assertRejected(u16, sizeof u16);
+
+  GaiaConfig a;
+  a.audioHpSlopeDbOct = 48;
+  a.audioLpSlopeDbOct = 18;
+  uint8_t buf[384];
+  const size_t n = tlvSerialize(a, buf, sizeof buf);
+  GaiaConfig b;
+  TEST_ASSERT_TRUE(tlvApply(b, buf, n));
+  TEST_ASSERT_EQUAL(48, b.audioHpSlopeDbOct);
+  TEST_ASSERT_EQUAL(18, b.audioLpSlopeDbOct);
+}
+
+// A stored invalid slope (a hand-edited NVS, a future value) is skipped on the lenient
+// load and the default stays.
+void test_lenient_load_skips_invalid_slope() {
+  GaiaConfig c;
+  const uint8_t buf[] = {0x38, 1, 30, 0x39, 1, 36};
+  TEST_ASSERT_EQUAL(1, tlvApplyLenient(c, buf, sizeof buf));
+  TEST_ASSERT_EQUAL(12, c.audioHpSlopeDbOct);
+  TEST_ASSERT_EQUAL(36, c.audioLpSlopeDbOct);
+}
+
+// Before schema v9 the band-pass Q default was 500 (Q 5.00). A config saved by an older
+// firmware that still holds 500 moves to the new flat default; any other Q is the
+// person's and stays; a v9 save is final (500 chosen again sticks).
+void test_band_q_migration_from_pre_v9() {
+  GaiaConfig old;
+  old.audioHpQX100 = 500;
+  old.audioLpQX100 = 500;
+  migrateStoredConfig(old, 8);
+  TEST_ASSERT_EQUAL(71, old.audioHpQX100);
+  TEST_ASSERT_EQUAL(71, old.audioLpQX100);
+
+  GaiaConfig tuned;
+  tuned.audioHpQX100 = 500;  // untouched old default
+  tuned.audioLpQX100 = 300;  // tuned by hand
+  migrateStoredConfig(tuned, 0);  // no "ver" key at all
+  TEST_ASSERT_EQUAL(71, tuned.audioHpQX100);
+  TEST_ASSERT_EQUAL(300, tuned.audioLpQX100);
+
+  GaiaConfig chosen;
+  chosen.audioHpQX100 = 500;
+  chosen.audioLpQX100 = 500;
+  migrateStoredConfig(chosen, 9);
+  TEST_ASSERT_EQUAL(500, chosen.audioHpQX100);
+  TEST_ASSERT_EQUAL(500, chosen.audioLpQX100);
 }
 
 void test_imu_fusion_registers_roundtrip() {
@@ -1109,6 +1178,9 @@ int main(int, char **) {
   RUN_TEST(test_lenient_restores_cross_field_invariants);
   RUN_TEST(test_imu_fusion_defaults);
   RUN_TEST(test_raw_audio_stream_defaults_off_and_roundtrips);
+  RUN_TEST(test_band_slopes_accept_only_standard_values);
+  RUN_TEST(test_lenient_load_skips_invalid_slope);
+  RUN_TEST(test_band_q_migration_from_pre_v9);
   RUN_TEST(test_imu_fusion_registers_roundtrip);
   RUN_TEST(test_imu_fusion_registers_reject_out_of_range);
   RUN_TEST(test_mag_calibration_roundtrip);

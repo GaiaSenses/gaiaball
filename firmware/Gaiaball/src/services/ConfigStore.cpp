@@ -16,8 +16,9 @@ constexpr const char *kKeyPin = "pin";
 constexpr const char *kKeyMount = "mount";
 constexpr const char *kKeyVer = "ver";
 constexpr const char *kTag = "cfg";
-// Worst-case tlvSerialize output is ~240 B (58 serialized registers, incl. the 24-byte
-// magnetometer calibration record); headroom for new ids.
+// tlvSerialize output: 252 B with the factory name, 261 B worst case (60 serialized
+// registers, incl. the 24-byte magnetometer calibration record and a 16-char name);
+// headroom for new ids.
 constexpr size_t kTlvBufCap = 384;
 Preferences g_prefs;
 
@@ -52,7 +53,9 @@ bool ConfigStore::begin() {
     uint8_t buf[kTlvBufCap];
     g_prefs.getBytes(kKeyTlv, buf, tlvLen);
     const size_t applied = tlvApplyLenient(cfg_, buf, tlvLen);
-    GB_LOGI(kTag, "loaded from NVS (%u TLV records)", (unsigned)applied);
+    const uint8_t storedVer = g_prefs.getUChar(kKeyVer, 0);
+    migrateStoredConfig(cfg_, storedVer);
+    GB_LOGI(kTag, "loaded from NVS (%u TLV records, schema v%u)", (unsigned)applied, (unsigned)storedVer);
   } else {
     GB_LOGI(kTag, "no stored config; using defaults");
   }

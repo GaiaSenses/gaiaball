@@ -1,6 +1,8 @@
 #include "TlvCodec.h"
 #include <string.h>
 
+#include "FilterCascade.h"
+
 namespace gaia {
 namespace {
 
@@ -38,6 +40,8 @@ constexpr Reg kRegs[] = {
     {0x16, Kind::U8, 0, 1},
     {0x17, Kind::U16, 1, 7000},       {0x18, Kind::U16, 10, 2000},
     {0x19, Kind::U16, 1, 7000},       {0x1A, Kind::U16, 10, 2000},
+    // Band-pass slopes in dB/octave (v9): only 6, 12, 18, 24, 36, 48 (see validValue).
+    {0x38, Kind::U8, 6, 48},          {0x39, Kind::U8, 6, 48},
     {0x1B, Kind::U16, 1, 1000},       {0x1F, Kind::U8, 0, 1},
     {0x1C, Kind::U16, 0, 10000},      {0x1D, Kind::U8, 0, 100},
     {0x1E, Kind::MagCal, 0, 0},       {0x20, Kind::U8, 0, kAnyU8},
@@ -108,6 +112,8 @@ void *numField(GaiaConfig &c, uint8_t id) {
     case 0x18: return &c.audioHpQX100;
     case 0x19: return &c.audioLpHz;
     case 0x1A: return &c.audioLpQX100;
+    case 0x38: return &c.audioHpSlopeDbOct;
+    case 0x39: return &c.audioLpSlopeDbOct;
     case 0x1B: return &c.potEmaAlphaX1000;
     case 0x1F: return &c.audioRawStream;
     case 0x20: return &c.co2Enabled;
@@ -237,6 +243,7 @@ bool validValue(const Reg &r, const uint8_t *v, size_t len) {
       if (len != numSize(r.kind)) return false;
       uint32_t x = readLe(v, len);
       if (r.id == 0x30 || r.id == 0x31) return x <= 0xFF && isValidOutputGpio(static_cast<uint8_t>(x));
+      if (r.id == 0x38 || r.id == 0x39) return x <= 0xFF && FilterCascade::validSlope(static_cast<uint8_t>(x));
       return x >= r.min && x <= r.max;
     }
   }

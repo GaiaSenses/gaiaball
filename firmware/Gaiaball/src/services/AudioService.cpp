@@ -91,6 +91,8 @@ void AudioService::applyConfig(const GaiaConfig &cfg) {
   hpQX100_.store(cfg.audioHpQX100);
   lpHz_.store(cfg.audioLpHz);
   lpQX100_.store(cfg.audioLpQX100);
+  hpSlope_.store(cfg.audioHpSlopeDbOct);
+  lpSlope_.store(cfg.audioLpSlopeDbOct);
   windowMs_.store(cfg.audioWindowMs);
   cfgDirty_.store(true);
 }
@@ -157,7 +159,6 @@ void AudioService::taskLoop() {
       metricPeak_ = wantPeak;
       breathParams_ = bp;
       breathDirty_ = true;  // thresholdCounts is filled in once the levels are in
-      bpfActive_ = bpfEnabled_.load();
       window_.setBlocks(AudioLevelWindow::blocksForMs(windowMs_.load()));
       // Raw stream toggled: starting fresh keeps the first chunk after a pause from
       // mixing new samples with ones captured before it; stopping drops the chunk the
@@ -168,55 +169,31 @@ void AudioService::taskLoop() {
         chunkReady_.store(false);
         rawStreamActive_ = wantRaw;
       }
-      const float fs = (float)kSampleRate;
-      hpL_.configure(Biquad::Type::HighPass, (float)hpHz_.load(), hpQX100_.load() / 100.0f, fs);
-      hpR_.configure(Biquad::Type::HighPass, (float)hpHz_.load(), hpQX100_.load() / 100.0f, fs);
-      lpL_.configure(Biquad::Type::LowPass, (float)lpHz_.load(), lpQX100_.load() / 100.0f, fs);
-      lpR_.configure(Biquad::Type::LowPass, (float)lpHz_.load(), lpQX100_.load() / 100.0f, fs);
+      BandPassSettings band;
+      band.enabled = bpfEnabled_.load();
+      band.hpHz = (float)hpHz_.load();
+      band.hpQ = hpQX100_.load() / 100.0f;
+      band.hpSlopeDbOct = hpSlope_.load();
+      band.lpHz = (float)lpHz_.load();
+      band.lpQ = lpQX100_.load() / 100.0f;
+      band.lpSlopeDbOct = lpSlope_.load();
+      frontEnd_.configure(band);
     }
 
-    // Per-block DC removal (same math as the reference computeStereoRms), fused with
-    // the raw-audio decimator feed, the optional band-pass, the energy accumulation
-    // and the peak tracking: one pass over the samples does all four.
+    // One pass over the samples: DC blocker, raw-stream feed (before the band-pass),
+    // optional band-pass, energy and peak (AudioFrontEnd).
     const size_t frames = (bytes / sizeof(int32_t)) / 2;
     if (frames == 0) continue;
-    int64_t sumL = 0, sumR = 0;  // int64: exact for any block size
-    for (size_t i = 0; i < frames; i++) {
-      sumL += buf[2 * i] >> 8;
-      sumR += buf[2 * i + 1] >> 8;
-    }
-    const float meanL = (float)sumL / (float)frames;
-    const float meanR = (float)sumR / (float)frames;
-    // float, not double: the Xtensa LX6 FPU is single-precision only, so every double
-    // operation in this loop was emulated in software -- more cycles than the whole
-    // rest of the audio front end. The relative error of the sum stays near 1e-5,
-    // which is 1e-4 dB (see test_rms_float_accumulator_precision).
-    float sumSq[2] = {0.0f, 0.0f};
-    float peak[2] = {0.0f, 0.0f};
-    for (size_t i = 0; i < frames; i++) {
-      float l = (float)(buf[2 * i] >> 8) - meanL;
-      float r = (float)(buf[2 * i + 1] >> 8) - meanR;
-      // Raw (unfiltered) mono mix feeds the 2 kHz stream for the frontend FFT, and
-      // only while that stream is switched on (GaiaConfig::audioRawStream).
-      if (rawStreamActive_ && decim_.feed(0.5f * (l + r))) {
+    const BlockEnergy e = frontEnd_.processBlock(buf, frames, [this](float mono) {
+      // Only while the raw stream is on (GaiaConfig::audioRawStream).
+      if (rawStreamActive_ && decim_.feed(mono)) {
         portENTER_CRITICAL(&chunkMux_);
         memcpy(chunkBuf_, decim_.chunk(), sizeof(chunkBuf_));
         chunkReady_.store(true);
         portEXIT_CRITICAL(&chunkMux_);
       }
-      if (bpfActive_) {
-        l = lpL_.process(hpL_.process(l));
-        r = lpR_.process(hpR_.process(r));
-      }
-      sumSq[0] += l * l;
-      sumSq[1] += r * r;
-      // Peak at the full 16 kHz, on the same signal as the RMS so that peak/RMS is a
-      // meaningful crest factor.
-      const float al = fabsf(l), ar = fabsf(r);
-      if (al > peak[0]) peak[0] = al;
-      if (ar > peak[1]) peak[1] = ar;
-    }
-    window_.push(sumSq, peak, (uint16_t)frames);
+    });
+    window_.push(e.sumSq, e.peak, (uint16_t)frames);
     const AudioLevels lv = window_.levels();
     rmsL_.store(lv.rms[0]);
     rmsR_.store(lv.rms[1]);

@@ -25,6 +25,41 @@ class Ema {
   bool seeded_ = false;
 };
 
+// First-order DC blocker: y[n] = x[n] - x[n-1] + R * y[n-1], -3 dB near `cutoffHz`.
+//
+// WHY: the microphone words carry a DC offset that must go before any RMS. It used to be
+// removed by subtracting each 5 ms block's mean, which is not a DC remover but a
+// time-varying high-pass: about -3 dB at 90 Hz and -21 dB at 10 Hz, and it moved part of
+// the low-frequency energy to multiples of the 200 Hz block rate. This one is a plain
+// LTI first-order high-pass far below the breath band (at 2 Hz: -0.17 dB at 10 Hz).
+//
+// The first sample seeds the state, so the stored offset does not come out as a step at
+// boot. For integer-valued input (24-bit counts) x - x[n-1] is exact in float and the DC
+// gain is exactly zero.
+class DcBlocker {
+ public:
+  void configure(float cutoffHz, float fs) { r_ = 1.0f - 2.0f * (float)M_PI * cutoffHz / fs; }
+  float process(float x) {
+    if (!primed_) {
+      x1_ = x;
+      primed_ = true;
+    }
+    const float y = (x - x1_) + r_ * y1_;
+    x1_ = x;
+    y1_ = y;
+    return y;
+  }
+  void reset() {
+    primed_ = false;
+    y1_ = 0.0f;
+  }
+
+ private:
+  float r_ = 0.999f;
+  float x1_ = 0.0f, y1_ = 0.0f;
+  bool primed_ = false;
+};
+
 
 // Hampel spike filter over a 5-sample TRAILING window.
 //

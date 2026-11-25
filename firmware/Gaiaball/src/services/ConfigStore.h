@@ -10,10 +10,14 @@
 
 namespace gaia {
 
-// Informational only since v6: the config is persisted as TLV (stable register ids,
-// unknown/invalid records skipped on load), so a schema bump no longer discards the
-// stored config — new fields simply load their defaults.
-constexpr uint8_t kConfigSchemaVersion = 8;  // v6: TLV persistence; v7: imuChip, magAxisRemap; v8: breath detector in dB, 0x15 retired
+// Since v6 the config is persisted as TLV (stable register ids, unknown/invalid records
+// skipped on load), so a schema bump no longer discards the stored config — new fields
+// simply load their defaults. The stored version is read back only to migrate values whose
+// meaning or default changed (migrateStoredConfig in GaiaConfig.h).
+// v6: TLV persistence; v7: imuChip, magAxisRemap; v8: breath detector in dB, 0x15 retired;
+// v9: band-pass slopes (0x38, 0x39) and a flat band by default (Q 0.71, was 5.00).
+constexpr uint8_t kConfigSchemaVersion = 9;
+static_assert(kConfigSchemaVersion >= kBandFlatQSchemaVersion, "saves must stop the Q migration");
 
 // Threading: internally locked for applyTlv/serializeTlv/save/factoryReset/setMountQuat
 // (callable from BLE and App tasks; the mutex is created in begin(), before which the
@@ -26,7 +30,8 @@ constexpr uint8_t kConfigSchemaVersion = 8;  // v6: TLV persistence; v7: imuChip
 // same TLV registers as the BLE characteristic (loaded leniently: unknown/invalid
 // records are skipped, cross-field invariants restored); the PIN ("pin") and the
 // mounting quaternion ("mount") have no readable TLV register, so each gets its own
-// key; "ver" is informational. A pre-v6 whole-struct blob ("cfg") is discarded.
+// key; "ver" is the schema the stored config was saved with (absent = before it existed),
+// used by migrateStoredConfig. A pre-v6 whole-struct blob ("cfg") is discarded.
 class ConfigStore {
  public:
   // Opens NVS and loads the stored config; keeps defaults on missing/mismatched data.
