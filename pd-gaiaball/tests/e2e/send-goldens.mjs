@@ -29,7 +29,7 @@ const hex = (s) => Buffer.from(s.trim().split(/\s+/).map((b) => parseInt(b, 16))
 // firmware/docs/protocol.md and config-app/src/protocol/packets.test.ts
 const IMU = hex('02 01 02 01 0D 0C 0B 0A 00 40 00 00 00 00 00 00 E8 03 0C FE 97 00 1B F0 C8 F0 E4');
 const CO2 = hex('01 02 02 01 0D 0C 0B 0A E8 03 05 07');
-const NAV_A = hex('01 07 02 01 4E 61 BC 00 01 03 B8 E3 58 F2 36 16 F3 E3 94 11 7B 00');
+const NAV_A = hex('01 07 02 01 4E 61 BC 00 01 03 B8 E3 58 F2 36 16 F3 E3 94 11 7B 00 07');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let pd = null;

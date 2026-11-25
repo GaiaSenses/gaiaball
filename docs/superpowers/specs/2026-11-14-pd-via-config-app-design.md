@@ -522,7 +522,7 @@ Gaiaball ──BLE──▶ config-app (Chrome/Edge, GitHub Pages)
 
 - C, rodando no CI e localmente: o decodificador contra os goldens do firmware (incluindo os
   bits novos da Parte 1); o aperto de mão contra o vetor da RFC 6455
-  (`dGhlIHNhbXBsZSBub25jZQ==` → `s3pPLMBiTxaQ9kYGzzo2pMbHEm0=`); quadros com máscara,
+  (`dGhlIHNhbXBsZSBub25jZQ==` → `s3pPLMBiTxaQ9kYGzzhZRbK+xOo=`); quadros com máscara,
   fragmentados, de texto, `close`; `Origin` aceito e recusado.
 - Ponta a ponta sem bola: Pd vanilla no Linux com um patch de teste + a config-app em
   `?demo=1` (Playwright) repassando pacotes sintéticos; conferir que os `[r gaia.*]` recebem
