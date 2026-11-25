@@ -121,8 +121,31 @@ e o cabeçalho diz de onde vem o número (leitura real, pulso virtual, sem leitu
 | CO₂ (SC8-CO2-5K) | ppm | o sensor emite 1 quadro/s sozinho por UART (9600 8N1); o firmware só escuta, nunca transmite (uma consulta pararia o fluxo do sensor). EMA opcional, TLV `0x28`. O pacote de CO₂ também traz o bit de **gatilho** (nível `0x29` com histerese `0x2A`) |
 | Potenciômetro | % do curso e dBFS | ADC filtrado 0–4095 → 0–100 % e −60…0 dBFS (a sensibilidade que o botão dá; o limiar efetivo aparece como linha contínua só no gráfico da medida ativa, que segue a chave RMS/Pico da Configuração no instante do clique, antes mesmo de aplicar: "Microfones - RMS" ou "Microfones - Pico"; cada um traz os dois microfones) |
 
-O nível efetivo de disparo do detector, o potenciômetro e as flags de saúde chegam num pacote
-próprio (`SensorsPacket`, 5 Hz, na característica de diagnóstico — ver
+### Sopro: descartar outros sons
+
+Além do passa-banda e da linha, o detector usa três critérios para não confundir sopro com
+outros sons graves e fortes (firmware v10). Ficam em **Avançado → "Sopro: descartar outros
+sons"**, cada um com seu interruptor (desligado = comportamento de antes):
+
+- **Coerência máxima entre os microfones** (padrão 0,60): som que vem de longe (voz, música,
+  uma batida na mesa) chega aos dois microfones como a mesma onda, coerência perto de 1; o
+  sopro é turbulência diferente em cada microfone, coerência perto de 0. O sopro só dispara
+  com a coerência abaixo do limite. A **distância entre os microfones** (padrão 15,4 mm, M1–M2
+  na placa do KiCAD) define os atrasos que a coerência procura.
+- **Duração mínima do sopro** (padrão 120 ms): o som precisa ficar acima da linha, sem
+  interrupção, por esse tempo. Rejeita batidas e sílabas; todo sopro chega esse tempo depois.
+- **Manuseio** (padrão +12 dB): enquanto o IMU vê a bola girando (acima de 30 °/s) ou batendo
+  (mais de 300 mg longe de 1 g), e por mais 300 ms, a linha de disparo sobe 12 dB.
+
+O cartão **Sopro: descarte**, no painel Sensores, mostra ao vivo a coerência dos microfones
+(barra, de 0 a 1) com o limite da Configuração marcado (o traço mexe enquanto o campo é
+editado, antes de aplicar), o estado do detector (abaixo da linha, acima da linha,
+aguardando a duração, bloqueado por som de longe) e se a bola está sendo manuseada agora. A
+linha de disparo nos gráficos dos microfones já sobe durante o manuseio. Os valores padrão
+são estimativas e ainda não foram ajustados com a bola.
+
+O nível efetivo de disparo do detector, o potenciômetro, a coerência e o estado dos critérios
+do sopro chegam num pacote próprio (`SensorsPacket`, 5 Hz, na característica de diagnóstico — ver
 `firmware/docs/protocol.md`); o envelope dos microfones (RMS e pico por canal) e o bit de
 sopro viajam junto com a orientação no `ImuPacket` v2, com o mesmo carimbo de tempo. No modo demo o
 painel roda com dados sintéticos.

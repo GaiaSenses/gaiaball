@@ -366,7 +366,7 @@ latE7 900000000, lonE7 −1800000000, bearingX100 −18000, speedDegSX10 65535, 
 01 07 FF FF FF FF FF FF 02 06 00 E9 A4 35 00 2E B6 94 B0 B9 FF FF FF
 ```
 
-## SensorsPacket (23 bytes, type 0x04, 5 Hz, diag characteristic)
+## SensorsPacket (25 bytes, type 0x04, 5 Hz, diag characteristic)
 
 Live audio/potentiometer levels for the config-app's real-time charts.
 
@@ -381,11 +381,22 @@ Live audio/potentiometer levels for the config-app's real-time charts.
 | 16 | 4 | u32 | audioThreshold |
 | 20 | 2 | u16 | potRaw |
 | 22 | 1 | u8 | flags |
+| 23 | 1 | u8 | coherenceX100 (v10) |
+| 24 | 1 | u8 | breathGate (v10) |
 
 Flags: bit0 `audioOk`, bit1 `audioEnabled`, bit2 `potControlsThreshold`, bit3
 `audioFiltered` (the RMS values were computed AFTER the HP/LP band-pass), bit4
 `metricPeak` (the breath detector measures the peak; 0 = RMS, TLV 0x2C), bit5 `adaptive`
 (the breath detector is adaptive; 0 = absolute, TLV 0x2D).
+
+breathGate (v10): the breath detector's discriminators as of its last update — bit0 `over`
+(the level is over the fire line, raised while handled), bit1 `coherent` (over, but held
+back because the coherence is at or above TLV 0x3A), bit2 `handling` (the IMU reports
+handling, TLVs 0x3E/0x3F/0x42; the line is raised only if TLV 0x3D > 0), bit3 `waiting`
+(it qualifies and waits for the minimum duration TLV 0x3C or the debounce). All 0 while the
+detector is off. coherenceX100 is the left/right coherence of the level window × 100
+(0..100): max over the searched lags of |Σ L·R| / √(ΣL² · ΣR²), on the band-passed signals.
+The packet grew from 23 to 25 bytes in v10 (append-only, version still 1).
 
 Units:
 - `audioRmsL/R` are RMS values in 24-bit sample counts. The
@@ -396,7 +407,8 @@ Units:
 - `audioThreshold` is the breath detector's **effective trigger level**, in 24-bit
   counts of the **active metric** (bit 4). Absolute detector: the line itself.
   Adaptive detector (bit 5): the slow baseline plus the threshold, so it follows the
-  room noise. To draw it in dBFS use the formula of the metric bit 4 names: RMS
+  room noise. While the ball is handled (breathGate bit 2) it includes the handling boost
+  (TLV 0x3D). To draw it in dBFS use the formula of the metric bit 4 names: RMS
   `dBFS = 20*log10(v*sqrt(2)/2^23)`, peak `dBFS = 20*log10(v/2^23)`. The threshold itself
   is configured in dBFS (potentiometer, or TLV 0x2B when 0x14 = 0); the firmware converts
   it to counts of the active metric.
@@ -492,8 +504,9 @@ Persistence (command `0x11`) stores this same TLV serialization in NVS — not a
 dump — and loads it leniently (unknown ids and invalid values are skipped; the
 cross-field rules are re-established on defaults), so a config saved by one firmware
 version survives schema changes. The NVS also keeps the schema version the config was
-saved with (`ver`, 9 since the band-pass slopes); it is read back only to migrate values
-whose default changed (v9: a stored band-pass Q of 500, the old default, becomes 71). The PIN and the mounting quaternion have no readable
+saved with (`ver`: 9 since the band-pass slopes, 10 since the breath discriminators); it is
+read back only to migrate values whose default changed (v9: a stored band-pass Q of 500, the
+old default, becomes 71; v10 only added registers). The PIN and the mounting quaternion have no readable
 TLV register and are persisted under their own NVS keys.
 
 | id | type | default | field |
@@ -525,6 +538,13 @@ TLV register and are persisted under their own NVS keys.
 | 0x1A | u16 | 71 | audioLpQX100 (10–2000), same meaning as 0x18 |
 | 0x38 | u8 | 12 | audioHpSlopeDbOct — high-pass slope in dB/octave: **only 6, 12, 18, 24, 36 or 48** (Butterworth of order slope/6; any other value fails the whole write). 12 = one biquad, the pre-v9 filter. Each extra 12 dB/oct is one more second-order section per microphone |
 | 0x39 | u8 | 12 | audioLpSlopeDbOct — low-pass slope, same values as 0x38 |
+| 0x3A | u8 | 60 | breathCoherenceMaxX100 — breath discriminator (v10): the detector fires only while the left/right **coherence** of the band-passed microphones is BELOW this value / 100 (0–100). Sound from a distance reaches both microphones as the same wave (coherence ~1); a breath is turbulence, different at each port (~0). 100 = off. The live coherence is on the SensorsPacket |
+| 0x3B | u16 | 154 | micSpacingMmX10 — centre-to-centre distance between the two microphones, 0.1 mm (1–2000). It sets the lags the coherence searches: ceil(spacing / 343 m/s × 16 kHz), at most 10. 154 = 15.4 mm, M1–M2 on the board (1 lag) |
+| 0x3C | u16 | 120 | breathMinDurationMs — the fire condition (over the line and not coherent) must hold without a break this long, ms (0–2000; 0 = off). Rejects knocks and syllables; delays every fire by this much |
+| 0x3D | u8 | 12 | handlingBoostDb — while the IMU reports handling, the fire line is this many dB higher (0–60; 0 = off). The re-arm line does not move. The SensorsPacket threshold includes it |
+| 0x3E | u16 | 30 | handlingGyroDps — handling = bias-corrected angular speed above this, deg/s (1–2000) ... |
+| 0x3F | u16 | 300 | handlingAccelMg — ... or the raw accelerometer magnitude more than this away from 1 g, mg (10–4000): knocks, shakes |
+| 0x42 | u16 | 300 | handlingHoldMs — handling stays on this long after the last sample that met 0x3E or 0x3F, ms (0–5000) |
 | 0x1B | u16 | 300 | potEmaAlphaX1000 — potentiometer EMA (300 = legacy 0.3) |
 | 0x1C | u16 | 20 | oneEuroBetaX1000 — 1-euro cut-off slope, Hz per dps ×1000 (0–10000) |
 | 0x1D | u8 | 0 | accelHampelKX10 — Hampel spike filter on the published accel, k ×10 (0=off, ≤100) |
@@ -569,8 +589,8 @@ The magnetometer calibration (0x1E) is the only multi-value register: writes mus
 exactly 24 bytes, and a record whose soft-iron **diagonal** contains a zero is rejected
 (it would silently zero the magnetometer and make Quat9 unusable).
 
-A full config read is now ~258 bytes (252 of serialized registers plus the read-only
-`0x35` and `0x37`, 3 bytes each), so a central that cannot do a long attribute read
+A full config read is now ~284 bytes (278 of serialized registers with the factory name,
+plus the read-only `0x35` and `0x37`, 3 bytes each; 287 + 6 with a 16-character name), so a central that cannot do a long attribute read
 will truncate it; Web Bluetooth and NimBLE handle this transparently.
 
 The two LED pins (0x30, 0x31) are additionally validated **as a set**: a write
@@ -651,10 +671,11 @@ Co2Packet: seq=258, timestampMs=0x0A0B0C0D, ppm=1000, flags=0b101 (valid+virtual
 ```
 
 SensorsPacket: seq=7, timestampMs=123456, rmsL=12345, rmsR=23456, threshold=100000,
-potRaw=2048, flags=0b111
+potRaw=2048, flags=0b111, coherenceX100=0, breathGate=0 (25 bytes since v10; an older
+firmware sends the first 23, which decoders must still accept)
 
 ```
-01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 07
+01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 07 00 00
 ```
 
 SensorsPacket with the breath bits: the same fields with flags=0b110111
@@ -662,7 +683,14 @@ SensorsPacket with the breath bits: the same fields with flags=0b110111
 peak counts)
 
 ```
-01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 37
+01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 37 00 00
+```
+
+SensorsPacket with the v10 tail: flags=0b110111, coherence 0.42 (coherenceX100=42),
+breathGate=0b0101 (over the line + handling)
+
+```
+01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 37 2A 05
 ```
 
 DiagPacket: seq=1, uptimeS=0x00010203, imuHzX10=500, notifyHzX10=500, fifoOverflows=1,

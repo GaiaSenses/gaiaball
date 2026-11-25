@@ -81,7 +81,13 @@ silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen b
   ImuPacket flags bit 4 and clears the latch (`exchange(false)`) at every notify slot
   (also when nobody is subscribed, so a late subscriber never gets an old breath); a
   breath shorter than one notify interval still reaches the next packet. The effective
-  trigger level for the SensorsPacket is a third atomic.
+  trigger level for the SensorsPacket is a third atomic; the window's L/R coherence and the
+  discriminators' status bits (v10) are two more, read by `sendSensors`.
+- **App → Audio (handling, v10)**: every IMU sample carries the bias-corrected angular speed
+  and the raw accelerometer magnitude (`ImuSample::gyroDps`, `accelG`, never on the wire).
+  `App::handleImuSample` feeds them, unthrottled, to its `HandlingDetector` (App task only)
+  and stores the result with `AudioService::setHandling()`, an `std::atomic<bool>` the audio
+  task reads on every detector update to raise the fire line.
 - **Audio → App (envelope)**: the audio task publishes the pooled levels (RMS and
   peak per channel) into four `std::atomic<float>`; the App task snapshots them with
   `AudioService::levels()` and appends them to the ImuPacket it was already sending.
