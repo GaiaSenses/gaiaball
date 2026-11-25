@@ -57,6 +57,8 @@ constexpr uint8_t kSensPotControls = 1u << 2;
 constexpr uint8_t kSensAudioFiltered = 1u << 3;  // RMS computed after the HP/LP band-pass
 constexpr uint8_t kSensMetricPeak = 1u << 4;     // breath metric is the peak (else RMS)
 constexpr uint8_t kSensAdaptive = 1u << 5;       // breath detector is adaptive (else absolute)
+// SensorsPacket.breathGate: BreathDetector::status() (kBreathOver, kBreathCoherent,
+// kBreathHandling, kBreathWaiting in logic/BreathDetector.h), bits 0..3.
 
 // AudioChunkPacket.flags
 constexpr uint8_t kAudioBpfEnabled = 1u << 0;  // band-pass active (chunk itself is RAW)
@@ -153,7 +155,9 @@ struct __attribute__((packed)) MagChunkPacket {
 // detector's effective trigger level, in counts of the ACTIVE metric (flags bit 4):
 // RMS counts (AES17 scale above) or peak counts (dBFS = 20*log10(peak/2^23)). Absolute
 // detector: the line itself; adaptive (flags bit 5): the slow baseline plus the
-// threshold. potRaw is the EMA-filtered 12-bit ADC reading (0..4095).
+// threshold. potRaw is the EMA-filtered 12-bit ADC reading (0..4095). Since v10 (25
+// bytes, append-only, version still 1): coherenceX100 = left/right coherence of the
+// window x100 (0..100) and breathGate = the detector's discriminator status bits.
 struct __attribute__((packed)) SensorsPacket {
   uint8_t version, type;
   uint16_t seq;
@@ -162,6 +166,8 @@ struct __attribute__((packed)) SensorsPacket {
   uint32_t audioThreshold;
   uint16_t potRaw;
   uint8_t flags;
+  uint8_t coherenceX100;
+  uint8_t breathGate;
 };
 
 // Decimated RAW audio for the config-app's spectrum analyzer (the FFT runs in the
@@ -201,7 +207,7 @@ struct __attribute__((packed)) NavPacket {
 static_assert(sizeof(ImuPacket) == 27, "ImuPacket size");
 static_assert(sizeof(Co2Packet) == 12, "Co2Packet size");
 static_assert(sizeof(DiagPacket) == 34, "DiagPacket size");
-static_assert(sizeof(SensorsPacket) == 23, "SensorsPacket size");
+static_assert(sizeof(SensorsPacket) == 25, "SensorsPacket size");
 static_assert(sizeof(AudioChunkPacket) == 208, "AudioChunkPacket size");
 static_assert(sizeof(MagChunkPacket) == 106, "MagChunkPacket size");
 static_assert(sizeof(NavPacket) == 23, "NavPacket size");

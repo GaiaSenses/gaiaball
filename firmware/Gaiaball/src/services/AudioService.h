@@ -26,14 +26,18 @@ namespace gaia {
 //         used to be 53 % of all the BLE air time on the link;
 //     (b) optional breath band-pass (HP then LP, Butterworth 6..48 dB/oct with Q = gain at
 //         the cutoff, config TLV 0x16..0x1A, 0x38, 0x39; see FilterCascade)
-//         -> per-channel sum of squares and max |sample| -> AudioLevelWindow (audioWindowMs,
-//            TLV 0x2F, default 50 ms, pooled energy, fresh every block) ->
+//         -> per-channel sum of squares, max |sample| and left x right products over the
+//            lags the microphone spacing allows (TLV 0x3B) -> AudioLevelWindow (audioWindowMs,
+//            TLV 0x2F, default 50 ms, pooled energy and coherence, fresh every block) ->
 //              - levels(), published on every ImuPacket (RMS + peak per channel) and
 //                on the 5 Hz SensorsPacket;
 //              - BreathDetector fed with both channels of the configured metric
-//                (TLV 0x2C: RMS or peak) -> peak callback on the firing edge, and
-//                the breath bit (recognized + latch) for the ImuPacket. The absolute
-//                detector runs on every block; the adaptive one every 3rd block.
+//                (TLV 0x2C: RMS or peak), the coherence and the handling flag the App
+//                task sets from the IMU (setHandling) -> peak callback on the firing
+//                edge, and the breath bit (recognized + latch) for the ImuPacket. The
+//                discriminators (v10: coherence 0x3A, duration 0x3C, handling boost
+//                0x3D) gate the fire; see BreathParams. The absolute detector runs on
+//                every block; the adaptive one every 3rd block.
 // The DC blocker replaced a per-block mean subtraction (v9), which acted as a hidden
 // high-pass near 90 Hz and folded low frequencies to multiples of 200 Hz.
 //
@@ -59,8 +63,10 @@ namespace gaia {
 //    prio 2): keep both short and non-blocking.
 //  - applyConfig() is safe from any task; the audio task picks it up next block.
 //  - takeAudioChunk() is safe from any task (short critical section).
-//  - breathRecognized(), takeBreathLatch() and triggerLevelCounts() are atomics the
-//    audio task writes on every block: safe from any task.
+//  - breathRecognized(), takeBreathLatch(), triggerLevelCounts(), coherence() and
+//    breathStatus() are atomics the audio task writes on every block: safe from any task.
+//  - setHandling() is an atomic store: safe from any task (the App task calls it on every
+//    IMU sample).
 //  - If I2S init fails, ok() is false and the task is never started.
 class AudioService {
  public:
@@ -88,6 +94,12 @@ class AudioService {
   // Effective trigger level in counts of the active metric (absolute: the line;
   // adaptive: slow baseline + threshold). Published on the SensorsPacket.
   float triggerLevelCounts() const { return triggerLevel_.load(); }
+  // Left/right coherence of the current window, 0..1 (AudioLevels::coherence).
+  float coherence() const { return coherence_.load(); }
+  // BreathDetector::status() bits (kBreath*), as of the last detector update; 0 while off.
+  uint8_t breathStatus() const { return breathStatus_.load(); }
+  // The ball is being handled (HandlingDetector on the App task).
+  void setHandling(bool on) { handling_.store(on); }
 
   // Copies the latest 2 kHz chunk (AudioDecimator::kChunkSamples int16) and clears
   // the ready flag. Returns false when no fresh chunk is available.
@@ -116,7 +128,12 @@ class AudioService {
   std::atomic<uint16_t> hpHz_{10}, hpQX100_{71}, lpHz_{200}, lpQX100_{71};
   std::atomic<uint8_t> hpSlope_{12}, lpSlope_{12};
   std::atomic<uint16_t> windowMs_{50};
+  std::atomic<uint8_t> coherenceMaxX100_{60};
+  std::atomic<uint16_t> micSpacingMmX10_{154};
+  std::atomic<uint16_t> minDurationMs_{120};
+  std::atomic<uint8_t> handlingBoostDb_{12};
   std::atomic<bool> cfgDirty_{true};
+  std::atomic<bool> handling_{false};  // App task -> audio task
 
   std::atomic<float> rmsL_{0.0f};
   std::atomic<float> rmsR_{0.0f};
@@ -128,6 +145,8 @@ class AudioService {
   std::atomic<bool> breathRecognized_{false};
   std::atomic<bool> breathLatch_{false};
   std::atomic<float> triggerLevel_{0.0f};
+  std::atomic<float> coherence_{0.0f};
+  std::atomic<uint8_t> breathStatus_{0};
 
   // Chunk handoff (audio task -> App task).
   portMUX_TYPE chunkMux_ = portMUX_INITIALIZER_UNLOCKED;

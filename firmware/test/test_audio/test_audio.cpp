@@ -5,6 +5,7 @@
 #include "../../Gaiaball/src/logic/AudioFeatures.h"
 #include "../../Gaiaball/src/logic/BreathDetector.h"
 #include "../../Gaiaball/src/logic/GaiaConfig.h"
+#include "../../Gaiaball/src/logic/HandlingDetector.h"
 
 using namespace gaia;
 
@@ -311,6 +312,201 @@ void test_decimator_reset_drops_partial_chunk() {
     TEST_ASSERT_EQUAL_INT16(0, d.chunk()[i]);  // and it holds no pre-reset samples
 }
 
+// --- Breath discriminators (v10) -------------------------------------------------
+
+static bool absStep(BreathDetector &d, float level, uint32_t now, float coherence = 0.0f,
+                    bool handling = false) {
+  const float lv[2] = {level, level};
+  BreathGate g;
+  g.coherence = coherence;
+  g.handling = handling;
+  return d.update(lv, now, g);
+}
+
+// A loud sound that reaches both microphones alike (coherence above the limit) never fires;
+// the same level as independent noise at each microphone does.
+void test_coherence_blocks_a_far_sound() {
+  BreathParams p = absParams(1000.f);
+  p.coherenceMax = 0.6f;
+  BreathDetector d;
+  d.configure(p);
+  TEST_ASSERT_FALSE(absStep(d, 2000.f, 100, 0.95f));
+  TEST_ASSERT_EQUAL_HEX8(kBreathOver | kBreathCoherent, d.status());
+  TEST_ASSERT_FALSE(absStep(d, 2000.f, 105, 0.60f));  // at the limit: still blocked
+  TEST_ASSERT_TRUE(absStep(d, 2000.f, 110, 0.59f));
+  TEST_ASSERT_TRUE(d.recognized());
+}
+
+// Off (anything above 1): a perfectly coherent sound still fires, as before v10.
+void test_coherence_off_never_blocks() {
+  BreathParams p = absParams(1000.f);
+  p.coherenceMax = 2.0f;
+  BreathDetector d;
+  d.configure(p);
+  TEST_ASSERT_TRUE(absStep(d, 2000.f, 100, 1.0f));
+}
+
+// Below the line the coherence says nothing: no "coherent" bit for quiet sound.
+void test_coherence_bit_only_when_over() {
+  BreathParams p = absParams(1000.f);
+  p.coherenceMax = 0.6f;
+  BreathDetector d;
+  d.configure(p);
+  TEST_ASSERT_FALSE(absStep(d, 500.f, 100, 0.99f));
+  TEST_ASSERT_EQUAL_HEX8(0, d.status());
+}
+
+// The condition must hold without a break for minDurationMs, at the audio block cadence.
+void test_min_duration_fires_after_a_sustained_sound() {
+  BreathParams p = absParams(1000.f);
+  p.minDurationMs = 120;
+  BreathDetector d;
+  d.configure(p);
+  uint32_t now = 1000;
+  for (int i = 0; i < 24; i++, now += 5) {  // 0..115 ms after the onset
+    TEST_ASSERT_FALSE(absStep(d, 2000.f, now));
+    TEST_ASSERT_TRUE((d.status() & kBreathWaiting) != 0);
+  }
+  TEST_ASSERT_TRUE(absStep(d, 2000.f, now));  // 120 ms
+}
+
+// A knock (40 ms) and syllables (sound with gaps) never reach 120 ms in one stretch.
+void test_min_duration_rejects_knocks_and_syllables() {
+  BreathParams p = absParams(1000.f);
+  p.minDurationMs = 120;
+  BreathDetector d;
+  d.configure(p);
+  uint32_t now = 1000;
+  for (int i = 0; i < 8; i++, now += 5) TEST_ASSERT_FALSE(absStep(d, 5000.f, now));  // 40 ms knock
+  for (int i = 0; i < 20; i++, now += 5) TEST_ASSERT_FALSE(absStep(d, 200.f, now));  // silence
+  for (int syl = 0; syl < 10; syl++) {      // 100 ms on, 40 ms off, ten times
+    for (int i = 0; i < 20; i++, now += 5) TEST_ASSERT_FALSE(absStep(d, 3000.f, now));
+    for (int i = 0; i < 8; i++, now += 5) TEST_ASSERT_FALSE(absStep(d, 200.f, now));
+  }
+}
+
+// A coherent stretch breaks the duration too: the count starts over after it.
+void test_min_duration_restarts_after_a_coherent_stretch() {
+  BreathParams p = absParams(1000.f);
+  p.minDurationMs = 50;
+  p.coherenceMax = 0.6f;
+  BreathDetector d;
+  d.configure(p);
+  TEST_ASSERT_FALSE(absStep(d, 2000.f, 1000, 0.1f));
+  TEST_ASSERT_FALSE(absStep(d, 2000.f, 1040, 0.1f));
+  TEST_ASSERT_FALSE(absStep(d, 2000.f, 1045, 0.9f));  // coherent: the stretch ends
+  TEST_ASSERT_FALSE(absStep(d, 2000.f, 1050, 0.1f));  // starts again here
+  TEST_ASSERT_FALSE(absStep(d, 2000.f, 1095, 0.1f));
+  TEST_ASSERT_TRUE(absStep(d, 2000.f, 1100, 0.1f));
+}
+
+// Handling raises the fire line by handlingBoostDb (12 dB = x3.98) and the published
+// trigger level with it; the re-arm line stays where it was.
+void test_handling_raises_only_the_fire_line() {
+  BreathParams p = absParams(1000.f, 6, 0);
+  p.handlingBoostDb = 12.0f;
+  BreathDetector d;
+  d.configure(p);
+  TEST_ASSERT_FALSE(absStep(d, 3000.f, 100, 0.0f, true));  // x3: under the raised line
+  TEST_ASSERT_EQUAL_HEX8(kBreathHandling, d.status());
+  TEST_ASSERT_FLOAT_WITHIN(1.0f, 3981.07f, d.triggerLevel());
+  TEST_ASSERT_TRUE(absStep(d, 4100.f, 105, 0.0f, true));
+  // Still handled: falling under the normal re-arm line (-6 dB of 1000) re-arms.
+  TEST_ASSERT_FALSE(absStep(d, 400.f, 110, 0.0f, true));
+  TEST_ASSERT_FALSE(d.recognized());
+  // Handling over: the line is back.
+  TEST_ASSERT_TRUE(absStep(d, 1200.f, 200, 0.0f, false));
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 1000.f, d.triggerLevel());
+}
+
+// Boost 0: handling is reported (for the config-app) but changes nothing.
+void test_handling_boost_zero_changes_nothing() {
+  BreathParams p = absParams(1000.f);
+  p.handlingBoostDb = 0.0f;
+  BreathDetector d;
+  d.configure(p);
+  TEST_ASSERT_TRUE(absStep(d, 1200.f, 100, 0.0f, true));
+  TEST_ASSERT_TRUE((d.status() & kBreathHandling) != 0);
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 1000.f, d.triggerLevel());
+}
+
+// Adaptive: the boost raises the rise needed above the baseline.
+void test_handling_boost_adaptive() {
+  BreathParams p = adaptiveParams(100.f, 1.0f, 0.999f, 0);
+  p.handlingBoostDb = 20.0f;  // x10
+  BreathDetector d;
+  d.configure(p);
+  const float quiet[2] = {1000.f, 1000.f};
+  BreathGate h;
+  h.handling = true;
+  TEST_ASSERT_FALSE(d.update(quiet, 0, h));  // seeds the baseline
+  const float loud[2] = {1500.f, 1500.f};    // +500 over the baseline: under 10 x 100
+  TEST_ASSERT_FALSE(d.update(loud, 15, h));
+  TEST_ASSERT_TRUE(d.update(loud, 30));      // not handled: +500 > 100
+}
+
+// The three together, as configured by default in GaiaConfig (v10).
+void test_defaults_from_config() {
+  GaiaConfig c;
+  TEST_ASSERT_EQUAL(60, c.breathCoherenceMaxX100);
+  TEST_ASSERT_EQUAL(154, c.micSpacingMmX10);
+  TEST_ASSERT_EQUAL(120, c.breathMinDurationMs);
+  TEST_ASSERT_EQUAL(12, c.handlingBoostDb);
+  TEST_ASSERT_EQUAL(30, c.handlingGyroDps);
+  TEST_ASSERT_EQUAL(300, c.handlingAccelMg);
+  TEST_ASSERT_EQUAL(300, c.handlingHoldMs);
+}
+
+void test_handling_detector_gyro_accel_and_hold() {
+  HandlingDetector h;
+  HandlingParams p;
+  p.gyroDps = 30.0f;
+  p.accelMg = 300.0f;
+  p.holdMs = 300;
+  h.configure(p);
+  TEST_ASSERT_FALSE(h.update(10.0f, 1.0f, 1000));   // still in the hand
+  TEST_ASSERT_TRUE(h.update(45.0f, 1.0f, 1020));    // a turn
+  TEST_ASSERT_TRUE(h.update(5.0f, 1.0f, 1320));     // held for 300 ms
+  TEST_ASSERT_FALSE(h.update(5.0f, 1.0f, 1321));
+  TEST_ASSERT_TRUE(h.update(0.0f, 1.45f, 2000));    // a knock: 450 mg over 1 g
+  TEST_ASSERT_FALSE(h.update(0.0f, 1.25f, 2400));   // 250 mg: under the limit, hold over
+  TEST_ASSERT_TRUE(h.update(0.0f, 0.5f, 2500));     // free fall direction counts too
+  TEST_ASSERT_TRUE(h.active());
+}
+
+// Lags for a microphone spacing: one sample at 16 kHz is 343/16000 m = 21.4375 mm.
+void test_corr_lags_for_spacing() {
+  TEST_ASSERT_EQUAL(1, corrLagsForSpacing(154, 16000.0f));   // the board: 15.4 mm
+  TEST_ASSERT_EQUAL(1, corrLagsForSpacing(214, 16000.0f));   // 21.4 mm < one sample
+  TEST_ASSERT_EQUAL(2, corrLagsForSpacing(215, 16000.0f));
+  TEST_ASSERT_EQUAL(0, corrLagsForSpacing(0, 16000.0f));
+  TEST_ASSERT_EQUAL(kMaxCorrLag, corrLagsForSpacing(2000, 16000.0f));  // 200 mm: 9.3 -> 10
+  TEST_ASSERT_EQUAL(kMaxCorrLag, corrLagsForSpacing(65535, 16000.0f));
+}
+
+// The window pools the cross sums like the energy and keeps the best lag, by magnitude.
+void test_window_coherence_pools_cross_sums() {
+  AudioLevelWindow w;
+  w.setBlocks(2);
+  const float sq[2] = {100.f, 100.f}, pk[2] = {1.f, 1.f};
+  float cross[kCorrLags] = {};
+  cross[kMaxCorrLag] = 100.f;
+  w.push(sq, pk, 80, cross);
+  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 1.0f, w.levels().coherence);
+  cross[kMaxCorrLag] = 0.f;
+  cross[kMaxCorrLag + 1] = -40.f;  // the other block: best lag elsewhere, negative
+  w.push(sq, pk, 80, cross);
+  // lag 0: 100 + 0, lag +1: 0 - 40 -> best |100| / sqrt(200 * 200) = 0.5
+  TEST_ASSERT_FLOAT_WITHIN(1e-6f, 0.5f, w.levels().coherence);
+  AudioLevelWindow silent;
+  const float sq1[2] = {100.f, 0.f};
+  silent.push(sq1, pk, 80, cross);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, silent.levels().coherence);
+  AudioLevelWindow none;  // no cross sums given: 0
+  none.push(sq, pk, 80);
+  TEST_ASSERT_EQUAL_FLOAT(0.0f, none.levels().coherence);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_rms_dbfs_is_aes17);
@@ -337,5 +533,18 @@ int main() {
   RUN_TEST(test_rearm_zero_db);
   RUN_TEST(test_trigger_level);
   RUN_TEST(test_dbfs_to_counts);
+  RUN_TEST(test_coherence_blocks_a_far_sound);
+  RUN_TEST(test_coherence_off_never_blocks);
+  RUN_TEST(test_coherence_bit_only_when_over);
+  RUN_TEST(test_min_duration_fires_after_a_sustained_sound);
+  RUN_TEST(test_min_duration_rejects_knocks_and_syllables);
+  RUN_TEST(test_min_duration_restarts_after_a_coherent_stretch);
+  RUN_TEST(test_handling_raises_only_the_fire_line);
+  RUN_TEST(test_handling_boost_zero_changes_nothing);
+  RUN_TEST(test_handling_boost_adaptive);
+  RUN_TEST(test_defaults_from_config);
+  RUN_TEST(test_handling_detector_gyro_accel_and_hold);
+  RUN_TEST(test_corr_lags_for_spacing);
+  RUN_TEST(test_window_coherence_pools_cross_sums);
   return UNITY_END();
 }

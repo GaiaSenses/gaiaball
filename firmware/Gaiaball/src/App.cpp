@@ -161,8 +161,9 @@ void App::taskLoop() {
 
 void App::handleImuSample(const ImuSample &s) {
   // First, and unthrottled: the globe integrates at the IMU rate, whatever the IMU
-  // notify rate is.
+  // notify rate is. The handling test too: the breath detector must know at once.
   updateNav(s);
+  audio_.setHandling(handling_.update(s.gyroDps, s.accelG, millis()));
   if (!imuThrottle_.shouldSend(s.tUs)) return;
   if (!ble_.anySubscriber(1)) {
     // Nobody to report to: drop the breath latch here too, so whoever subscribes later
@@ -214,6 +215,11 @@ void App::applySnapshot(const GaiaConfig &cfg) {
   breathAdaptive_ = cfg.breathDetector != 0;
   audioHpHz_ = cfg.audioHpHz;
   audioLpHz_ = cfg.audioLpHz;
+  HandlingParams hp;
+  hp.gyroDps = (float)cfg.handlingGyroDps;
+  hp.accelMg = (float)cfg.handlingAccelMg;
+  hp.holdMs = cfg.handlingHoldMs;
+  handling_.configure(hp);
   virtualPulse_.configure(cfg.virtualPeakPpm, cfg.virtualHoldMs);
   co2Trigger_.configure(cfg.co2TriggerPpm, cfg.co2TriggerHystPpm);
   // Acts only on real changes: a new navMode or reference point resets the globe;
@@ -314,10 +320,12 @@ void App::sendSensors(uint32_t nowMs) {
   if (audioBpf_) flags |= kSensAudioFiltered;
   if (breathMetricPeak_) flags |= kSensMetricPeak;
   if (breathAdaptive_) flags |= kSensAdaptive;
-  // The detector's effective trigger level, in counts of the active metric.
+  // The detector's effective trigger level, in counts of the active metric (raised while
+  // the ball is handled), the window's coherence and the discriminators' status.
   const SensorsPacket p =
       makeSensorsPacket(sensorsSeq_++, nowMs, audio_.lastRmsLeft(), audio_.lastRmsRight(),
-                        audio_.triggerLevelCounts(), pot_.filteredRaw(), flags);
+                        audio_.triggerLevelCounts(), pot_.filteredRaw(), flags,
+                        audio_.coherence(), audio_.breathStatus());
   ble_.notifySensors(p);
 }
 

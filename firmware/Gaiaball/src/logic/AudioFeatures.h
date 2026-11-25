@@ -22,11 +22,31 @@ constexpr int16_t kAudioDbFloorX100 = -12000;  // -120.00 dBFS
 constexpr int16_t kAudioDbCeilX100 = 6000;     //  +60.00 dBFS
 
 // One reporting window of microphone levels, in 24-bit sample units (linear).
-// Index 0 = left, 1 = right.
+// Index 0 = left, 1 = right. coherence: see AudioLevelWindow::levels().
 struct AudioLevels {
   float rms[2] = {0.0f, 0.0f};
   float peak[2] = {0.0f, 0.0f};
+  float coherence = 0.0f;
 };
+
+// Left/right correlation of the breath discriminator (v10).
+//
+// WHY: sound from a distance (speech, music, a knock on the table) reaches both
+// microphones as the same pressure wave, a few tens of microseconds apart, so the two
+// signals are almost identical; a breath on the ball is turbulence at each microphone
+// port, different at each one. The normalized correlation of the two band-passed
+// signals separates the two cases whatever the level.
+//
+// The arrival delay of a far sound is at most spacing / speed of sound (15.4 mm on the
+// board: 45 us, under one sample at 16 kHz), so the correlation is searched over the lags
+// that spacing allows and the best one is kept. Lags are in samples; kMaxCorrLag covers
+// 200 mm at 16 kHz.
+constexpr uint8_t kMaxCorrLag = 10;
+constexpr uint8_t kCorrLags = 2 * kMaxCorrLag + 1;  // index kMaxCorrLag + k holds lag k
+constexpr float kSpeedOfSoundMps = 343.0f;          // air at ~20 degC
+
+// Lags to search for a microphone spacing in 0.1 mm: ceil(spacing / c * fs), 0..kMaxCorrLag.
+uint8_t corrLagsForSpacing(uint16_t spacingMmX10, float fs);
 
 // AES17 dBFS x100: 0 dBFS is the RMS of a full-scale sine (FS/sqrt(2)), so a
 // full-scale sine reads 0.00 and not -3.01. Saturates to the wire range; zero,
@@ -72,8 +92,14 @@ class AudioLevelWindow {
 
   // sumSq = sum of squared samples of this block per channel, peak = max |sample| per
   // channel, frames = samples per channel in the block. frames == 0 is ignored.
-  void push(const float sumSq[2], const float peak[2], uint16_t frames);
-  // Pooled RMS and windowed peak. All-zero while the window holds no samples.
+  // cross (optional, kCorrLags values): sum of left[n] * right[n - k] over the block for
+  // each lag k, at index kMaxCorrLag + k (AudioFrontEnd fills the lags it searches).
+  void push(const float sumSq[2], const float peak[2], uint16_t frames,
+            const float *cross = nullptr);
+  // Pooled RMS, windowed peak and coherence. All-zero while the window holds no samples.
+  // coherence = max over the lags of |pooled cross sum| / sqrt(pooled energy L * R), in
+  // 0..1: near 1 for one sound reaching both microphones, near 0 for independent noise
+  // at each one (a breath on the ports). 0 when either channel is silent.
   AudioLevels levels() const;
   void reset();
   // Changes the span (clamped to 1..kMaxBlocks). A different span starts the window
@@ -85,6 +111,7 @@ class AudioLevelWindow {
   struct Entry {
     float sumSq[2] = {0.0f, 0.0f};
     float peak[2] = {0.0f, 0.0f};
+    float cross[kCorrLags] = {};
     uint16_t frames = 0;
   };
   Entry ring_[kMaxBlocks] = {};

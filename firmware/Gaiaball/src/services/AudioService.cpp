@@ -94,6 +94,10 @@ void AudioService::applyConfig(const GaiaConfig &cfg) {
   hpSlope_.store(cfg.audioHpSlopeDbOct);
   lpSlope_.store(cfg.audioLpSlopeDbOct);
   windowMs_.store(cfg.audioWindowMs);
+  coherenceMaxX100_.store(cfg.breathCoherenceMaxX100);
+  micSpacingMmX10_.store(cfg.micSpacingMmX10);
+  minDurationMs_.store(cfg.breathMinDurationMs);
+  handlingBoostDb_.store(cfg.handlingBoostDb);
   cfgDirty_.store(true);
 }
 
@@ -150,6 +154,11 @@ void AudioService::taskLoop() {
       bp.debounceMs = debounceMs_.load();
       bp.fastAlpha = fastX1000_.load() / 1000.0f;
       bp.slowAlpha = slowX1000_.load() / 1000.0f;
+      // 100 = off: a coherence of exactly 1.00 must not block either.
+      const uint8_t cohX100 = coherenceMaxX100_.load();
+      bp.coherenceMax = cohX100 >= 100 ? 2.0f : cohX100 / 100.0f;
+      bp.minDurationMs = minDurationMs_.load();
+      bp.handlingBoostDb = (float)handlingBoostDb_.load();
       const bool wantPeak = breathMetric_.load() != 0;
       // A new metric changes the units the detector works in: the adaptive EMAs (and
       // a pending disarm) would mix RMS and peak counts, so start the detector over.
@@ -178,6 +187,7 @@ void AudioService::taskLoop() {
       band.lpQ = lpQX100_.load() / 100.0f;
       band.lpSlopeDbOct = lpSlope_.load();
       frontEnd_.configure(band);
+      frontEnd_.setCorrLags(corrLagsForSpacing(micSpacingMmX10_.load(), (float)kSampleRate));
     }
 
     // One pass over the samples: DC blocker, raw-stream feed (before the band-pass),
@@ -193,12 +203,13 @@ void AudioService::taskLoop() {
         portEXIT_CRITICAL(&chunkMux_);
       }
     });
-    window_.push(e.sumSq, e.peak, (uint16_t)frames);
+    window_.push(e.sumSq, e.peak, (uint16_t)frames, e.cross);
     const AudioLevels lv = window_.levels();
     rmsL_.store(lv.rms[0]);
     rmsR_.store(lv.rms[1]);
     peakL_.store(lv.peak[0]);
     peakR_.store(lv.peak[1]);
+    coherence_.store(lv.coherence);
 
     // Switching the detector off or on starts it over: a baseline or a pending disarm
     // from before the pause says nothing about the room now.
@@ -225,6 +236,7 @@ void AudioService::taskLoop() {
       breathRecognized_.store(false);
       breathLatch_.store(false);  // a packet must not carry bit 4 after audio is disabled
       triggerLevel_.store(detector_.triggerLevel());
+      breathStatus_.store(0);
       continue;
     }
     // Absolute: every block. Adaptive: its own, slower cadence (see kAdaptiveBlocks).
@@ -238,12 +250,16 @@ void AudioService::taskLoop() {
     }
     if (evaluate) {
       const uint32_t now = millis();
-      if (detector_.update(metricPeak_ ? lv.peak : lv.rms, now) && onPeak_) onPeak_(now);
+      BreathGate gate;
+      gate.coherence = lv.coherence;
+      gate.handling = handling_.load();
+      if (detector_.update(metricPeak_ ? lv.peak : lv.rms, now, gate) && onPeak_) onPeak_(now);
     }
     const bool recognized = detector_.recognized();
     breathRecognized_.store(recognized);
     if (recognized) breathLatch_.store(true);
     triggerLevel_.store(detector_.triggerLevel());
+    breathStatus_.store(detector_.status());
   }
 }
 

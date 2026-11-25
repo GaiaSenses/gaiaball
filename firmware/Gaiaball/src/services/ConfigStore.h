@@ -15,8 +15,9 @@ namespace gaia {
 // simply load their defaults. The stored version is read back only to migrate values whose
 // meaning or default changed (migrateStoredConfig in GaiaConfig.h).
 // v6: TLV persistence; v7: imuChip, magAxisRemap; v8: breath detector in dB, 0x15 retired;
-// v9: band-pass slopes (0x38, 0x39) and a flat band by default (Q 0.71, was 5.00).
-constexpr uint8_t kConfigSchemaVersion = 9;
+// v9: band-pass slopes (0x38, 0x39) and a flat band by default (Q 0.71, was 5.00);
+// v10: breath discriminators (0x3A..0x3F, 0x42), new fields only (nothing to migrate).
+constexpr uint8_t kConfigSchemaVersion = 10;
 static_assert(kConfigSchemaVersion >= kBandFlatQSchemaVersion, "saves must stop the Q migration");
 
 // Threading: internally locked for applyTlv/serializeTlv/save/factoryReset/setMountQuat

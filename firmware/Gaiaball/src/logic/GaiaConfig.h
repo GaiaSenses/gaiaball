@@ -96,6 +96,24 @@ struct GaiaConfig {
   uint16_t audioLpQX100 = 71;  // 10..2000
   uint8_t audioHpSlopeDbOct = 12;  // TLV 0x38: 6, 12, 18, 24, 36, 48
   uint8_t audioLpSlopeDbOct = 12;  // TLV 0x39
+  // Breath discriminators (v10), on top of the band-pass and the line: what tells a breath
+  // from other loud low sound (see BreathParams, HandlingDetector). Each has an off value.
+  // Coherence limit x100 (TLV 0x3A, 0..100): fire only while the left/right coherence of
+  // the band-passed microphones is below this; 100 = off.
+  uint8_t breathCoherenceMaxX100 = 60;
+  // Centre-to-centre distance between the two microphones, 0.1 mm (TLV 0x3B, 1..2000): it
+  // sets the lags the coherence searches. 154 = 15.4 mm, M1-M2 on the board (KiCAD).
+  uint16_t micSpacingMmX10 = 154;
+  // The fire condition must hold without a break this long, ms (TLV 0x3C, 0..2000; 0 = off).
+  uint16_t breathMinDurationMs = 120;
+  // While the ball is handled the fire line is this many dB higher (TLV 0x3D, 0..60; 0 = off).
+  uint8_t handlingBoostDb = 12;
+  // Handling = angular speed above this, deg/s (TLV 0x3E, 1..2000) ...
+  uint16_t handlingGyroDps = 30;
+  // ... or |acceleration| more than this away from 1 g, mg (TLV 0x3F, 10..4000) ...
+  uint16_t handlingAccelMg = 300;
+  // ... and it lasts this long after the last such sample, ms (TLV 0x42, 0..5000).
+  uint16_t handlingHoldMs = 300;
   // Potentiometer EMA alpha x1000 (300 = legacy 0.3).
   uint16_t potEmaAlphaX1000 = 300;
 

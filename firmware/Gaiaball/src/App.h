@@ -7,6 +7,7 @@
 
 #include "logic/Co2Trigger.h"
 #include "logic/CommandGate.h"
+#include "logic/HandlingDetector.h"
 #include "logic/NavEngine.h"
 #include "logic/NotifyThrottle.h"
 #include "logic/VirtualCo2Pulse.h"
@@ -84,6 +85,7 @@ class App {
   Co2Service co2_;
   Diagnostics diag_;
   NotifyThrottle imuThrottle_;
+  HandlingDetector handling_;  // App task: fed by every IMU sample, read by the audio task
 
   TaskHandle_t task_ = nullptr;
 

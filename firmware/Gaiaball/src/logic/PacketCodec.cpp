@@ -56,7 +56,8 @@ static uint16_t encodeU16(float v) {
 }
 
 SensorsPacket makeSensorsPacket(uint16_t seq, uint32_t tMs, float rmsL, float rmsR,
-                                float threshold, float potRaw, uint8_t flags) {
+                                float threshold, float potRaw, uint8_t flags,
+                                float coherence, uint8_t breathGate) {
   SensorsPacket p{};
   p.version = kProtocolVersion;
   p.type = static_cast<uint8_t>(PacketType::Sensors);
@@ -67,6 +68,9 @@ SensorsPacket makeSensorsPacket(uint16_t seq, uint32_t tMs, float rmsL, float rm
   p.audioThreshold = encodeU32(threshold);
   p.potRaw = encodeU16(potRaw);
   p.flags = flags;
+  const uint16_t c = encodeU16(coherence * 100.0f);
+  p.coherenceX100 = (uint8_t)(c > 100 ? 100 : c);
+  p.breathGate = (uint8_t)(breathGate & 0x0F);
   return p;
 }
 

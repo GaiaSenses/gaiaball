@@ -42,6 +42,11 @@ constexpr Reg kRegs[] = {
     {0x19, Kind::U16, 1, 7000},       {0x1A, Kind::U16, 10, 2000},
     // Band-pass slopes in dB/octave (v9): only 6, 12, 18, 24, 36, 48 (see validValue).
     {0x38, Kind::U8, 6, 48},          {0x39, Kind::U8, 6, 48},
+    // Breath discriminators (v10): coherence, mic spacing, duration, handling.
+    {0x3A, Kind::U8, 0, 100},         {0x3B, Kind::U16, 1, 2000},
+    {0x3C, Kind::U16, 0, 2000},       {0x3D, Kind::U8, 0, 60},
+    {0x3E, Kind::U16, 1, 2000},       {0x3F, Kind::U16, 10, 4000},
+    {0x42, Kind::U16, 0, 5000},
     {0x1B, Kind::U16, 1, 1000},       {0x1F, Kind::U8, 0, 1},
     {0x1C, Kind::U16, 0, 10000},      {0x1D, Kind::U8, 0, 100},
     {0x1E, Kind::MagCal, 0, 0},       {0x20, Kind::U8, 0, kAnyU8},
@@ -114,6 +119,13 @@ void *numField(GaiaConfig &c, uint8_t id) {
     case 0x1A: return &c.audioLpQX100;
     case 0x38: return &c.audioHpSlopeDbOct;
     case 0x39: return &c.audioLpSlopeDbOct;
+    case 0x3A: return &c.breathCoherenceMaxX100;
+    case 0x3B: return &c.micSpacingMmX10;
+    case 0x3C: return &c.breathMinDurationMs;
+    case 0x3D: return &c.handlingBoostDb;
+    case 0x3E: return &c.handlingGyroDps;
+    case 0x3F: return &c.handlingAccelMg;
+    case 0x42: return &c.handlingHoldMs;
     case 0x1B: return &c.potEmaAlphaX1000;
     case 0x1F: return &c.audioRawStream;
     case 0x20: return &c.co2Enabled;

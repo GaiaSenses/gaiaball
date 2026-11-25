@@ -1142,6 +1142,62 @@ void test_default_serialized_length_fits_buffer() {
   printf("default serialized config: %u bytes\n", (unsigned)n);
 }
 
+// --- Breath discriminators (v10): 0x3A..0x3F and 0x42 -----------------------------
+
+void test_breath_discriminator_registers_roundtrip() {
+  GaiaConfig src;
+  src.breathCoherenceMaxX100 = 75;
+  src.micSpacingMmX10 = 320;
+  src.breathMinDurationMs = 250;
+  src.handlingBoostDb = 20;
+  src.handlingGyroDps = 90;
+  src.handlingAccelMg = 500;
+  src.handlingHoldMs = 1000;
+  uint8_t buf[384];
+  const size_t n = tlvSerialize(src, buf, sizeof buf);
+  const uint8_t ids[] = {0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x42};
+  for (uint8_t id : ids) TEST_ASSERT_NOT_NULL(findRec(buf, n, id));
+  GaiaConfig dst;
+  TEST_ASSERT_TRUE(tlvApply(dst, buf, n));
+  TEST_ASSERT_EQUAL(75, dst.breathCoherenceMaxX100);
+  TEST_ASSERT_EQUAL(320, dst.micSpacingMmX10);
+  TEST_ASSERT_EQUAL(250, dst.breathMinDurationMs);
+  TEST_ASSERT_EQUAL(20, dst.handlingBoostDb);
+  TEST_ASSERT_EQUAL(90, dst.handlingGyroDps);
+  TEST_ASSERT_EQUAL(500, dst.handlingAccelMg);
+  TEST_ASSERT_EQUAL(1000, dst.handlingHoldMs);
+}
+
+void test_breath_discriminator_registers_boundaries() {
+  GaiaConfig c;
+  const uint8_t lo[] = {0x3A, 1, 0, 0x3B, 2, 1, 0, 0x3C, 2, 0, 0, 0x3D, 1, 0,
+                        0x3E, 2, 1, 0, 0x3F, 2, 10, 0, 0x42, 2, 0, 0};
+  TEST_ASSERT_TRUE(tlvApply(c, lo, sizeof lo));
+  TEST_ASSERT_EQUAL(0, c.breathCoherenceMaxX100);
+  TEST_ASSERT_EQUAL(0, c.breathMinDurationMs);
+  TEST_ASSERT_EQUAL(0, c.handlingBoostDb);
+  TEST_ASSERT_EQUAL(0, c.handlingHoldMs);
+  // 0x3A 100 (off), 0x3B 2000 (200 mm), 0x3C 2000, 0x3D 60, 0x3E 2000, 0x3F 4000, 0x42 5000
+  const uint8_t hi[] = {0x3A, 1, 100, 0x3B, 2, 0xD0, 0x07, 0x3C, 2, 0xD0, 0x07, 0x3D, 1, 60,
+                        0x3E, 2, 0xD0, 0x07, 0x3F, 2, 0xA0, 0x0F, 0x42, 2, 0x88, 0x13};
+  TEST_ASSERT_TRUE(tlvApply(c, hi, sizeof hi));
+  TEST_ASSERT_EQUAL(100, c.breathCoherenceMaxX100);
+  TEST_ASSERT_EQUAL(2000, c.micSpacingMmX10);
+  TEST_ASSERT_EQUAL(4000, c.handlingAccelMg);
+  TEST_ASSERT_EQUAL(5000, c.handlingHoldMs);
+}
+
+void test_breath_discriminator_registers_reject_out_of_range() {
+  const uint8_t bad[][4] = {
+      {0x3A, 1, 101, 0},     {0x3B, 2, 0, 0},       {0x3B, 2, 0xD1, 0x07},  // 2001
+      {0x3C, 2, 0xD1, 0x07}, {0x3D, 1, 61, 0},      {0x3E, 2, 0, 0},
+      {0x3F, 2, 9, 0},       {0x3F, 2, 0xA1, 0x0F}, {0x42, 2, 0x89, 0x13},  // 4001, 5001
+  };
+  for (const auto &b : bad) assertRejected(b, b[1] == 1 ? 3 : 4);
+  const uint8_t wrongLen[] = {0x3B, 1, 5};  // u16 register sent as u8
+  assertRejected(wrongLen, sizeof wrongLen);
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_status_byte_encodes_boot_selection_and_found);
@@ -1203,5 +1259,8 @@ int main(int, char **) {
   RUN_TEST(test_audio_window_register);
   RUN_TEST(test_breath_regs_serialized_and_0x15_absent);
   RUN_TEST(test_default_serialized_length_fits_buffer);
+  RUN_TEST(test_breath_discriminator_registers_roundtrip);
+  RUN_TEST(test_breath_discriminator_registers_boundaries);
+  RUN_TEST(test_breath_discriminator_registers_reject_out_of_range);
   return UNITY_END();
 }
