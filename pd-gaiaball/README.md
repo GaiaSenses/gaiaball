@@ -31,6 +31,11 @@ computador.
 3. Procure `gaiaball` e clique em **Instalar**. Se o Pd perguntar se deve acrescentar a
    pasta ao caminho de busca, responda que sim.
 
+**A busca não encontra o `gaiaball`?** Ele ainda não foi publicado no Deken. Baixe o pacote
+do seu sistema (Windows, macOS ou Linux) na [página de versões](https://github.com/GaiaSenses/gaiaball/releases),
+descompacte e siga o `LEIA-ME.html` que vem dentro: ele mostra onde pôr a pasta `gaiaball`
+e, no Mac, como liberar o objeto. Não precisa de conta no GitHub.
+
 ### 2. Abrir a config-app e conectar a bola
 
 1. Ligue a bola.
@@ -122,7 +127,7 @@ mesmo tempo, vale a mais recente. Feche as outras.
 
 | Sintoma | Causa provável e o que fazer |
 |---|---|
-| O Pd diz `gaiaball ... couldn't create` | o objeto não está instalado ou a pasta não está no caminho do Pd. Instale pelo Deken (passo 1) e confira em Preferências → Caminho. |
+| O Pd diz `gaiaball ... couldn't create` | o objeto não está instalado ou a pasta não está no caminho do Pd. Instale pelo Deken ou pelo pacote da página de versões (passo 1) e confira em Preferências → Caminho. |
 | O console diz `gaiaball: porta 9478 em uso` | outro `[gaiaball]` já escuta nessa porta (por exemplo, em outro patch aberto, ou no patch de ajuda). Não atrapalha: os `[r gaia.*]` recebem do que está escutando, e o outro assume a porta sozinho quando o primeiro for fechado. Se a porta estiver com outro programa, escolha outra porta nos dois lados: `[gaiaball 9500]` e a mesma porta na config-app. |
 | A config-app mostra "Pd: aguardando" | o Pd não está aberto, não há `[gaiaball]` em nenhum patch aberto, ou as portas são diferentes nos dois lados. |
 | A config-app mostra "Pd: bloqueado pelo Chrome" | a permissão "Apps neste dispositivo" foi negada. Libere como no passo 4 e recarregue a página. |
@@ -162,6 +167,8 @@ que você não conhece.
 | `pd-lib-builder/` | submódulo git com o sistema de compilação de externals do Pd |
 | `tests/` | testes em C do decodificador e do WebSocket; `tests/e2e/` tem o teste ponta a ponta com o Pd |
 | [`PUBLICAR-NO-DEKEN.md`](PUBLICAR-NO-DEKEN.md) | como publicar uma versão nova no Deken |
+| `pacotes/` | os pacotes de instalação da página de versões: `montar.sh` gera um `.zip` por sistema com o `LEIA-ME.html` (feito de `LEIA-ME.md`), o tutorial em HTML, a ajuda e os exemplos |
+| [`PUBLICAR-NO-GITHUB.md`](PUBLICAR-NO-GITHUB.md) | como publicar uma versão nova na página de versões (Releases) do GitHub |
 
 ### Compilar e testar
 

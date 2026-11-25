@@ -105,45 +105,40 @@ O **Deken** é a "loja" de externals que fica dentro do próprio Pd.
 
 O `[gaiaball]` é novo, e colocá-lo no Deken é um passo manual da equipe (descrito em
 [`PUBLICAR-NO-DEKEN.md`](PUBLICAR-NO-DEKEN.md)). Se a busca não mostra nada, ele ainda não
-foi publicado. Enquanto isso, você tem três saídas:
+foi publicado lá. Enquanto isso, você tem três saídas:
 
-**A) Pedir o arquivo à equipe do GaiaSenses.** É o mais simples.
+**A) Baixar o pacote pronto do seu sistema (o jeito mais fácil).** Não precisa de conta no
+GitHub.
 
-**B) Baixar do GitHub.** O GitHub compila o objeto para todos os sistemas, mas só quando
-alguém da equipe manda, e baixar exige uma conta no GitHub.
+1. Abra a página de versões: <https://github.com/GaiaSenses/gaiaball/releases>.
+2. Na versão mais recente do `[gaiaball]`, em **Assets**, baixe o arquivo do seu sistema:
 
-1. Entre no GitHub com a sua conta.
-2. Abra <https://github.com/GaiaSenses/gaiaball/actions/workflows/pd-gaiaball.yml> e clique
-   na execução mais recente que tem o sinal verde.
-3. No fim da página, em **Artifacts**, baixe o arquivo do seu sistema:
+   | Seu computador | Baixe |
+   |---|---|
+   | Windows 10 ou 11 (64 bits) | `pd-gaiaball-<versão>-windows.zip` |
+   | Mac (Intel ou Apple Silicon) | `pd-gaiaball-<versão>-macos.zip` |
+   | Linux (Intel/AMD de 64 bits, ou ARM de 64 bits, como o Raspberry Pi 4 e 5) | `pd-gaiaball-<versão>-linux.zip` |
 
-   | Seu computador | Baixe | O arquivo que vem dentro |
-   |---|---|---|
-   | Windows | `gaiaball-bin-windows-32` | `gaiaball.dll` |
-   | Mac (Intel ou Apple) | `gaiaball-bin-macos-32` | `gaiaball.pd_darwin` |
-   | Linux, processador Intel ou AMD | `gaiaball-bin-linux-amd64-32` | `gaiaball.pd_linux` |
-   | Linux, processador ARM de 64 bits | `gaiaball-bin-linux-arm64-32` | `gaiaball.linux-arm64-32.so` |
+3. Descompacte e abra o **`LEIA-ME.html`** que vem dentro. Ele mostra, para o seu sistema,
+   onde pôr a pasta `gaiaball` (uma pasta onde o Pd procura objetos sozinho, sem mexer no
+   Caminho) e, no Mac, o passo extra de liberar o objeto, que o macOS bloqueia por ter vindo
+   da internet.
 
-   O `-32` no fim é o Pd comum. Os arquivos terminados em `-64` são para o Pd de "precisão
-   dupla", uma versão especial; se você não sabe qual tem, é o comum.
-4. Descompacte o `.zip`.
-
-Se não houver nenhuma execução, ou se os arquivos não aparecerem mais (o GitHub os apaga
-depois de um tempo), peça a alguém da equipe para rodar de novo: **Actions → pd-gaiaball →
-Run workflow**.
+**B) Pedir o arquivo à equipe do GaiaSenses.**
 
 **C) Compilar você mesmo.** Para quem já compila programas: veja "Compilar e testar" no
 [`README.md`](README.md#compilar-e-testar).
 
-**Onde colocar o arquivo baixado (opções A e B):**
+**Onde colocar os arquivos (opções B e C):**
 
-- **Jeito mais simples:** ponha o arquivo na mesma pasta do seu patch. O Pd procura objetos
-  primeiro na pasta do patch. Ponha junto o `gaiaball-help.pd` (ele está na pasta
-  [`pd-gaiaball`](https://github.com/GaiaSenses/gaiaball/tree/main/pd-gaiaball) do
+- **Jeito mais simples:** ponha o arquivo do objeto na mesma pasta do seu patch. O Pd
+  procura objetos primeiro na pasta do patch. Ponha junto o `gaiaball-help.pd` (ele está na
+  pasta [`pd-gaiaball`](https://github.com/GaiaSenses/gaiaball/tree/main/pd-gaiaball) do
   repositório), para a ajuda do objeto funcionar.
-- **Para usar em qualquer patch:** crie uma pasta (por exemplo, `gaiaball`), ponha os
-  arquivos nela e acrescente essa pasta em **Preferências → Caminho** (em inglês,
-  *Preferences → Path*).
+- **Para usar em qualquer patch:** ponha os arquivos numa pasta chamada `gaiaball` e copie
+  essa pasta para a pasta de objetos do Pd: `%AppData%\Pd` no Windows, `~/Library/Pd` no
+  Mac, `~/.local/lib/pd/extra` no Linux. O Pd procura nelas sozinho. Outra saída é
+  acrescentar a pasta em **Preferências → Caminho** (em inglês, *Preferences → Path*).
 
 ### 3.3 Conferir a instalação
 
@@ -734,7 +729,8 @@ só, com os três valores novos, quando chega o `aceX` na entrada da esquerda.
 ## 10. Exemplos prontos
 
 Os exemplos ficam na pasta [`exemplos/`](exemplos/), ao lado deste tutorial. Quem
-instalou pelo Deken encontra os dois dentro da pasta `gaiaball` instalada; eles também
+instalou pelo Deken ou pelo pacote da página de versões encontra os dois dentro da pasta
+`gaiaball` instalada; eles também
 estão na pasta [`pd-gaiaball`](https://github.com/GaiaSenses/gaiaball/tree/main/pd-gaiaball)
 do repositório.
 

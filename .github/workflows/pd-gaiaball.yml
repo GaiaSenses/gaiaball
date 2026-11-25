@@ -1,8 +1,12 @@
 name: pd-gaiaball
 
 # Builds the [gaiaball] external for every system and Pd float size, runs the C tests,
-# and packages everything as a Deken package (a workflow artifact; publishing to
-# puredata.info is a manual step, see pd-gaiaball/PUBLICAR-NO-DEKEN.md).
+# and packages everything twice:
+# - as a Deken package (a workflow artifact; publishing to puredata.info is a manual
+#   step, see pd-gaiaball/PUBLICAR-NO-DEKEN.md);
+# - as one install .zip per system (Windows, macOS, Linux) for the GitHub Releases page.
+#   With the `release` input ticked, the `release` job puts them in a DRAFT Release
+#   (never published by the workflow), see pd-gaiaball/PUBLICAR-NO-GITHUB.md.
 
 # Automatic runs are switched OFF for now: the workflow only runs when started by hand
 # (Actions tab -> pd-gaiaball -> "Run workflow"). To turn the automatic runs back on,

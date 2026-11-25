@@ -7,6 +7,9 @@ publicado, qualquer pessoa instala o objeto de dentro do Pd, sem terminal:
 
 > Quem só **usa** o `[gaiaball]` não precisa ler isto: veja o [README](README.md).
 
+> Para publicar também na página de versões do GitHub (um `.zip` por sistema, para quem
+> instala sem o Deken), veja [`PUBLICAR-NO-GITHUB.md`](PUBLICAR-NO-GITHUB.md).
+
 ## 1. Como o Deken funciona, em uma frase
 
 O Deken não é uma loja central: cada autor guarda os seus pacotes na **própria conta do
@@ -94,6 +97,9 @@ gaiaball/
   As extensões dos binários (`.pd_linux`, `.pd_darwin`, `.dll` e as `<sistema>-<cpu>-64.so`
   ou `.dll` da precisão dupla) já saem certas do CI; o `deken` lê o cabeçalho de cada
   arquivo para descobrir o sistema e o processador.
+  O CI também põe na pasta uma cópia do binário do Linux ARM com o nome antigo,
+  `gaiaball.l_arm64`: o Pd 0.51 a 0.53 num ARM de 64 bits só conhece esse nome (sem ela,
+  ele tentaria o `.pd_linux`, que é o binário Intel/AMD, e falharia).
 - **O `deken` descobre sozinho para quais sistemas o pacote serve**, olhando os binários
   dentro da pasta. Você não escreve isso à mão.
 - **Fontes:** o `deken` exige que cada publicação inclua também o código-fonte (a
