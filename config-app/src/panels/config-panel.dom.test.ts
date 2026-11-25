@@ -308,3 +308,47 @@ describe('band-pass controls (slope, Q) and the spectrum band', () => {
     expect(root.textContent).not.toMatch(/informe um número/);
   });
 });
+
+describe('breath discriminators (firmware v10)', () => {
+  const COH = TLV.breathCoherenceMaxX100;
+  const toggleOf = (id: number): HTMLElement => input(id).closest('.cfg-field')!.querySelector<HTMLElement>('[role=switch], .toggle, button')!;
+
+  // The first field with both an on/off toggle and a scale: it must show 0,60, not the wire 60.
+  it('shows the coherence limit in display units and reads back with nothing pending', () => {
+    client.status(true);
+    client.config();
+    expect(input(COH).value).toBe('0.60');
+    expect(input(TLV.micSpacingMmX10).value).toBe('15.4');
+    expect(applyLabel()).toBe('Aplicar');
+  });
+
+  it('sends the wire value of a typed limit, and 100 when switched off', async () => {
+    const sent: TlvWrite[][] = [];
+    client.writeConfig = async (w: TlvWrite[]) => { sent.push(w); };
+    client.status(true);
+    client.config();
+    type(COH, '0.45');
+    expect(applyLabel()).toBe('Aplicar (1)');
+    q('[data-act=apply]').click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent.flat().find((w) => w.id === COH)?.value).toBe(45);
+    const off = ballRegs([{ id: COH, value: 100 }]);
+    client.config(off);
+    expect(input(COH).value).toBe('0.60'); // off: the box keeps the "on" default for turning it back on
+    expect(toggleOf(COH)).toBeTruthy();
+  });
+
+  it('the coherence source follows the form: a limit, or null when off', () => {
+    document.body.innerHTML = '<div id="root"></div>';
+    root = document.getElementById('root')!;
+    client = new FakeClient();
+    const seen: (number | null)[] = [];
+    const { coherence } = mountConfigPanel(root, client as unknown as GaiaballClient, new PresetStore());
+    coherence.subscribe((l) => seen.push(l));
+    client.status(true);
+    client.config(ballRegs([{ id: COH, value: 35 }]));
+    expect(seen.at(-1)).toBeCloseTo(0.35, 9);
+    client.config(ballRegs([{ id: COH, value: 100 }]));
+    expect(seen.at(-1)).toBeNull();
+  });
+});

@@ -34,6 +34,15 @@ export const TLV = {
   audioLpQX100: 0x1a,
   audioHpSlopeDbOct: 0x38, // 6, 12, 18, 24, 36 or 48 dB/octave (any other value fails the whole write)
   audioLpSlopeDbOct: 0x39,
+  // Breath discriminators (firmware v10): coherence limit x100 (100 = off), mic spacing in
+  // 0.1 mm, minimum duration ms (0 = off), handling boost dB (0 = off), handling thresholds.
+  breathCoherenceMaxX100: 0x3a,
+  micSpacingMmX10: 0x3b,
+  breathMinDurationMs: 0x3c,
+  handlingBoostDb: 0x3d,
+  handlingGyroDps: 0x3e,
+  handlingAccelMg: 0x3f,
+  handlingHoldMs: 0x42,
   potEmaAlphaX1000: 0x1b,
   co2Enabled: 0x20,
   // 0x21 is reserved (was co2ChecksumVariant; the SC8-CO2-5K frame format is fixed).
@@ -120,6 +129,13 @@ const SPECS: Record<number, Spec> = {
   [TLV.audioLpQX100]: U16,
   [TLV.audioHpSlopeDbOct]: U8,
   [TLV.audioLpSlopeDbOct]: U8,
+  [TLV.breathCoherenceMaxX100]: U8,
+  [TLV.micSpacingMmX10]: U16,
+  [TLV.breathMinDurationMs]: U16,
+  [TLV.handlingBoostDb]: U8,
+  [TLV.handlingGyroDps]: U16,
+  [TLV.handlingAccelMg]: U16,
+  [TLV.handlingHoldMs]: U16,
   [TLV.potEmaAlphaX1000]: U16,
   [TLV.co2EmaAlphaX1000]: U16,
   [TLV.co2TriggerPpm]: U16,

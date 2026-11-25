@@ -70,6 +70,10 @@ export function toDisplay(f: Pick<Field, 'scale' | 'negate'>, wire: number): num
   const v = wire / (f.scale ?? 1);
   return f.negate ? -v : v;
 }
+/** Wire value -> the text of the number box, with the field's decimals. */
+export function toDisplayText(f: Pick<Field, 'scale' | 'negate' | 'decimals'>, wire: number): string {
+  return toDisplay(f, wire).toFixed(f.decimals ?? (f.scale ? Math.round(Math.log10(f.scale)) : 0));
+}
 /** Number typed in the form -> wire value. Never returns -0. */
 export function fromDisplay(f: Pick<Field, 'scale' | 'negate' | 'step'>, shown: number): number {
   // An integer step (rearm, in whole dB) must never put a fraction on the wire.
@@ -240,6 +244,26 @@ const GROUPS: Group[] = [
     { id: TLV.audioRawStream, label: 'Stream de áudio cru (2 kHz)', kind: 'checkbox',
       info: 'Envia o áudio mono decimado a 2 kHz para desenhar o espectro no painel Sensores. Ligue só para ajustar os cortes do passa-banda: enquanto está ligado ele consome ~4,3 kB/s e ~45 ms de tempo de ar por segundo — mais que todos os outros pacotes somados. O RMS e o pico não dependem dele (vêm medidos do firmware em cada pacote de orientação). Liga/desliga, sem unidade.' },
   ] },
+  { title: 'Sopro: descartar outros sons', fields: [
+    { id: TLV.breathCoherenceMaxX100, label: 'Coerência máxima entre os microfones', kind: 'number', min: 0, max: 100,
+      scale: 100, step: 0.05, decimals: 2, offValue: 100, onDefault: 60,
+      info: 'Separa o sopro do som que vem de longe. Voz, música ou uma batida na mesa chegam aos dois microfones como a mesma onda, então os dois sinais (depois do passa-banda) ficam quase iguais: coerência perto de 1. O sopro é turbulência na entrada de cada microfone, diferente em cada um: coerência perto de 0. O sopro só dispara enquanto a coerência estiver ABAIXO deste valor. O painel Sensores mostra a coerência ao vivo, com este limite marcado. Com ruído independente nos dois lados, a coerência medida em janelas de 50 ms fica perto de 0,13 e quase nunca passa de 0,60. 1,00 desliga. Adimensional, de 0,00 a 1,00 (0,60 por padrão).' },
+    { id: TLV.micSpacingMmX10, label: 'Distância entre os microfones (mm)', kind: 'number', min: 1, max: 2000,
+      scale: 10, step: 0.1, decimals: 1,
+      info: 'Distância de centro a centro entre os dois microfones. Define quanto um som pode chegar atrasado de um microfone ao outro (distância ÷ 343 m/s) e, por isso, os atrasos que a coerência procura. Na placa atual (KiCAD, M1 e M2) são 15,4 mm: 45 µs, menos de uma amostra a 16 kHz. Mude só se os microfones mudarem de lugar. Unidade: milímetros (mm), de 0,1 a 200,0.' },
+    { id: TLV.breathMinDurationMs, label: 'Duração mínima do sopro (ms)', kind: 'number', min: 0, max: 2000, step: 10,
+      offValue: 0, onDefault: 120,
+      info: 'O som precisa ficar acima da linha (e não coerente) sem interrupção por este tempo para o sopro disparar. A fala tem pausas entre as sílabas e uma batida acaba em dezenas de milissegundos; o sopro é contínuo. Todo sopro reconhecido passa a chegar este tempo mais tarde. 0 desliga. Unidade: milissegundos (ms), de 0 a 2000 (120 por padrão).' },
+    { id: TLV.handlingBoostDb, label: 'Manuseio: linha mais alta (dB)', kind: 'number', min: 0, max: 60, step: 1,
+      offValue: 0, onDefault: 12,
+      info: 'Enquanto a bola está sendo girada ou batida (medido pelo IMU), a linha de disparo do sopro sobe este tanto: dedos sobre a casca e sobre os furos dos microfones fazem barulho grave. Um sopro forte ainda dispara durante o manuseio; o barulho da mão sozinho, não. A linha de rearme não muda. 12 dB = linha 4 vezes mais alta. 0 desliga (o manuseio continua aparecendo no painel Sensores). Unidade: decibéis (dB), de 0 a 60.' },
+    { id: TLV.handlingGyroDps, label: 'Manuseio: rotação (°/s)', kind: 'number', min: 1, max: 2000,
+      info: 'Velocidade de rotação da bola, já sem o desvio do giroscópio, a partir da qual ela conta como manuseada. Parada na mão fica abaixo de ~10 °/s; um giro deliberado passa de 30. Unidade: graus por segundo (°/s), de 1 a 2000.' },
+    { id: TLV.handlingAccelMg, label: 'Manuseio: batida (mg)', kind: 'number', min: 10, max: 4000,
+      info: 'Quanto a aceleração pode se afastar de 1 g (a gravidade, que o acelerômetro lê em repouso em qualquer posição) antes de a bola contar como manuseada: pega batidas e sacudidas. Usa a leitura crua, antes dos filtros da aceleração publicada. Unidade: miligravidade (mg), de 10 a 4000.' },
+    { id: TLV.handlingHoldMs, label: 'Manuseio: tempo de espera (ms)', kind: 'number', min: 0, max: 5000, step: 10,
+      info: 'Depois do último giro ou batida, a bola continua contando como manuseada por este tempo, para o detector não ficar exposto nos intervalos de um gesto. Unidade: milissegundos (ms), de 0 a 5000.' },
+  ] },
   { title: 'CO₂', fields: [
     { id: TLV.co2Enabled, label: 'Sensor de CO₂ (SC8)', kind: 'checkbox',
       info: 'Liga a leitura do sensor SC8 na UART (o firmware apenas escuta — nunca transmite, pois qualquer consulta emudece o sensor). Desligado, a bola manda 600 ppm no lugar da leitura e os campos do sensor ficam inativos; o pulso virtual do sopro e o gatilho continuam valendo. Liga/desliga, sem unidade.' },
@@ -310,6 +334,8 @@ export const GOVERNORS: ReadonlyMap<number, readonly number[]> = new Map([
   [TLV.audioEnabled, [
     TLV.breathDetector, TLV.potControlsThreshold, TLV.breathMetric, TLV.breathThresholdNegDbX100,
     TLV.breathRearmDb, TLV.debounceMs, TLV.audioFastAlphaX1000, TLV.audioSlowAlphaX1000,
+    TLV.breathCoherenceMaxX100, TLV.micSpacingMmX10, TLV.breathMinDurationMs,
+    TLV.handlingBoostDb, TLV.handlingGyroDps, TLV.handlingAccelMg, TLV.handlingHoldMs,
   ]],
   [TLV.audioBpfEnabled, [
     TLV.audioHpHz, TLV.audioHpSlopeDbOct, TLV.audioHpQX100, TLV.audioLpHz, TLV.audioLpSlopeDbOct, TLV.audioLpQX100,
@@ -353,6 +379,12 @@ export interface Co2Source {
   current(): Co2Levels;
   /** Calls `fn` now and on every change of the two fields (typed, read from the ball, preset, default). */
   subscribe(fn: (c: Co2Levels) => void): void;
+}
+/** The coherence limit as the form shows it: 0..1, or null when off (1,00) or empty. */
+export interface CoherenceSource {
+  current(): number | null;
+  /** Calls `fn` now and on every change of the field (typed, read from the ball, preset, default). */
+  subscribe(fn: (limit: number | null) => void): void;
 }
 /** The breath metric as the form shows it (true = peak, false = RMS, null = not set). */
 export interface MetricSource {
@@ -425,6 +457,13 @@ export const FIELD_DEFAULTS: ReadonlyMap<number, number | string> = new Map<numb
   [TLV.audioLpSlopeDbOct, DEFAULT_SLOPE_DB_OCT],
   [TLV.audioRawStream, 0],
   [TLV.audioWindowMs, 50],
+  [TLV.breathCoherenceMaxX100, 60],
+  [TLV.micSpacingMmX10, 154],
+  [TLV.breathMinDurationMs, 120],
+  [TLV.handlingBoostDb, 12],
+  [TLV.handlingGyroDps, 30],
+  [TLV.handlingAccelMg, 300],
+  [TLV.handlingHoldMs, 300],
   [TLV.co2Enabled, 1],
   [TLV.co2StaleTimeoutMs, 5000],
   [TLV.virtualPeakPpm, 2100],
@@ -536,7 +575,7 @@ export function mountConfigPanel(
   root: HTMLElement, client: GaiaballClient, store: PresetStore = new PresetStore(),
   /** demo: no real link, but the form behaves as connected (main.ts fakes the device). */
   opts: { demo?: boolean } = {},
-): { advancedSections: HTMLElement; band: BandSource; co2: Co2Source; metric: MetricSource } {
+): { advancedSections: HTMLElement; band: BandSource; co2: Co2Source; metric: MetricSource; coherence: CoherenceSource } {
   root.innerHTML = `
     <h2>Configuração</h2>
     <div data-el="strip" role="status"></div>
@@ -790,15 +829,20 @@ export function mountConfigPanel(
       if (BAND_IDS.has(id)) emitBand();
       if (CO2_IDS.has(id)) emitCo2();
       if (id === TLV.breathMetric) emitMetric();
+      if (id === TLV.breathCoherenceMaxX100) emitCoherence();
       refreshDescribe();
       refreshForm();
     });
     if (BAND_IDS.has(id)) el.addEventListener('input', () => emitBand());
     if (CO2_IDS.has(id)) el.addEventListener('input', () => emitCo2());
+    if (id === TLV.breathCoherenceMaxX100) el.addEventListener('input', () => emitCoherence());
   }
   navLon.addEventListener('input', () => { dirty.add(TLV.navRef); refreshForm(); });
   navLon.addEventListener('change', () => refreshForm());
-  for (const [id, tg] of toggles) tg.addEventListener('change', () => { dirty.add(id); refreshForm(); applyEnabled(); });
+  for (const [id, tg] of toggles) tg.addEventListener('change', () => {
+    dirty.add(id); refreshForm(); applyEnabled();
+    if (id === TLV.breathCoherenceMaxX100) emitCoherence();
+  });
 
   const getValue = (f: Field): number | string | null => {
     const el = inputs.get(f.id)!;
@@ -822,8 +866,10 @@ export function mountConfigPanel(
       const on = Number(v) !== f.offValue;
       setToggleValue(toggles.get(f.id)!, on);
       el.closest('.cfg-field')?.classList.toggle('filter-off', !on);
-      // Keep a sensible value visible while off, so turning the filter back on works.
-      el.value = String(on ? v : (f.onDefault ?? f.min ?? 0));
+      // Keep a sensible value visible while off, so turning the filter back on works. A scaled
+      // field (the coherence limit, x100) shows it in display units, like any other number.
+      const shown = on ? Number(v) : (f.onDefault ?? f.min ?? 0);
+      el.value = f.scale || f.negate ? toDisplayText(f, shown) : String(shown);
       return;
     }
     if (f.kind === 'checkbox') {
@@ -837,7 +883,7 @@ export function mountConfigPanel(
       el.value = ref ? ref.lat.toFixed(6) : '';
       navLon.value = ref ? ref.lon.toFixed(6) : '';
     }
-    else if (f.scale || f.negate) el.value = toDisplay(f, Number(v)).toFixed(f.decimals ?? (f.scale ? Math.round(Math.log10(f.scale)) : 0));
+    else if (f.scale || f.negate) el.value = toDisplayText(f, Number(v));
     else el.value = String(v);
   };
   /** Shows or hides rows whose `visible` depends on the form (joystick sensitivity follows navMode). */
@@ -850,6 +896,7 @@ export function mountConfigPanel(
     emitBand();
     emitCo2();
     emitMetric();
+    emitCoherence();
     refreshDescribe();
     refreshPotBox();
     refreshMarkers();
@@ -912,6 +959,17 @@ export function mountConfigPanel(
     if (co2Listeners.size === 0) return;
     const c = formCo2();
     for (const fn of co2Listeners) fn(c);
+  };
+  /** Coherence limit as the form shows it, for the mark on the Sopro card: 0..1, null when off or empty. */
+  const formCoherence = (): number | null => {
+    const v = getValue(byId(TLV.breathCoherenceMaxX100));
+    return typeof v === 'number' && v < 100 ? v / 100 : null;
+  };
+  const coherenceListeners = new Set<(limit: number | null) => void>();
+  const emitCoherence = (): void => {
+    if (coherenceListeners.size === 0) return;
+    const c = formCoherence();
+    for (const fn of coherenceListeners) fn(c);
   };
   /** RMS/Pico switch as the form shows it, for the threshold line in the charts. */
   const formMetric = (): boolean | null => {
@@ -1367,6 +1425,10 @@ export function mountConfigPanel(
     metric: {
       current: formMetric,
       subscribe: (fn: (peak: boolean | null) => void): void => { metricListeners.add(fn); fn(formMetric()); },
+    },
+    coherence: {
+      current: formCoherence,
+      subscribe: (fn: (limit: number | null) => void): void => { coherenceListeners.add(fn); fn(formCoherence()); },
     },
   };
 }
