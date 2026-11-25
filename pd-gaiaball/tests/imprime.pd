@@ -1,5 +1,5 @@
 #N canvas 40 40 760 420 12;
-#X text 20 10 e2e: prints every gaia.* channel and gaiaball.status on Pd's console. Opened next to ../gaiaball-vanilla.pd by e2e.mjs, f 90;
+#X text 20 10 e2e: prints every gaia.* channel and gaiaball.status on Pd's console. Opened by e2e.mjs next to ../gaiaball.pd (or objeto.pd), f 90;
 #X obj 20 60 r gaia.lat;
 #X obj 20 87 print gaia.lat;
 #X obj 260 60 r gaia.lon;

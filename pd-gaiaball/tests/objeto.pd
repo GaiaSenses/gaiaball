@@ -1,0 +1,5 @@
+#N canvas 40 40 560 200 12;
+#X text 20 10 e2e --objeto: [gaiaball] created as an object \, found through Pd's search path (-path .. \, or the standard paths with --instalado). Its outlet goes to the console as "saida: ...", f 70;
+#X obj 20 90 gaiaball;
+#X obj 20 120 print saida;
+#X connect 1 0 2 0;

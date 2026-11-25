@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generates ../gaiaball-vanilla.pd: the Gaiaball receiver in Pd vanilla, with no externals.
+"""Generates ../gaiaball.pd, the [gaiaball] abstraction: the Gaiaball receiver in Pd vanilla.
 
 The config-app (Chrome/Edge) connects to the ball over Bluetooth and forwards the raw
 IMU (0x01), CO2 (0x02) and navigation (0x07) packets, one per binary WebSocket message, to
@@ -10,17 +10,19 @@ ws://127.0.0.1:9478. The patch is that WebSocket server, built only from vanilla
     32-bit (exact integers only up to 2^24), so every 32-bit word is a pair of 16-bit halves
     and no intermediate value goes past 24 bits;
   - frames: a byte-by-byte state machine in a single [expr] (state kept as a list);
-  - packets: decoded like pd-gaiaball/src/gb_decode.c and published on the same gaia.*
-    names as the [gaiaball] external.
+  - packets: decoded as firmware/docs/protocol.md specifies and published on the gaia.*
+    names (the same names and units the compiled [gaiaball] external used before it was
+    retired, so patches written for it keep working).
 
-Usage: python3 gerar_patch.py   (writes ../gaiaball-vanilla.pd). The .pd is the deliverable;
-this script exists so the patch can be regenerated after a change without rewiring by hand.
+Usage: python3 gerar_patch.py   (writes ../gaiaball.pd). The .pd is the deliverable, but it
+is never edited by hand: change this script and run it again. The CI regenerates the .pd and
+fails if the result differs from the committed file by a single byte.
 """
 
 import re
 from pathlib import Path
 
-OUT = Path(__file__).resolve().parent.parent / "gaiaball-vanilla.pd"
+OUT = Path(__file__).resolve().parent.parent / "gaiaball.pd"
 
 
 # ---------------------------------------------------------------- .pd writer
@@ -594,7 +596,8 @@ def imu_expr():
     flags = P(22)
     rms_l, rms_r, pk_l, pk_r = (f"({P(k)}/2 - 120)" for k in (23, 24, 25, 26))
     rad = "57.29577951308232"
-    # legacy firmware convention: qw=w, qx=y, qy=x, qz=-z (gb_euler_legacy)
+    # legacy site convention: qw=w, qx=y, qy=x, qz=-z (quatToEulerLegacy in
+    # config-app/src/protocol/euler.ts)
     roll = f"atan2(2*({w}*{y} - {x}*{z}), 1 - 2*({y}*{y} + {x}*{x}))*{rad} + 0"
     pitch = f"asin(max(-1, min(1, 2*({w}*{x} + {y}*{z}))))*{rad} + 0"
     yaw = f"atan2(2*({x}*{y} - {w}*{z}), 1 - 2*({x}*{x} + {z}*{z}))*{rad} + 0"
@@ -790,19 +793,19 @@ def build_estado():
 
 def build_main():
     cv = Canvas(rect=(40, 40, 980, 760), font=12)
-    cv.text(20, 12, "GAIABALL NO PD VANILLA - recebe os dados da bola pelo config-app "
-            "(sem objetos compilados)", 90)
-    cv.text(20, 50, "1. Abra este patch no Pd (vanilla 0.51 ou mais novo). Ele escuta em "
-            "ws://127.0.0.1:9478 (outra porta: use como objeto [gaiaball-vanilla 9500] "
-            "e mude a porta no Avançado do config-app).", 60)
-    cv.text(20, 130, "2. Abra o config-app no Chrome ou Edge e conecte a bola. A chave "
+    cv.text(20, 12, "[gaiaball] - os dados da Gaiaball no Pd. Só objetos do Pd vanilla "
+            "(0.51 ou mais novo): nada a compilar.", 90)
+    cv.text(20, 50, "1. Crie um [gaiaball] num patch seu (ou abra este arquivo). Ele escuta "
+            "em ws://127.0.0.1:9478. Outra porta: [gaiaball 9500] e a mesma porta na "
+            "config-app (painel Conexão > Pd > Porta).", 60)
+    cv.text(20, 130, "2. Abra a config-app no Chrome ou no Edge e conecte a bola. A chave "
             "'Enviar ao Pd' já vem ligada: em até 2 s o quadrado 'conectado' acende "
             "e os números ao lado começam a mexer.", 60)
-    cv.text(20, 210, "3. Nos seus patches use [r gaia.acc.x], [r gaia.co2] etc. "
-            "(os mesmos nomes do objeto [gaiaball]). O estado também sai em "
-            "[r gaiaball.status].", 60)
-    cv.text(20, 280, "Se o console disser 'Address already in use': outro patch (ou o "
-            "objeto [gaiaball]) já usa a porta. Feche-o e clique em 'reconectar'.", 60)
+    cv.text(20, 210, "3. Nos seus patches use [r gaia.acc.x], [r gaia.co2] etc. O estado "
+            "sai pela saída do objeto e também em [r gaiaball.status].", 60)
+    cv.text(20, 280, "Se o console disser 'Address already in use': outro [gaiaball] já "
+            "usa a porta, e os dados chegam por ele. Se você fechar o outro, clique "
+            "em 'reconectar' aqui.", 60)
 
     y = 350
     tg = cv.toggle(20, y)
