@@ -80,7 +80,7 @@ jobs:
             unzip
             curl
             mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-tools-git
+            mingw-w64-ucrt-x86_64-tools
 
       - name: Fetch Pd headers (source tag)
         if: matrix.name != 'windows'
@@ -98,10 +98,13 @@ jobs:
       - name: Make an import library named pd64.dll (Windows, double precision)
         # Pd ships no pd64.dll; the externals only need something to link against and
         # the export list is the same as pd.dll, so build an import library for pd64.dll.
+        # gendef (it marks the data exports, such as s_list, as DATA) comes from the UCRT64
+        # tools package: MSYS2 no longer builds that package for MINGW64. It is a
+        # standalone program, so it runs fine from its own folder.
         if: matrix.name == 'windows' && matrix.floatsize == 64
         working-directory: pd-gaiaball/build-deps/pd-${{ env.PD_TAG }}/bin
         run: |
-          gendef pd.dll
+          /ucrt64/bin/gendef pd.dll
           sed -i 's/^LIBRARY.*/LIBRARY "pd64.dll"/' pd.def
           dlltool -d pd.def -D pd64.dll -l pd64.dll
           ls -l pd64.dll
@@ -115,6 +118,12 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = Windows ]; then
             PD_ARGS=("PDDIR=build-deps/pd-$PD_TAG")
+            if [ "$FLOATSIZE" = 64 ]; then
+              # pd-lib-builder puts pd64.dll BEFORE the objects on the link line. That is
+              # fine for a real DLL, but ours is an import library (an archive), from which
+              # ld only takes what is already missing: list it again after the objects.
+              PD_ARGS+=("gaiaball.class.ldlibs=build-deps/pd-$PD_TAG/bin/pd64.dll")
+            fi
           else
             PD_ARGS=(PDINCLUDEDIR=build-deps/pure-data/src)
           fi
@@ -123,6 +132,12 @@ jobs:
           make "${PD_ARGS[@]}" "floatsize=$FLOATSIZE" "extension=$EXT" "${ARCH_ARGS[@]}"
           ls -l "gaiaball.$EXT"
           file "gaiaball.$EXT" || true
+          if [ "$RUNNER_OS" = Windows ]; then
+            # The DLL must import the Pd core of its own precision.
+            want=pd.dll; if [ "$FLOATSIZE" = 64 ]; then want=pd64.dll; fi
+            objdump -p "gaiaball.$EXT" | grep 'DLL Name'
+            objdump -p "gaiaball.$EXT" | grep -qF "DLL Name: $want"
+          fi
 
       - name: Ad-hoc signature (macOS)
         # Apple Silicon only loads signed code; an ad-hoc signature is enough for Pd.
