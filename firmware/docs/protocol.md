@@ -418,8 +418,10 @@ Units:
 ## AudioChunkPacket (208 bytes, type 0x05, ~21 Hz, diag characteristic, opt-in)
 
 Decimated RAW audio for the config-app's spectrum analyzer — **the FFT runs in the
-frontend**, the firmware only ships band-limited samples. Mono mix (L+R)/2,
-DC-removed, decimated 16 kHz -> 2 kHz by average-of-8 (crude anti-alias, adequate
+frontend**, the firmware only ships band-limited samples. Mono mix (L+R)/2 after the
+2 Hz first-order DC blocker and BEFORE the band-pass (since v9; until v8 the DC was removed
+by subtracting each 5 ms block's mean, which also cut ~-3 dB at 90 Hz and -21 dB at 10 Hz),
+decimated 16 kHz -> 2 kHz by average-of-8 (crude anti-alias, adequate
 for a tuning visualizer), int16 = top 16 bits of the 24-bit samples. 208 B × 20.8
 packets/s ≈ 4.3 kB/s.
 Requires MTU >= 211.
@@ -489,7 +491,9 @@ unlock.
 Persistence (command `0x11`) stores this same TLV serialization in NVS — not a struct
 dump — and loads it leniently (unknown ids and invalid values are skipped; the
 cross-field rules are re-established on defaults), so a config saved by one firmware
-version survives schema changes. The PIN and the mounting quaternion have no readable
+version survives schema changes. The NVS also keeps the schema version the config was
+saved with (`ver`, 9 since the band-pass slopes); it is read back only to migrate values
+whose default changed (v9: a stored band-pass Q of 500, the old default, becomes 71). The PIN and the mounting quaternion have no readable
 TLV register and are persisted under their own NVS keys.
 
 | id | type | default | field |
@@ -516,9 +520,11 @@ TLV register and are persisted under their own NVS keys.
 | 0x14 | u8 | 1 | potControlsThreshold — breath threshold source: 1 = potentiometer (ADC 0…4095 → −60…0 dBFS, linear, 0.5 dB hysteresis), 0 = fixed value 0x2B |
 | 0x16 | u8 | 1 | audioBpfEnabled — breath band-pass (HP then LP) before the RMS/peak detector |
 | 0x17 | u16 | 10 | audioHpHz (1–7000) |
-| 0x18 | u16 | 500 | audioHpQX100 (10–2000; 500 = Q 5.00. Q > 0.707 peaks ~20·log10(Q) dB at the cutoff) |
+| 0x18 | u16 | 71 | audioHpQX100 (10–2000). **The gain exactly at the cutoff, ×100, at any slope:** 71 = 0.71 = −3 dB (flat Butterworth), 100 = 0 dB, 500 = +14 dB resonant peak. It scales the highest-Q section of the Butterworth cascade. No effect at 6 dB/oct. Default 500 until schema v9; a stored 500 from an older save is migrated to 71 on load |
 | 0x19 | u16 | 200 | audioLpHz (1–7000; must stay > audioHpHz — validated on the final state) |
-| 0x1A | u16 | 500 | audioLpQX100 (10–2000) |
+| 0x1A | u16 | 71 | audioLpQX100 (10–2000), same meaning as 0x18 |
+| 0x38 | u8 | 12 | audioHpSlopeDbOct — high-pass slope in dB/octave: **only 6, 12, 18, 24, 36 or 48** (Butterworth of order slope/6; any other value fails the whole write). 12 = one biquad, the pre-v9 filter. Each extra 12 dB/oct is one more second-order section per microphone |
+| 0x39 | u8 | 12 | audioLpSlopeDbOct — low-pass slope, same values as 0x38 |
 | 0x1B | u16 | 300 | potEmaAlphaX1000 — potentiometer EMA (300 = legacy 0.3) |
 | 0x1C | u16 | 20 | oneEuroBetaX1000 — 1-euro cut-off slope, Hz per dps ×1000 (0–10000) |
 | 0x1D | u8 | 0 | accelHampelKX10 — Hampel spike filter on the published accel, k ×10 (0=off, ≤100) |
@@ -563,7 +569,7 @@ The magnetometer calibration (0x1E) is the only multi-value register: writes mus
 exactly 24 bytes, and a record whose soft-iron **diagonal** contains a zero is rejected
 (it would silently zero the magnetometer and make Quat9 unusable).
 
-A full config read is now ~252 bytes (246 of serialized registers plus the read-only
+A full config read is now ~258 bytes (252 of serialized registers plus the read-only
 `0x35` and `0x37`, 3 bytes each), so a central that cannot do a long attribute read
 will truncate it; Web Bluetooth and NimBLE handle this transparently.
 

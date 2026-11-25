@@ -38,8 +38,8 @@ The full netlist cross-check against the KiCAD board design lives in
   magnetometer mode, but the config-app no longer offers it). A gyro-bias tracker adapts only while the
   ball rests, so a stationary globe stays stationary. Mounting calibration and a
   "zero orientation" command align the physical ball with the virtual one.
-- **Blow and breath detection.** The mics are band-passed (configurable HP/LP biquads,
-  default 10–200 Hz) before the detector. The **breath detector** is selectable:
+- **Blow and breath detection.** The mics are band-passed (configurable HP/LP, 6–48 dB/oct
+  each, default 10–200 Hz at 12 dB/oct, flat) before the detector. The **breath detector** is selectable:
   *absolute* (a fixed line) or *adaptive* (the level must rise above a slow baseline),
   measuring RMS or peak. Its sensitivity comes from the potentiometer (−60…0 dBFS) or
   from a fixed dBFS value, and it re-arms once the level falls a whole number of dB
