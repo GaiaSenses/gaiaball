@@ -7,7 +7,7 @@
 #X obj 680 100 route connected;
 #X obj 680 130 tgl 20 0 empty empty empty 0 -8 0 12 -262144 -1 -1 0 1;
 #X text 708 130 1 = conectado, f 16;
-#X text 680 160 Se outro patch aberto já tem um [gaiaball] \, este avisa porta 9478 em uso no console: tudo bem \, os dados chegam do mesmo jeito., f 34;
+#X text 680 160 Se outro patch aberto já tem um [gaiaball] \, o console pode mostrar 'Address already in use': tudo bem \, os dados chegam pelo outro. Se você fechar o outro \, clique neste [gaiaball] (fora do modo de edição) e em reconectar., f 34;
 #X text 20 190 Volume geral (0 = mudo \, 1 = máximo), f 26;
 #X obj 20 230 loadbang;
 #X msg 20 258 0.2;

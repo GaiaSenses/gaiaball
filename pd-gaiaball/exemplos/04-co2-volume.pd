@@ -7,7 +7,7 @@
 #X obj 640 100 route connected;
 #X obj 640 130 tgl 20 0 empty empty empty 0 -8 0 12 -262144 -1 -1 0 1;
 #X text 668 130 1 = conectado, f 16;
-#X text 640 160 Se outro patch aberto já tem um [gaiaball] \, este avisa porta 9478 em uso no console: tudo bem \, os dados chegam do mesmo jeito., f 34;
+#X text 640 160 Se outro patch aberto já tem um [gaiaball] \, o console pode mostrar 'Address already in use': tudo bem \, os dados chegam pelo outro. Se você fechar o outro \, clique neste [gaiaball] (fora do modo de edição) e em reconectar., f 34;
 #X text 20 180 2) De ppm para volume: 400 ppm (ar livre) = 0 e 2000 ppm = 1 (o máximo). São escolhas: mude os números do [clip] e das contas para a sua sala., f 52;
 #X obj 20 246 r gaia.co2;
 #X floatatom 20 274 6 0 0 0 - - -;

@@ -7,7 +7,7 @@
 #X obj 640 100 route connected;
 #X obj 640 130 tgl 20 0 empty empty empty 0 -8 0 12 -262144 -1 -1 0 1;
 #X text 668 130 1 = conectado, f 16;
-#X text 640 160 Se outro patch aberto já tem um [gaiaball] \, este avisa porta 9478 em uso no console: tudo bem \, os dados chegam do mesmo jeito., f 34;
+#X text 640 160 Se outro patch aberto já tem um [gaiaball] \, o console pode mostrar 'Address already in use': tudo bem \, os dados chegam pelo outro. Se você fechar o outro \, clique neste [gaiaball] (fora do modo de edição) e em reconectar., f 34;
 #X text 20 180 2) Só inclinando a bola \, cada eixo vai de -1000 a 1000 mg (a gravidade se divide entre os eixos). [clip] corta o que passar disso (um chacoalhão) e as contas levam o valor para notas MIDI (de 36 a 108)., f 52;
 #X text 400 180 3) gaia.acc.y vira a ressonância do filtro (o Q): de 1 (suave) a 20 (quase um assobio)., f 30;
 #X obj 150 262 r gaia.acc.x;
