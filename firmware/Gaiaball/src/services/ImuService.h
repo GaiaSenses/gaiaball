@@ -30,6 +30,12 @@ struct ImuSample {
   uint32_t tUs;    // micros() when the sample was read
   Quat q;          // output orientation (mounting + zero applied, optionally smoothed)
   int16_t acc[3];  // accelerometer counts (±4 g, 8192 LSB/g; sent as mg), optionally filtered
+  // For the breath detector's stillness test (StillnessDetector, v10): the angular velocity
+  // after the gyro bias correction, deg/s (a vector: averaging it cancels hand tremor), and
+  // |acceleration| of the RAW reading (the published acc may be filtered, which would smooth
+  // out a knock), g. Never on the wire.
+  float gyroDps[3] = {0.0f, 0.0f, 0.0f};
+  float accelG = 1.0f;
   uint8_t flags;
   // Reference epoch: changes whenever the frame q is expressed in changes (zero
   // applied, mounting captured, Quat6/Quat9 switch), so a consumer that integrates

@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // The real panel mounted in a DOM: markers, Aplicar (n), keep-edits vs explicit read, presets.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { mountConfigPanel } from './config-panel';
+import { mountConfigPanel, type BreathForm } from './config-panel';
 import { PresetStore } from '../presets/preset-store';
 import { demoConfigRegs, demoWrite } from '../demo-config';
 import { TLV, type TlvWrite } from '../protocol/tlv';
@@ -306,5 +306,58 @@ describe('band-pass controls (slope, Q) and the spectrum band', () => {
     q('[data-act=apply]').click();
     await new Promise((r) => setTimeout(r, 0));
     expect(root.textContent).not.toMatch(/informe um número/);
+  });
+});
+
+describe('breath discriminators (firmware v10)', () => {
+  const COH = TLV.breathCoherenceMaxX100;
+  const toggleOf = (id: number): HTMLElement => input(id).closest('.cfg-field')!.querySelector<HTMLElement>('[role=switch], .toggle, button')!;
+
+  // The first field with both an on/off toggle and a scale: it must show 0,60, not the wire 60.
+  it('shows the coherence limit in display units and reads back with nothing pending', () => {
+    client.status(true);
+    client.config();
+    expect(input(COH).value).toBe('0.60');
+    expect(input(TLV.micSpacingMmX10).value).toBe('15.4');
+    expect(applyLabel()).toBe('Aplicar');
+  });
+
+  it('sends the wire value of a typed limit, and 100 when switched off', async () => {
+    const sent: TlvWrite[][] = [];
+    client.writeConfig = async (w: TlvWrite[]) => { sent.push(w); };
+    client.status(true);
+    client.config();
+    type(COH, '0.45');
+    expect(applyLabel()).toBe('Aplicar (1)');
+    q('[data-act=apply]').click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sent.flat().find((w) => w.id === COH)?.value).toBe(45);
+    const off = ballRegs([{ id: COH, value: 100 }]);
+    client.config(off);
+    expect(input(COH).value).toBe('0.60'); // off: the box keeps the "on" default for turning it back on
+    expect(toggleOf(COH)).toBeTruthy();
+  });
+
+  it('the breath source follows the form: coherence limit (null when off), still only, rotation limit', () => {
+    document.body.innerHTML = '<div id="root"></div>';
+    root = document.getElementById('root')!;
+    client = new FakeClient();
+    const seen: BreathForm[] = [];
+    const { breath } = mountConfigPanel(root, client as unknown as GaiaballClient, new PresetStore());
+    breath.subscribe((b) => seen.push(b));
+    client.status(true);
+    client.config(ballRegs([{ id: COH, value: 35 }]));
+    expect(seen.at(-1)).toEqual({ coherenceLimit: 0.35, stillOnly: true, maxDps: 20 });
+    client.config(ballRegs([{ id: COH, value: 100 }, { id: TLV.breathStillOnly, value: 0 }, { id: TLV.stillMaxDps, value: 45 }]));
+    expect(seen.at(-1)).toEqual({ coherenceLimit: null, stillOnly: false, maxDps: 45 });
+  });
+
+  it('"Sopro só com a bola parada" governs the four stillness thresholds', () => {
+    client.status(true);
+    client.config(ballRegs([{ id: TLV.breathStillOnly, value: 0 }]));
+    for (const id of [TLV.stillMaxDps, TLV.stillMaxAccelMg, TLV.stillHoldMs, TLV.stillWindowMs]) expect(input(id).disabled).toBe(true);
+    client.config(ballRegs([{ id: TLV.breathStillOnly, value: 1 }]));
+    for (const id of [TLV.stillMaxDps, TLV.stillMaxAccelMg, TLV.stillHoldMs, TLV.stillWindowMs]) expect(input(id).disabled).toBe(false);
+    expect(applyLabel()).toBe('Aplicar');
   });
 });

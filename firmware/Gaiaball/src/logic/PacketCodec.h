@@ -19,9 +19,12 @@ ImuPacket makeImuPacket(uint16_t seq, uint32_t tUs, const float q[4], const int1
                         uint8_t flags, const AudioLevels &audio);
 
 // Encodes the live sensor levels. Floats are rounded and saturated to the integer
-// field ranges; non-finite inputs encode as 0.
+// field ranges; non-finite inputs encode as 0. coherence (0..1) goes out x100, motionDps
+// (deg/s) rounded and saturated at 255.
 SensorsPacket makeSensorsPacket(uint16_t seq, uint32_t tMs, float rmsL, float rmsR,
-                                float threshold, float potRaw, uint8_t flags);
+                                float threshold, float potRaw, uint8_t flags,
+                                float coherence = 0.0f, uint8_t breathGate = 0,
+                                float motionDps = 0.0f);
 
 // Packs up to kMagChunkMaxSamples raw magnetometer triplets (0.1 uT per LSB, x/y/z
 // interleaved). `count` is clamped and the unused tail is zeroed, so a short chunk

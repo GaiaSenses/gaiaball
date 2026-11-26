@@ -121,8 +121,36 @@ e o cabeçalho diz de onde vem o número (leitura real, pulso virtual, sem leitu
 | CO₂ (SC8-CO2-5K) | ppm | o sensor emite 1 quadro/s sozinho por UART (9600 8N1); o firmware só escuta, nunca transmite (uma consulta pararia o fluxo do sensor). EMA opcional, TLV `0x28`. O pacote de CO₂ também traz o bit de **gatilho** (nível `0x29` com histerese `0x2A`) |
 | Potenciômetro | % do curso e dBFS | ADC filtrado 0–4095 → 0–100 % e −60…0 dBFS (a sensibilidade que o botão dá; o limiar efetivo aparece como linha contínua só no gráfico da medida ativa, que segue a chave RMS/Pico da Configuração no instante do clique, antes mesmo de aplicar: "Microfones - RMS" ou "Microfones - Pico"; cada um traz os dois microfones) |
 
-O nível efetivo de disparo do detector, o potenciômetro e as flags de saúde chegam num pacote
-próprio (`SensorsPacket`, 5 Hz, na característica de diagnóstico — ver
+### Sopro: descartar outros sons
+
+Além do passa-banda e da linha, o detector usa três critérios para não confundir sopro com
+outros sons graves e fortes (firmware v10). Ficam em **Avançado → "Sopro: descartar outros
+sons"**, cada um com seu interruptor (desligado = comportamento de antes):
+
+- **Coerência máxima entre os microfones** (padrão 0,60): som que vem de longe (voz, música,
+  uma batida na mesa) chega aos dois microfones como a mesma onda, coerência perto de 1; o
+  sopro é turbulência diferente em cada microfone, coerência perto de 0. O sopro só dispara
+  com a coerência abaixo do limite. A **distância entre os microfones** (padrão 15,4 mm, M1–M2
+  na placa do KiCAD) define os atrasos que a coerência procura.
+- **Duração mínima do sopro** (padrão 120 ms): o som precisa ficar acima da linha, sem
+  interrupção, por esse tempo. Rejeita batidas e sílabas; todo sopro chega esse tempo depois.
+- **Sopro só com a bola parada** (ligado por padrão): o artista só sopra com a bola parada na
+  mão, e girar a bola é navegar o globo. Enquanto o IMU vê a bola em movimento nada dispara, e o
+  sopro só vale depois que ela fica parada por 300 ms. "Em movimento" é a rotação **líquida**
+  acima de 20 °/s (a velocidade angular em média como vetor, com constante de 100 ms: o tremor
+  da mão, de 8–12 Hz, vai e volta e se cancela; um giro de verdade se soma) ou uma batida
+  (aceleração a mais de 300 mg de 1 g). Nos testes, um tremor de 30 °/s instantâneos dá ~5,6 °/s
+  líquidos e nunca conta como movimento; um giro de 60 °/s é percebido em 40 ms.
+
+O cartão **Sopro: descarte**, no painel Sensores, mostra ao vivo a coerência dos microfones
+(barra, de 0 a 1) com o limite da Configuração marcado (o traço mexe enquanto o campo é
+editado, antes de aplicar), o estado do detector (abaixo da linha, acima da linha,
+aguardando a duração, bloqueado por som de longe, bloqueado por bola em movimento) e a
+rotação líquida da bola ao vivo contra o limite, dizendo se ela conta como parada. Os
+valores padrão são estimativas e ainda não foram ajustados com a bola.
+
+O nível efetivo de disparo do detector, o potenciômetro, a coerência e o estado dos critérios
+do sopro chegam num pacote próprio (`SensorsPacket`, 5 Hz, na característica de diagnóstico — ver
 `firmware/docs/protocol.md`); o envelope dos microfones (RMS e pico por canal) e o bit de
 sopro viajam junto com a orientação no `ImuPacket` v2, com o mesmo carimbo de tempo. No modo demo o
 painel roda com dados sintéticos.

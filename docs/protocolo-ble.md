@@ -360,7 +360,7 @@ Resumo dos tipos (o "MTU mínimo" é o tamanho + 3 bytes do cabeçalho ATT):
 | `0x01` | IMU (orientação + aceleração + som + sopro), **versão 2** | 27 B | 30 | 1 |
 | `0x02` | CO₂ | 12 B | 15 | 3 |
 | `0x03` | Diagnóstico | 34 B | 37 | 5 |
-| `0x04` | Sensores (níveis de áudio e potenciômetro) | 23 B | 26 | 5 |
+| `0x04` | Sensores (níveis de áudio, potenciômetro e critérios do sopro) | 26 B | 29 | 5 |
 | `0x05` | Áudio cru | 208 B | 211 | 5 |
 | `0x06` | Magnetômetro cru | 106 B | 109 | 5 |
 | `0x07` | Navegação | 23 B | 26 | 6 |
@@ -499,7 +499,7 @@ estimador de viés), bit5 `biasAdapting` (viés sendo refinado), bit6 `magCalibr
 
 <a id="pkt-sensores"></a>
 
-### Sensores — tipo `0x04`, 23 bytes (característica 5)
+### Sensores — tipo `0x04`, 26 bytes (característica 5)
 
 Níveis de áudio e do potenciômetro, 5 vezes por segundo, para os gráficos da config-app.
 
@@ -514,15 +514,25 @@ Níveis de áudio e do potenciômetro, 5 vezes por segundo, para os gráficos da
 | 16 | 4 | u32 | `audioThreshold` | contagens de 24 bits | Nível efetivo de disparo do detector de sopro, na medida ativa (veja abaixo) |
 | 20 | 2 | u16 | `potRaw` | 0–4095 | Potenciômetro (ADC de 12 bits, filtrado) |
 | 22 | 1 | u8 | `flags` | bits | bit0 `audioOk`, bit1 `audioEnabled`, bit2 `potControlsThreshold`, bit3 `audioFiltered` (RMS medido depois do passa-banda), bit4 `metricPeak` (o detector mede o pico; 0 = RMS, registrador `0x2C`), bit5 `adaptive` (detector adaptativo; 0 = absoluto, registrador `0x2D`) |
+| 23 | 1 | u8 | `coherenceX100` | × 100, 0–100 | Coerência entre os microfones esquerdo e direito na janela do nível (v10, veja abaixo) |
+| 24 | 1 | u8 | `breathGate` | bits | O que está segurando o sopro agora (v10): bit0 `over` (acima da linha de disparo), bit1 `coherent` (acima, mas bloqueado pela coerência), bit2 `moving` (o IMU diz que a bola está em movimento; bloqueia o sopro com `0x3D` = 1), bit3 `waiting` (vale, esperando a duração mínima ou o debounce). Tudo 0 com o detector desligado |
+| 25 | 1 | u8 | `motionDps` | °/s, satura em 255 | Rotação **líquida** da bola (v10): a velocidade angular, sem o viés do giroscópio, em média como vetor (constante `0x43`), o que cancela o tremor da mão. É o valor comparado com `0x3E` |
 
 `audioThreshold` é o **nível efetivo de disparo**, em contagens de 24 bits da medida que o
 bit 4 indica. No detector absoluto é o próprio limiar; no adaptativo (bit 5) é a linha de
 base lenta mais o limiar, então acompanha o ruído da sala. O limiar em si é configurado em
 dBFS (potenciômetro, ou o registrador `0x2B` quando `0x14` = 0) e o firmware o converte.
 
+`coherenceX100` é a coerência dos dois microfones, depois do passa-banda, na mesma janela do
+RMS: o maior |Σ L·R| ÷ √(ΣL² · ΣR²) entre os atrasos que a distância dos microfones permite
+(registrador `0x3B`). Perto de 100: o mesmo som chegou aos dois (voz, música, batida); perto
+de 0: um ruído diferente em cada um (a turbulência do sopro). O pacote cresceu de 23 para 26
+bytes no firmware v10, só acrescentando no fim (a versão continua 1): quem decodifica deve
+aceitar os 23 bytes de um firmware anterior.
+
 Conversões: RMS, `dBFS = 20·log10(rms·√2 / 2²³)`; pico, `dBFS = 20·log10(valor / 2²³)`
 (2²³ = 8388608 é o fundo de escala); percurso do potenciômetro em % = `potRaw / 4095 × 100`.
-**MTU mínimo:** 26.
+**MTU mínimo:** 29.
 
 <a id="pkt-audio"></a>
 
@@ -891,7 +901,7 @@ Toda a configuração da bola é uma lista de **registradores**. Cada registrado
 Uma leitura ou escrita é simplesmente vários registros colados um atrás do outro.
 
 **Ler** (sem PIN) devolve **todos** os registradores, mais os registros somente-leitura
-`0x35` e `0x37`, que vêm **primeiro**: cerca de 258 bytes com o nome de fábrica (procure
+`0x35` e `0x37`, que vêm **primeiro**: cerca de 288 bytes com o nome de fábrica (procure
 cada registro pelo id, nunca pela posição). Isso é mais que um MTU, mas o Web Bluetooth, o
 bleak e o NimBLE buscam a leitura longa em pedaços sozinhos. Um trecho da
 leitura de fábrica:
@@ -993,6 +1003,14 @@ e [`GaiaConfig.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gai
 | `0x1A` | `audioLpQX100` | u16 | 10–2000 | 71 | Q do passa-baixas × 100, mesmo sentido de `0x18` |
 | `0x38` | `audioHpSlopeDbOct` | u8 | só 6, 12, 18, 24, 36, 48 | 12 | Inclinação do passa-altas, dB/oitava (Butterworth de ordem valor ÷ 6). Outro valor recusa a escrita inteira |
 | `0x39` | `audioLpSlopeDbOct` | u8 | só 6, 12, 18, 24, 36, 48 | 12 | Inclinação do passa-baixas, dB/oitava |
+| `0x3A` | `breathCoherenceMaxX100` | u8 | 0–100 | 60 | O sopro só dispara enquanto a coerência entre os microfones (× 100) estiver **abaixo** deste valor. 100 desliga |
+| `0x3B` | `micSpacingMmX10` | u16 | 1–2000 | 154 | Distância de centro a centro entre os microfones, × 10 mm (154 = 15,4 mm, M1–M2 na placa). Define os atrasos que a coerência procura |
+| `0x3C` | `breathMinDurationMs` | u16 | 0–2000 | 120 | O som precisa ficar acima da linha (e não coerente) sem interrupção por este tempo, ms. 0 desliga |
+| `0x3D` | `breathStillOnly` | u8 | 0–1 | 1 | 1: o sopro só dispara com a bola **parada** (o artista só sopra com a bola parada na mão; girar é navegar). Enquanto a bola se move nada dispara. 0 desliga |
+| `0x3E` | `stillMaxDps` | u16 | 1–2000 | 20 | Em movimento: rotação **líquida** acima deste valor, °/s (o tremor da mão é cancelado pela média de `0x43`; parada na mão fica perto de 5 °/s) |
+| `0x3F` | `stillMaxAccelMg` | u16 | 10–4000 | 300 | ... ou a aceleração bruta, amostra por amostra, a mais deste tanto de 1 g, mg (batidas, sacudidas) |
+| `0x42` | `stillHoldMs` | u16 | 0–5000 | 300 | Tempo que a bola precisa ficar parada depois do último giro ou batida para o sopro valer, ms |
+| `0x43` | `stillWindowMs` | u16 | 10–1000 | 100 | Constante de tempo da média do vetor de rotação, ms: com 100, um tremor de 10 Hz fica ~6 vezes menor e um giro de 60 °/s é percebido em ~40 ms |
 | `0x1B` | `potEmaAlphaX1000` | u16 | 1–1000 | 300 | Suavização do potenciômetro, × 1000 |
 | `0x1F` | `audioRawStream` | u8 | 0–1 | 0 | Liga o pacote de áudio cru (`0x05`) |
 | `0x2B` | `breathThresholdNegDbX100` | u16 | 0–9000 | 3550 | Limiar fixo do sopro, guardado **sem sinal** como −dBFS × 100 (3550 = −35,5 dBFS), na escala da medida `0x2C`. Vale com `0x14` = 0. Absoluto: a linha de disparo; adaptativo: quanto o som precisa subir acima da linha de base |
@@ -1077,7 +1095,7 @@ sequenceDiagram
   C->>B: write …0002 com 20 31 32 33 34 (PIN)
   C->>B: write …0004 com registros TLV
   C->>B: read …0004
-  B-->>C: configuração completa, cerca de 258 bytes
+  B-->>C: configuração completa, cerca de 288 bytes
   C->>B: write …0002 com 11 (salvar)
 ```
 
@@ -1793,16 +1811,18 @@ decodificador deve devolver `breath` verdadeiro e o resto igual.
 `seq` 258 · `timestampMs` 168496141 · `ppm` 1000 (`E8 03`) · `flags` 0x05 = `valid` +
 `virtualActive` (`stale` e `trigger` desligados) · `ageS` 7.
 
-**Sensores com os bits do detector (`0x04`, 23 bytes)**
+**Sensores com os bits do detector (`0x04`, 26 bytes)**
 
 ```
-01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 37
+01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 37 2A 05 23
 ```
 
 `seq` 7 · `timestampMs` 123456 · `audioRmsL` 12345 · `audioRmsR` 23456 · `audioThreshold`
 100000 · `potRaw` 2048 · `flags` 0x37 = `audioOk` + `audioEnabled` + `potControlsThreshold` +
 `metricPeak` + `adaptive` (`audioFiltered` desligado): o limiar de 100000 é então em contagens
-de **pico**, e o nível efetivo do detector adaptativo.
+de **pico**, e o nível efetivo do detector adaptativo · `coherenceX100` 42 (0,42) ·
+`breathGate` 0x05 = `over` + `moving` · `motionDps` 35 °/s. Um firmware anterior ao v10 manda
+só os 23 primeiros bytes (sem `2A 05 23`).
 
 **Navegação A (`0x07`, 23 bytes)**
 

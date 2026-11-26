@@ -161,8 +161,9 @@ void App::taskLoop() {
 
 void App::handleImuSample(const ImuSample &s) {
   // First, and unthrottled: the globe integrates at the IMU rate, whatever the IMU
-  // notify rate is.
+  // notify rate is. The stillness test too: the breath detector must know at once.
   updateNav(s);
+  audio_.setMoving(stillness_.update(s.gyroDps, s.accelG, s.tUs, millis()));
   if (!imuThrottle_.shouldSend(s.tUs)) return;
   if (!ble_.anySubscriber(1)) {
     // Nobody to report to: drop the breath latch here too, so whoever subscribes later
@@ -214,6 +215,12 @@ void App::applySnapshot(const GaiaConfig &cfg) {
   breathAdaptive_ = cfg.breathDetector != 0;
   audioHpHz_ = cfg.audioHpHz;
   audioLpHz_ = cfg.audioLpHz;
+  StillnessParams sp;
+  sp.maxDps = (float)cfg.stillMaxDps;
+  sp.maxAccelMg = (float)cfg.stillMaxAccelMg;
+  sp.holdMs = cfg.stillHoldMs;
+  sp.windowMs = cfg.stillWindowMs;
+  stillness_.configure(sp);
   virtualPulse_.configure(cfg.virtualPeakPpm, cfg.virtualHoldMs);
   co2Trigger_.configure(cfg.co2TriggerPpm, cfg.co2TriggerHystPpm);
   // Acts only on real changes: a new navMode or reference point resets the globe;
@@ -314,10 +321,13 @@ void App::sendSensors(uint32_t nowMs) {
   if (audioBpf_) flags |= kSensAudioFiltered;
   if (breathMetricPeak_) flags |= kSensMetricPeak;
   if (breathAdaptive_) flags |= kSensAdaptive;
-  // The detector's effective trigger level, in counts of the active metric.
+  // The detector's effective trigger level, in counts of the active metric, the window's
+  // coherence, the discriminators' status and the ball's net angular speed (same task as
+  // the StillnessDetector).
   const SensorsPacket p =
       makeSensorsPacket(sensorsSeq_++, nowMs, audio_.lastRmsLeft(), audio_.lastRmsRight(),
-                        audio_.triggerLevelCounts(), pot_.filteredRaw(), flags);
+                        audio_.triggerLevelCounts(), pot_.filteredRaw(), flags,
+                        audio_.coherence(), audio_.breathStatus(), stillness_.netDps());
   ble_.notifySensors(p);
 }
 

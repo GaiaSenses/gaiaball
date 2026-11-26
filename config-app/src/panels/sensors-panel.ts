@@ -25,7 +25,7 @@ import {
 } from '../protocol/packets.ts';
 import { TLV } from '../protocol/tlv.ts';
 import { renderSwitch } from '../ui/switch.ts';
-import type { BandSource, Co2Source, FormBand, MetricSource } from './config-panel.ts';
+import type { BandSource, BreathForm, BreathSource, Co2Source, FormBand, MetricSource } from './config-panel.ts';
 import {
   HISTORY_S,
   MAX_DRAWN_POINTS,
@@ -164,7 +164,7 @@ const LABEL_BG: Record<'dark' | 'light', string> = { dark: 'rgba(17, 24, 32, 0.8
 /** Card tint per sensor: the color of its line in the charts below. */
 const cardTints = (p: ChartPalette): Record<string, string> => ({
   'card-ori': p.euler[0], 'card-acc': p.acc[0], 'card-micl': p.micL,
-  'card-micr': p.micR, 'card-co2': p.co2, 'card-pot': p.pot,
+  'card-micr': p.micR, 'card-co2': p.co2, 'card-pot': p.pot, 'card-breath': p.breath,
 });
 
 export interface SensorsPanelOptions {
@@ -174,6 +174,8 @@ export interface SensorsPanelOptions {
   co2?: Co2Source;
   /** RMS/Pico switch as the form shows it; without it the threshold line follows the ball's metric. */
   metric?: MetricSource;
+  /** The breath discriminators as the form shows them (coherence limit, still only, rotation limit), for the Sopro card. */
+  breath?: BreathSource;
 }
 
 export function mountSensorsPanel(
@@ -199,6 +201,15 @@ export function mountSensorsPanel(
       </div>
       ${levelCard('pot', 'Potenciômetro', ['pos', 'Posição', '%'], ['sens', 'Sensibilidade', 'dBFS'],
         'O curso inteiro vai de −60 a 0 dBFS de sensibilidade.', 3, true)}
+      <div class="sensor-card level-card" data-el="card-breath" style="--num-ch: 4">
+        <div class="card-head"><h3>Sopro: descarte</h3><span class="card-state" data-el="st-breath"></span></div>
+        <dl class="readings">
+          <div class="reading reading-bar"><dt>Coerência L/R</dt><dd><span class="reading-num" data-el="coh-breath">—</span></dd></div>
+          <div class="reading reading-tick"><dt>Limite</dt><dd><span class="reading-word" data-el="lim-breath">—</span></dd></div>
+        </dl>
+        <div class="meter" aria-hidden="true"><span class="meter-fill" data-el="bar-breath"></span><span class="meter-peak" data-el="tick-breath" hidden></span></div>
+        <small><strong data-el="still-breath">Bola: —</strong><br>Coerência perto de 1: o mesmo som nos dois microfones (voz, música, batida); perto de 0: turbulência diferente em cada um (sopro). Acima do limite, o sopro não dispara.</small>
+      </div>
     </div>
     <div class="spec-head">
       <h3 class="spec-title">Espectro do áudio (cru) — ajuste do passa-banda</h3>
@@ -618,6 +629,17 @@ export function mountSensorsPanel(
   });
   syncCo2Scale();
   opts.co2?.subscribe((c) => { formCo2 = c; syncCo2Scale(); });
+  // The coherence limit is a mark on the Sopro card, and "only when still" and the rotation
+  // limit go with the ball's state; all follow the form, applied or not.
+  let breathForm: BreathForm = { coherenceLimit: null, stillOnly: null, maxDps: null };
+  opts.breath?.subscribe((b) => {
+    breathForm = b;
+    const limit = b.coherenceLimit;
+    const tick = q('[data-el=tick-breath]');
+    tick.hidden = limit === null;
+    if (limit !== null) tick.style.left = `${limit * 100}%`;
+    q('[data-el=lim-breath]').textContent = limit === null ? 'desligado' : fmt(limit, 2);
+  });
 
   // The threshold line sits on the chart of the active metric only: RMS (trace 8) or peak
   // (trace 11). It follows the form's RMS/Pico switch as soon as it is clicked, like the
@@ -686,6 +708,27 @@ export function mountSensorsPanel(
       q('[data-el=st-pot]').textContent = !sensors.audioEnabled
         ? 'detector desligado'
         : sensors.potControls ? 'em uso pelo detector' : 'fora de uso (valor fixo)';
+      // Breath discriminators (firmware v10): what is holding a breath back right now.
+      const coh = sensors.coherence;
+      const gate = sensors.gate;
+      q('[data-el=coh-breath]').textContent = coh === null ? '—' : fmt(coh, 2);
+      q('[data-el=bar-breath]').style.width = `${(coh ?? 0) * 100}%`;
+      // With "only when still" off (or unknown) a moving ball blocks nothing.
+      const stillBlocks = breathForm.stillOnly !== false;
+      const [gState, gTone] = gate === null ? ['firmware sem os critérios', 'warn']
+        : !sensors.audioEnabled ? ['detector desligado', '']
+        : gate.coherent ? ['bloqueado: som de longe', 'warn']
+        : gate.over && gate.moving && stillBlocks ? ['bloqueado: bola em movimento', 'warn']
+        : gate.waiting ? ['acima da linha, aguardando', 'accent']
+        : gate.over ? ['acima da linha', 'accent'] : ['abaixo da linha', ''];
+      const stB = q('[data-el=st-breath]');
+      stB.textContent = gState;
+      stB.dataset.tone = gTone;
+      const dps = sensors.motionDps;
+      const lim = breathForm.maxDps !== null ? ` (limite ${fmtInt(breathForm.maxDps)})` : '';
+      q('[data-el=still-breath]').textContent = gate === null || dps === null ? 'Bola: —'
+        : `Bola: ${gate.moving ? 'em movimento' : 'parada'} · rotação ${fmtInt(dps)} °/s${lim}`
+          + (gate.moving && !stillBlocks ? ' · não bloqueia o sopro' : '');
     }
     if (co2) {
       // Where the number comes from: the virtual pulse wins, then a stale or invalid sensor.

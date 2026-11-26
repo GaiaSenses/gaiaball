@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "AudioFeatures.h"
 #include "FilterCascade.h"
 #include "Filters.h"
 
@@ -21,9 +22,12 @@ struct BandPassSettings {
 };
 
 // Energy and peak of one block, per channel (0 = left, 1 = right), in 24-bit counts.
+// cross[kMaxCorrLag + k] = sum of left[n] * right[n - k] over the block, for the lags
+// -corrLags()..corrLags() (the others stay 0); see AudioLevelWindow for the coherence.
 struct BlockEnergy {
   float sumSq[2] = {0.0f, 0.0f};
   float peak[2] = {0.0f, 0.0f};
+  float cross[kCorrLags] = {};
 };
 
 // Per-sample microphone front end of AudioService, host-testable:
@@ -31,7 +35,8 @@ struct BlockEnergy {
 //   I2S word >> 8 (24-bit counts) -> DC blocker (2 Hz) -> (a) mono mix (L+R)/2 to the raw
 //   sink (the config-app's spectrum stream: it is taken BEFORE the band-pass on purpose,
 //   so the spectrum shows what reaches the filters); (b) optional HP then LP -> sum of
-//   squares and max |sample| of the block.
+//   squares and max |sample| of the block, and the left x right products over the lags
+//   the microphone spacing allows (setCorrLags), for the coherence of the breath detector.
 //
 // The whole chain is linear and time-invariant, so the spectrum of what feeds the detector
 // is exactly the raw spectrum times the band-pass response the config-app draws.
@@ -51,8 +56,8 @@ class AudioFrontEnd {
   // Applies new band settings. Cutoff and Q changes keep the filter state (no click); a
   // slope change restarts that filter. Turning the band-pass back on restarts both: their
   // state froze when it was turned off, and that old sound would come out as a transient
-  // (with a high Q, ringing long enough to cross the breath threshold). The DC blockers are
-  // never touched.
+  // (with a high Q, ringing long enough to cross the breath threshold), and clears the
+  // correlation history with them. The DC blockers are never touched.
   void configure(const BandPassSettings &s) {
     const bool reenabled = s.enabled && !bpf_;
     bpf_ = s.enabled;
@@ -64,9 +69,18 @@ class AudioFrontEnd {
         lp_[ch].reset();
       }
     }
+    if (reenabled) {  // the correlation history holds the signal of the old setting too
+      for (uint8_t i = 0; i < kMaxCorrLag; i++) histL_[i] = histR_[i] = 0.0f;
+      hpos_ = 0;
+    }
   }
 
   bool bandPassEnabled() const { return bpf_; }
+
+  // Lags (in samples, each way) of the left/right correlation, clamped to kMaxCorrLag. The
+  // sample history is kept whatever the value, so a change applies from the next sample.
+  void setCorrLags(uint8_t k) { lags_ = k > kMaxCorrLag ? kMaxCorrLag : k; }
+  uint8_t corrLags() const { return lags_; }
 
   // One interleaved stereo block (L, R, L, R, ...) of left-aligned 32-bit I2S words.
   // rawMono(float) is called once per frame with the DC-free mono mix (pre band-pass).
@@ -91,6 +105,18 @@ class AudioFrontEnd {
       const float al = fabsf(l), ar = fabsf(r);
       if (al > e.peak[0]) e.peak[0] = al;
       if (ar > e.peak[1]) e.peak[1] = ar;
+      // Left x right over the lags, on the same signal as the energy. hpos_ is the next
+      // slot to write, so the sample k frames ago sits k slots behind it. Cost: 2k + 1
+      // multiplies per frame (3 for the 15.4 mm board).
+      e.cross[kMaxCorrLag] += l * r;
+      for (uint8_t k = 1; k <= lags_; k++) {
+        const uint8_t j = (uint8_t)(hpos_ >= k ? hpos_ - k : hpos_ + kMaxCorrLag - k);
+        e.cross[kMaxCorrLag + k] += l * histR_[j];  // right delayed: the sound reached L first
+        e.cross[kMaxCorrLag - k] += histL_[j] * r;  // left delayed
+      }
+      histL_[hpos_] = l;
+      histR_[hpos_] = r;
+      hpos_ = (uint8_t)(hpos_ + 1 == kMaxCorrLag ? 0 : hpos_ + 1);
     }
     return e;
   }
@@ -104,6 +130,9 @@ class AudioFrontEnd {
   bool bpf_ = true;
   DcBlocker dc_[2];
   FilterCascade hp_[2], lp_[2];
+  uint8_t lags_ = 1;
+  float histL_[kMaxCorrLag] = {}, histR_[kMaxCorrLag] = {};
+  uint8_t hpos_ = 0;
 };
 
 }  // namespace gaia

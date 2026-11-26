@@ -36,6 +36,11 @@ import {
   type ImuSample,
   type NavSample,
   type SensorsSample,
+  SENSORS_PACKET_V10_SIZE,
+  BREATH_GATE_OVER,
+  BREATH_GATE_COHERENT,
+  BREATH_GATE_MOVING,
+  BREATH_GATE_WAITING,
 } from './packets.ts';
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
@@ -94,8 +99,10 @@ export function encodeNavPacket(s: Omit<NavSample, 'flags'> & { flags?: number }
   return bytes(dv);
 }
 
+/** The v10 packet (25 bytes) when the sample has a coherence or a gate, else the 23-byte one. */
 export function encodeSensorsPacket(s: Omit<SensorsSample, 'flags'> & { flags?: number }): Uint8Array {
-  const dv = start(SENSORS_PACKET_MIN_SIZE, PKT_SENSORS, PROTOCOL_VERSION, s.seq);
+  const v10 = s.coherence !== null || s.gate !== null || s.motionDps !== null;
+  const dv = start(v10 ? SENSORS_PACKET_V10_SIZE : SENSORS_PACKET_MIN_SIZE, PKT_SENSORS, PROTOCOL_VERSION, s.seq);
   dv.setUint32(4, s.tMs >>> 0, true);
   dv.setUint32(8, s.rmsL >>> 0, true);
   dv.setUint32(12, s.rmsR >>> 0, true);
@@ -106,5 +113,14 @@ export function encodeSensorsPacket(s: Omit<SensorsSample, 'flags'> & { flags?: 
     [s.potControls, SENS_FLAG_POT_CONTROLS], [s.audioFiltered, SENS_FLAG_AUDIO_FILTERED],
     [s.metricPeak, SENS_FLAG_METRIC_PEAK], [s.adaptive, SENS_FLAG_ADAPTIVE],
   ]));
+  if (v10) {
+    dv.setUint8(23, clamp(Math.round((s.coherence ?? 0) * 100), 0, 100));
+    const g = s.gate;
+    dv.setUint8(24, g ? bits([
+      [g.over, BREATH_GATE_OVER], [g.coherent, BREATH_GATE_COHERENT],
+      [g.moving, BREATH_GATE_MOVING], [g.waiting, BREATH_GATE_WAITING],
+    ]) : 0);
+    dv.setUint8(25, clamp(Math.round(s.motionDps ?? 0), 0, 255));
+  }
   return bytes(dv);
 }

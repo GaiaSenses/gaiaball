@@ -124,7 +124,7 @@ mountPdChip(app.querySelector<HTMLElement>('#pd-chip')!, bridge);
 mountConnectionPanel(app.querySelector<HTMLElement>('#panel-conexao')!, client);
 mountPdBlock(app.querySelector<HTMLElement>('#panel-conexao')!, bridge, pdPrefs, syncPd);
 syncPd();
-const { advancedSections, band, co2, metric } = mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client, undefined, { demo: isDemo });
+const { advancedSections, band, co2, metric, breath } = mountConfigPanel(app.querySelector<HTMLElement>('#panel-config')!, client, undefined, { demo: isDemo });
 // The metrics are a bench tool: they live in the Avançado tab,
 // below its fields, instead of under the configuration for everyone to scroll past.
 advancedSections.innerHTML = '<section id="panel-metricas"></section>';
@@ -133,7 +133,7 @@ const pausable = [
   // The spectrum shades the band-pass, the CO2 meter marks the trigger and the threshold line
   // sits on the RMS or the peak chart as the form shows them, so editing a cutoff, the trigger
   // or the RMS/Pico switch moves them at once (also in the demo).
-  mountSensorsPanel(app.querySelector<HTMLElement>('#panel-sensores')!, client, { band, co2, metric }),
+  mountSensorsPanel(app.querySelector<HTMLElement>('#panel-sensores')!, client, { band, co2, metric, breath }),
 ];
 
 // 3D view of the treated quaternion exactly as received over BLE (no UI smoothing:
@@ -308,6 +308,15 @@ if (isDemo) {
     // -35.5 dBFS expressed in counts of the metric in use.
     const demoPeak = Math.floor(t / 20) % 2 === 1;
     const demoThreshold = Math.round(AUDIO_FULL_SCALE * 10 ** (-35.5 / 20) / (demoPeak ? 1 : Math.SQRT2));
+    // Breath discriminators: the loud bursts of rms() are the demo's "breaths" (incoherent);
+    // in between, room sound reaches both microphones alike. Every ~28 s the ball is turned
+    // for 7 s (~40 deg/s); otherwise it is held still and only the hand's tremor remains (~3 deg/s).
+    const burst = Math.sin(t * 31) > 0.95;
+    const coherence = burst ? 0.15 + 0.1 * Math.abs(Math.sin(t * 13)) : 0.75 + 0.2 * Math.sin(t * 0.7);
+    const limit = (demoRegs.get(TLV.breathCoherenceMaxX100)?.getUint8(0) ?? 60) / 100;
+    const maxDps = demoRegs.get(TLV.stillMaxDps)?.getUint16(0, true) ?? 20;
+    const motionDps = Math.floor(t / 7) % 4 === 3 ? 40 + 8 * Math.sin(t * 3) : 3 + 1.5 * Math.abs(Math.sin(t * 5));
+    const moving = motionDps > maxDps;
     const detail: SensorsSample = {
       seq: sensSeq++ & 0xffff,
       tMs: Math.round(t * 1000),
@@ -322,6 +331,9 @@ if (isDemo) {
       audioFiltered: true,
       metricPeak: demoPeak,
       adaptive: false,
+      coherence,
+      gate: { over: burst, coherent: burst && limit < 1 && coherence >= limit, moving, waiting: false },
+      motionDps,
     };
     client.ingest('diag', asView(encodeSensorsPacket(detail)));
   }, 200);

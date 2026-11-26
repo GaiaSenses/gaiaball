@@ -43,7 +43,12 @@ The full netlist cross-check against the KiCAD board design lives in
   *absolute* (a fixed line) or *adaptive* (the level must rise above a slow baseline),
   measuring RMS or peak. Its sensitivity comes from the potentiometer (−60…0 dBFS) or
   from a fixed dBFS value, and it re-arms once the level falls a whole number of dB
-  below the line (TLVs `0x2B`–`0x2E`). A recognized breath sets the **breath bit** (flags
+  below the line (TLVs `0x2B`–`0x2E`). Three discriminators tell a breath from other loud
+  low sound (TLVs `0x3A`–`0x3F`, `0x42`, `0x43`, each with an off value): the **coherence** of
+  the two microphones must be low (turbulence differs at each port, a far sound does not), the
+  sound must last a **minimum duration** (not a knock or a syllable), and the ball must be held
+  **still** (the IMU's net rotation, hand tremor averaged out: artists blow only on a still
+  ball, turning it is navigating). A recognized breath sets the **breath bit** (flags
   bit 4) of the next orientation packet, and a detected blow also triggers a "virtual
   CO₂" pulse that the site turns into a composition. The raw (unfiltered) audio is also
   available as an **opt-in** stream (TLV `0x1F`, off by default), decimated to 2 kHz,

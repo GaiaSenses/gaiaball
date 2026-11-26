@@ -1,3 +1,4 @@
+import { encodeSensorsPacket } from './encode';
 import { describe, expect, it } from 'vitest';
 import { decodeAudioChunkPacket, decodeCo2Packet, decodeDiagPacket, decodeImuPacket, decodeMagChunkPacket, decodeNav, decodeSensorsPacket, peakToDbfs, potRawToDbfs, rmsToDbfs, thresholdToDbfs } from './packets';
 import { TLV, VALID_OUTPUT_GPIOS, buildCommand, decodeNavRef, decodeTlv, encodeNavRef, encodeTlv, navRefToString, parseNavRefString } from './tlv';
@@ -12,7 +13,10 @@ const DIAG =
   '01 03 01 00 03 02 01 00 F4 01 F4 01 01 00 02 00 03 00 C8 00 96 00 07 11 03 0C 96 00 B5 FF 00 00' +
   ' 96 00';
 const MAG = '01 06 09 00 04 03 02 01 02 00 64 00 38 FF 2C 01 65 00 37 FF 2D 01' + ' 00'.repeat(84);
-const SENSORS = '01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 07';
+// Firmware v10 layout (26 bytes): the 23 bytes of before, then coherenceX100, breathGate, motionDps.
+const SENSORS = '01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 07 00 00 00';
+const SENSORS_V1_23 = '01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 07';
+const SENSORS_COHERENCE = '01 04 07 00 40 E2 01 00 39 30 00 00 A0 5B 00 00 A0 86 01 00 00 08 37 2A 05 23';
 // 208-byte AudioChunk: header + hp/lp echo + 96 int16 samples (first = -2, second = 513).
 const AUDIO = '01 05 2A 00 10 27 00 00 D0 07 60 01 0A 00 C8 00 FE FF 01 02' + ' 00 00'.repeat(94);
 
@@ -82,7 +86,7 @@ describe('golden decode', () => {
   });
 
   it('Sensors flags 4 and 5: metricPeak and adaptive', () => {
-    const on = decodeSensorsPacket(hex(SENSORS.replace(/07$/, '37')))!;
+    const on = decodeSensorsPacket(hex(SENSORS.replace(/07 00 00 00$/, '37 00 00 00')))!;
     expect([on.metricPeak, on.adaptive]).toEqual([true, true]);
     expect(on.audioFiltered).toBe(false);
     const off = decodeSensorsPacket(hex(SENSORS))!;
@@ -122,9 +126,27 @@ describe('golden decode', () => {
       seq: 7, tMs: 123456, rmsL: 12345, rmsR: 23456, threshold: 100000, potRaw: 2048, flags: 7,
     });
     expect([s.audioOk, s.audioEnabled, s.potControls]).toEqual([true, true, true]);
+    expect(s.coherence).toBe(0);
+    expect(s.gate).toEqual({ over: false, coherent: false, moving: false, waiting: false });
+    expect(s.motionDps).toBe(0);
     // A diag packet is NOT a sensors packet and vice versa (same characteristic).
     expect(decodeSensorsPacket(hex(DIAG))).toBeNull();
     expect(decodeDiagPacket(hex(SENSORS))).toBeNull();
+  });
+
+  it('Sensors v10 tail: coherence x100, the breath gate bits and the net speed (firmware golden)', () => {
+    const s = decodeSensorsPacket(hex(SENSORS_COHERENCE))!;
+    expect(s.coherence).toBeCloseTo(0.42, 9);
+    expect(s.gate).toEqual({ over: true, coherent: false, moving: true, waiting: false });
+    expect(s.motionDps).toBe(35);
+    expect(Array.from(encodeSensorsPacket(s))).toEqual(Array.from(new Uint8Array(hex(SENSORS_COHERENCE).buffer)));
+  });
+
+  it('Sensors from an older firmware (23 bytes): no coherence, no gate', () => {
+    const s = decodeSensorsPacket(hex(SENSORS_V1_23))!;
+    expect(s.potRaw).toBe(2048);
+    expect([s.coherence, s.gate, s.motionDps]).toEqual([null, null, null]);
+    expect(encodeSensorsPacket(s).length).toBe(23);
   });
 
   it('AudioChunk', () => {
@@ -166,8 +188,10 @@ describe('append-only protocol: the size is a minimum', () => {
     expect(known).not.toBeNull();
     expect(d(hex(golden + ' AB CD EF 01'))).toEqual(known);
   });
-  it.each(ALL)('%s: a truncated packet is rejected', (_, d, golden) => {
-    const b = new Uint8Array(hex(golden).buffer);
+  // Shorter than the oldest layout still accepted (Sensors: the 23 bytes before v10).
+  const MIN: Record<string, string> = { Sensors: SENSORS_V1_23 };
+  it.each(ALL)('%s: a truncated packet is rejected', (name, d, golden) => {
+    const b = new Uint8Array(hex(MIN[name] ?? golden).buffer);
     expect(d(new DataView(b.buffer, 0, b.length - 1))).toBeNull();
   });
 });
@@ -211,7 +235,7 @@ describe('invalid input returns null', () => {
 
 describe('TLV', () => {
   it('registry ids', () => {
-    expect(Object.keys(TLV)).toHaveLength(66);
+    expect(Object.keys(TLV)).toHaveLength(74);
     expect(TLV.orientationMode).toBe(0x01);
     expect(TLV.imuNotifyHz).toBe(0x02);
     expect(TLV.slerpAmount).toBe(0x03);
@@ -225,6 +249,14 @@ describe('TLV', () => {
     expect(TLV.unlockState).toBe(0x37);
     expect(TLV.magAxisRemap).toBe(0x36);
     expect([TLV.audioHpSlopeDbOct, TLV.audioLpSlopeDbOct]).toEqual([0x38, 0x39]);
+    expect([TLV.breathCoherenceMaxX100, TLV.micSpacingMmX10, TLV.breathMinDurationMs, TLV.breathStillOnly,
+      TLV.stillMaxDps, TLV.stillMaxAccelMg, TLV.stillHoldMs, TLV.stillWindowMs])
+      .toEqual([0x3a, 0x3b, 0x3c, 0x3d, 0x3e, 0x3f, 0x42, 0x43]);
+  });
+  it('breath discriminator registers: u8 and u16, little-endian', () => {
+    expect(Array.from(encodeTlv([{ id: TLV.breathCoherenceMaxX100, value: 60 }, { id: TLV.micSpacingMmX10, value: 154 },
+      { id: TLV.breathStillOnly, value: 1 }, { id: TLV.stillHoldMs, value: 300 }])))
+      .toEqual([0x3a, 1, 60, 0x3b, 2, 154, 0, 0x3d, 1, 1, 0x42, 2, 0x2c, 0x01]);
   });
   it('band-pass slopes are one byte each', () => {
     expect(Array.from(encodeTlv([{ id: TLV.audioHpSlopeDbOct, value: 24 }, { id: TLV.audioLpSlopeDbOct, value: 48 }])))

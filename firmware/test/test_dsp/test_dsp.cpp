@@ -1,8 +1,11 @@
 #include <unity.h>
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <random>
 #include <vector>
 #include "../../Gaiaball/src/logic/AudioDecimator.h"
+#include "../../Gaiaball/src/logic/AudioFeatures.h"
 #include "../../Gaiaball/src/logic/AudioFrontEnd.h"
 #include "../../Gaiaball/src/logic/FilterCascade.h"
 #include "../../Gaiaball/src/logic/Filters.h"
@@ -371,6 +374,96 @@ void test_decimator_preserves_low_frequency_sine() {
   TEST_ASSERT_INT_WITHIN(5, -100, minV);
 }
 
+// --- Left/right coherence (breath discriminator, v10) ---------------------------
+
+// Coherence the way AudioService computes it: 80-frame blocks into the 50 ms window.
+static std::vector<float> frontEndCoherence(AudioFrontEnd &fe, const std::vector<int32_t> &v,
+                                            int skipFrames) {
+  AudioLevelWindow w;  // default 10 blocks = 50 ms
+  std::vector<float> out;
+  const int frames = (int)v.size() / 2;
+  for (int b = 0; b + 80 <= frames; b += 80) {
+    const BlockEnergy e = fe.processBlock(v.data() + 2 * b, 80);
+    w.push(e.sumSq, e.peak, 80, e.cross);
+    if (b >= skipFrames) out.push_back(w.levels().coherence);
+  }
+  return out;
+}
+
+static std::vector<double> gaussian(int n, unsigned seed, double sigma) {
+  std::mt19937 rng(seed);
+  std::normal_distribution<double> nd(0.0, sigma);
+  std::vector<double> x(n);
+  for (double &v : x) v = nd(rng);
+  return x;
+}
+
+static std::vector<int32_t> interleave(const std::vector<double> &l, const std::vector<double> &r) {
+  std::vector<int32_t> v(2 * l.size());
+  for (size_t i = 0; i < l.size(); i++) {
+    v[2 * i] = (int32_t)std::lround(l[i]) * 256;
+    v[2 * i + 1] = (int32_t)std::lround(r[i]) * 256;
+  }
+  return v;
+}
+
+// One sound reaching both microphones (a far source): coherence ~1 in the default band.
+void test_coherence_of_one_sound_is_near_one() {
+  AudioFrontEnd fe;  // HP 10, LP 200, 12 dB/oct
+  fe.setCorrLags(corrLagsForSpacing(154, kFs));
+  const auto v = stereo(16000, 100.0, 50000, 1000, 20000, -3000);  // different gains and offsets
+  const auto c = frontEndCoherence(fe, v, 8000);
+  float lo = 1.0f;
+  for (float x : c) lo = std::min(lo, x);
+  TEST_ASSERT_TRUE(lo > 0.99f);
+}
+
+// Independent noise at each microphone (the turbulence of a breath on the ports), through
+// the default band: the coherence stays low. The 50 ms window over a 190 Hz band holds only
+// ~19 independent samples, so single windows scatter (std ~0.23); the test pins the spread
+// that the default limit (0.60) has to live with.
+void test_coherence_of_independent_noise_is_low() {
+  AudioFrontEnd fe;
+  fe.setCorrLags(corrLagsForSpacing(154, kFs));
+  const int n = 16000 * 20;  // 20 s
+  const auto v = interleave(gaussian(n, 1, 200000.0), gaussian(n, 2, 200000.0));
+  auto c = frontEndCoherence(fe, v, 8000);
+  std::vector<float> sorted = c;
+  std::sort(sorted.begin(), sorted.end());
+  const float median = sorted[sorted.size() / 2];
+  size_t over = 0;
+  for (float x : c) over += x >= 0.60f ? 1 : 0;
+  const float frac = (float)over / (float)c.size();
+  printf("independent noise, default band: median coherence %.3f, %.2f %% of windows >= 0.60\n",
+         median, 100.0f * frac);
+  TEST_ASSERT_TRUE(median < 0.35f);
+  TEST_ASSERT_TRUE(frac < 0.05f);
+}
+
+// A far sound that reaches the right microphone one sample later: with the band opened to
+// 4 kHz the lag matters, and the spacing (lags) is what recovers it.
+void test_coherence_needs_the_lag_the_spacing_allows() {
+  BandPassSettings wide;
+  wide.lpHz = 4000.0f;
+  const int n = 16000 * 2;
+  const auto x = gaussian(n + 1, 3, 200000.0);
+  std::vector<double> l(x.begin() + 1, x.end()), r(x.begin(), x.end() - 1);  // r[n] = l[n-1]
+  const auto v = interleave(l, r);
+  AudioFrontEnd noLag, oneLag;
+  noLag.configure(wide);
+  oneLag.configure(wide);
+  noLag.setCorrLags(0);
+  oneLag.setCorrLags(corrLagsForSpacing(154, kFs));
+  const auto c0 = frontEndCoherence(noLag, v, 8000);
+  const auto c1 = frontEndCoherence(oneLag, v, 8000);
+  float max0 = 0.0f, min1 = 1.0f;
+  for (float c : c0) max0 = std::max(max0, c);
+  for (float c : c1) min1 = std::min(min1, c);
+  printf("1-sample delay, 4 kHz band: lag 0 only max %.3f, +-1 lag min %.3f\n", max0, min1);
+  TEST_ASSERT_TRUE(min1 > 0.98f);
+  TEST_ASSERT_TRUE(max0 < 0.90f);
+}
+
 int main() {
   UNITY_BEGIN();
   RUN_TEST(test_valid_slopes_and_order);
@@ -390,5 +483,8 @@ int main() {
   RUN_TEST(test_decimator_chunk_cadence_and_rate);
   RUN_TEST(test_decimator_scaling_and_saturation);
   RUN_TEST(test_decimator_preserves_low_frequency_sine);
+  RUN_TEST(test_coherence_of_one_sound_is_near_one);
+  RUN_TEST(test_coherence_of_independent_noise_is_low);
+  RUN_TEST(test_coherence_needs_the_lag_the_spacing_allows);
   return UNITY_END();
 }

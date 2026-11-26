@@ -10,7 +10,7 @@ using namespace gaia;
 static_assert(sizeof(ImuPacket) == 27, "ImuPacket must be 27 bytes");
 static_assert(sizeof(Co2Packet) == 12, "Co2Packet must be 12 bytes");
 static_assert(sizeof(DiagPacket) == 34, "DiagPacket must be 34 bytes");
-static_assert(sizeof(SensorsPacket) == 23, "SensorsPacket must be 23 bytes");
+static_assert(sizeof(SensorsPacket) == 26, "SensorsPacket must be 26 bytes");
 
 void setUp() {}
 void tearDown() {}
@@ -20,13 +20,13 @@ void test_packet_sizes() {
   TEST_ASSERT_EQUAL(12, sizeof(Co2Packet));
   TEST_ASSERT_EQUAL(34, sizeof(DiagPacket));
   TEST_ASSERT_EQUAL(106, sizeof(MagChunkPacket));
-  TEST_ASSERT_EQUAL(23, sizeof(SensorsPacket));
+  TEST_ASSERT_EQUAL(26, sizeof(SensorsPacket));
 }
 
 void test_sensors_encode_golden() {
   SensorsPacket p = makeSensorsPacket(7, 123456u, 12345.4f, 23456.0f, 100000.0f, 2048.0f,
                                       kSensAudioOk | kSensAudioEnabled | kSensPotControls);
-  const uint8_t expected[23] = {
+  const uint8_t expected[26] = {
       0x01, 0x04,              // version, type = Sensors
       0x07, 0x00,              // seq = 7
       0x40, 0xE2, 0x01, 0x00,  // timestampMs = 123456
@@ -34,8 +34,30 @@ void test_sensors_encode_golden() {
       0xA0, 0x5B, 0x00, 0x00,  // rmsR = 23456
       0xA0, 0x86, 0x01, 0x00,  // threshold = 100000
       0x00, 0x08,              // potRaw = 2048
-      0x07};                   // flags
-  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, reinterpret_cast<const uint8_t *>(&p), 23);
+      0x07,                    // flags
+      0x00, 0x00, 0x00};       // coherenceX100, breathGate, motionDps (v10; defaults)
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, reinterpret_cast<const uint8_t *>(&p), 26);
+}
+
+// v10 tail: coherence 0.42, the over + moving gate bits, 35.4 deg/s net speed.
+void test_sensors_encode_golden_coherence() {
+  SensorsPacket p = makeSensorsPacket(7, 123456u, 12345.0f, 23456.0f, 100000.0f, 2048.0f,
+                                      0b110111, 0.42f, 0b0101, 35.4f);
+  const uint8_t expected[26] = {0x01, 0x04, 0x07, 0x00, 0x40, 0xE2, 0x01, 0x00, 0x39,
+                                0x30, 0x00, 0x00, 0xA0, 0x5B, 0x00, 0x00, 0xA0, 0x86,
+                                0x01, 0x00, 0x00, 0x08, 0x37, 0x2A, 0x05, 0x23};
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, reinterpret_cast<const uint8_t *>(&p), 26);
+}
+
+void test_sensors_coherence_saturates() {
+  TEST_ASSERT_EQUAL_UINT8(100, makeSensorsPacket(0, 0, 0, 0, 0, 0, 0, 1.7f, 0).coherenceX100);
+  TEST_ASSERT_EQUAL_UINT8(0, makeSensorsPacket(0, 0, 0, 0, 0, 0, 0, NAN, 0).coherenceX100);
+  TEST_ASSERT_EQUAL_UINT8(0, makeSensorsPacket(0, 0, 0, 0, 0, 0, 0, -0.3f, 0).coherenceX100);
+  TEST_ASSERT_EQUAL_UINT8(100, makeSensorsPacket(0, 0, 0, 0, 0, 0, 0, 0.999f, 0).coherenceX100);
+  // Only the four defined gate bits go out; the speed saturates at 255.
+  TEST_ASSERT_EQUAL_HEX8(0x0F, makeSensorsPacket(0, 0, 0, 0, 0, 0, 0, 0, 0xFF).breathGate);
+  TEST_ASSERT_EQUAL_UINT8(255, makeSensorsPacket(0, 0, 0, 0, 0, 0, 0, 0, 0, 900.0f).motionDps);
+  TEST_ASSERT_EQUAL_UINT8(0, makeSensorsPacket(0, 0, 0, 0, 0, 0, 0, 0, 0, NAN).motionDps);
 }
 
 void test_sensors_encode_saturation_and_nan() {
@@ -91,10 +113,10 @@ void test_imu_encode_golden_breath() {
 void test_sensors_encode_golden_bits() {
   SensorsPacket p = makeSensorsPacket(7, 123456u, 12345.0f, 23456.0f, 100000.0f, 2048.0f,
                                       0b110111);
-  const uint8_t expected[23] = {0x01, 0x04, 0x07, 0x00, 0x40, 0xE2, 0x01, 0x00,
-                                0x39, 0x30, 0x00, 0x00, 0xA0, 0x5B, 0x00, 0x00,
-                                0xA0, 0x86, 0x01, 0x00, 0x00, 0x08, 0x37};
-  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, reinterpret_cast<const uint8_t *>(&p), 23);
+  const uint8_t expected[26] = {0x01, 0x04, 0x07, 0x00, 0x40, 0xE2, 0x01, 0x00, 0x39,
+                                0x30, 0x00, 0x00, 0xA0, 0x5B, 0x00, 0x00, 0xA0, 0x86,
+                                0x01, 0x00, 0x00, 0x08, 0x37, 0x00, 0x00, 0x00};
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(expected, reinterpret_cast<const uint8_t *>(&p), 26);
   TEST_ASSERT_EQUAL_HEX8(kSensAudioOk | kSensAudioEnabled | kSensPotControls |
                              kSensMetricPeak | kSensAdaptive,
                          p.flags);
@@ -340,6 +362,8 @@ int main(int, char **) {
   RUN_TEST(test_imu_encode_nan);
   RUN_TEST(test_imu_encode_clamp);
   RUN_TEST(test_sensors_encode_golden);
+  RUN_TEST(test_sensors_encode_golden_coherence);
+  RUN_TEST(test_sensors_coherence_saturates);
   RUN_TEST(test_sensors_encode_saturation_and_nan);
   RUN_TEST(test_imu_encodes_silence_as_the_db_floor);
   RUN_TEST(test_co2_layout_golden);
