@@ -7,6 +7,10 @@ publicado, qualquer pessoa instala o objeto de dentro do Pd, sem terminal:
 
 > Quem só **usa** o `[gaiaball]` não precisa ler isto: veja o [README](README.md).
 
+O `[gaiaball]` é uma abstração (só patches do Pd vanilla), então o pacote do Deken é **um
+só, independente de sistema e de processador**. O CI já o monta a cada versão: aqui, o
+trabalho é conferir e enviar.
+
 ## 1. Como o Deken funciona, em uma frase
 
 O Deken não é uma loja central: cada autor guarda os seus pacotes na **própria conta do
@@ -19,8 +23,8 @@ puredata.info**, com um nome que diz o que tem dentro.
 | Item | Para quê | Onde |
 |---|---|---|
 | Conta no puredata.info | É nela que o pacote fica guardado | Seção 3 |
-| A ferramenta `deken` | Monta o pacote e faz o envio | Seção 4 |
-| A pasta `gaiaball/` com os binários dos três sistemas | É o conteúdo do pacote | Seção 5 |
+| A ferramenta `deken` | Faz o envio (e, se quiser, monta o pacote em casa) | Seção 4 |
+| O pacote da versão (`gaiaball[v<versão>].dek` e os dois arquivos que o acompanham) | É o que vai para o Deken | Seção 5 |
 
 ## 3. Criar a conta no puredata.info (uma vez)
 
@@ -49,7 +53,7 @@ Escolha **uma** das opções:
   ```
 - **Windows ou macOS sem Python:** baixe o executável pronto na página de
   [releases do deken](https://github.com/pure-data/deken/releases).
-- **Docker:**
+- **Docker** (é o que o CI usa):
   ```sh
   docker pull registry.git.iem.at/pd/deken
   ```
@@ -60,50 +64,58 @@ Confira:
 deken --help
 ```
 
-## 5. Preparar a pasta do pacote
+## 5. Pegar o pacote da versão
 
-O pacote é **uma pasta chamada exatamente `gaiaball`**, com tudo dentro:
+O fluxo de trabalho **`pd-gaiaball`** do GitHub Actions monta o pacote do Deken junto com o
+`.zip` da página de versões (veja [`PUBLICAR-NO-GITHUB.md`](PUBLICAR-NO-GITHUB.md)). Use o
+**da mesma versão** que você publicou no GitHub:
+
+- **Da Release** (o jeito normal): na página da versão, em **Assets**, baixe
+  `pd-gaiaball-<versão>-deken.zip` e descompacte. O `.dek` vem dentro de um `.zip` porque o
+  GitHub troca os colchetes do nome dos arquivos que recebe, e o Deken precisa deles.
+
+  ```sh
+  gh release download v0.1.0 -p 'pd-gaiaball-0.1.0-deken.zip'
+  unzip pd-gaiaball-0.1.0-deken.zip -d deken-0.1.0
+  ```
+
+- **Do artifact** da execução do CI (`pd-gaiaball-pacote`), se preferir:
+  `gh run download <id da execução> -n pd-gaiaball-pacote -D pacote`.
+
+São três arquivos:
+
+| Arquivo | O que é |
+|---|---|
+| `gaiaball[v0.1.0].dek` | o pacote (um `.zip` com a pasta `gaiaball/`) |
+| `gaiaball[v0.1.0].dek.txt` | a lista de objetos, usada pela busca do Pd |
+| `gaiaball[v0.1.0].dek.sha256` | a soma de verificação do pacote |
+
+A pasta `gaiaball/` do pacote é a mesma do `.zip` da página de versões, sem o
+`LEIA-ME.html`:
 
 ```
 gaiaball/
-├── gaiaball.<extensão de cada sistema>   ← um binário por sistema/processador/precisão
-├── gaiaball-help.pd                      ← patch de ajuda (o Pd abre com clique-direito → Ajuda)
-├── README.md
-├── TUTORIAL.md                           ← o passo a passo para músicos
-├── exemplos/                             ← os seis patches do tutorial (os links relativos dependem desta subpasta)
-├── LICENSE                               ← GPL-3.0, copiado da raiz do repositório
-└── *.c, *.h, Makefile                    ← o código-fonte (ver "Fontes", abaixo)
+├── gaiaball.pd          ← o objeto
+├── gaiaball-help.pd     ← a ajuda (o [pd META] tem a descrição e a versão)
+├── TUTORIAL.html        ← o tutorial para músicos
+├── exemplos/            ← os seis patches do tutorial
+└── LICENSE.txt          ← GPL-3.0
 ```
 
-- **De onde vêm os binários:** o CI do GitHub compila o `[gaiaball]` para Windows, Linux
-  (Intel/AMD e ARM) e macOS (Intel + Apple Silicon), nas duas precisões do Pd, e já monta e
-  empacota a pasta `gaiaball/` com o `deken`. O fluxo de trabalho se chama **`pd-gaiaball`**
-  (arquivo `.github/workflows/pd-gaiaball.yml`). **Por enquanto ele só roda quando você manda**,
-  em **Actions → pd-gaiaball → Run workflow**: as execuções automáticas (a cada push, pull
-  request ou tag) estão desligadas, e o comentário no topo do arquivo diz como religá-las.
-  Para publicar uma versão:
-  1. Crie e envie a tag da versão, por exemplo `v0.1.0`. Depois, em **Run workflow**, escolha
-     essa tag no seletor **Use workflow from**: o `.dek` sai com a versão `0.1.0`. (Rodando a
-     partir de uma branch, o CI usa a versão provisória `0.0.0-dev`, que serve só para testar.)
-  2. Na aba **Actions**, abra essa execução de `pd-gaiaball`. No fim da página, em
-     **Artifacts**, baixe **`gaiaball-deken`**: um `.zip` com o `.dek`, o `.dek.txt` e o
-     `.dek.sha256`. Os binários soltos de cada sistema também ficam lá, como
-     `gaiaball-bin-<sistema>-<precisão>`, caso você queira conferi-los.
-  3. Descompacte o `.zip` e siga a partir do passo 7 (conferir o nome) e do passo 8 (enviar).
-     O CI **não envia nada** ao puredata.info: o envio é manual, com a sua conta.
-  As extensões dos binários (`.pd_linux`, `.pd_darwin`, `.dll` e as `<sistema>-<cpu>-64.so`
-  ou `.dll` da precisão dupla) já saem certas do CI; o `deken` lê o cabeçalho de cada
-  arquivo para descobrir o sistema e o processador.
-- **O `deken` descobre sozinho para quais sistemas o pacote serve**, olhando os binários
-  dentro da pasta. Você não escreve isso à mão.
-- **Fontes:** o `deken` exige que cada publicação inclua também o código-fonte (a
-  pseudoarquitetura `Sources`). Como a pasta já contém os `.c`, ele detecta isso
-  automaticamente.
-- **Licença:** o projeto é **GPL-3.0** (arquivo `LICENSE` na raiz do repositório). O CI copia
-  esse arquivo para dentro da pasta `gaiaball/` do pacote, junto com o código-fonte.
-- **Descrição na busca:** o `deken` gera a lista de objetos a partir do `gaiaball-help.pd`. A
-  descrição curta vem do comentário `DESCRIPTION` dentro do subpatch `[pd META]` do patch de
-  ajuda. Confira que ele existe e está em uma linha.
+- **Descrição na busca:** o `deken` monta o `.dek.txt` a partir do `gaiaball-help.pd`: o
+  objeto `gaiaball` e o comentário `DESCRIPTION` do subpatch `[pd META]`. O `montar.py` troca
+  o `VERSION dev` desse subpatch pelo número da versão.
+- **Fontes:** um pacote sem binários não precisa de pacote `(Sources)`. O `deken` só cobra
+  fontes de pacotes com binários; este não tem nenhum (o próprio `gaiaball.pd` é a fonte).
+
+### Montar em casa (opcional)
+
+Para conferir antes da tag, ou se o CI não estiver disponível (precisa de `pandoc` 2.19 ou
+mais novo, e do `deken` ou do Docker):
+
+```sh
+python3 pd-gaiaball/pacotes/montar.py 0.1.0 pacote-0.1.0 --ref v0.1.0
+```
 
 ## 6. Escolher o número da versão
 
@@ -112,47 +124,40 @@ gaiaball/
   - Acrescentou algo → aumente o do meio (`0.1.1` → `0.2.0`).
   - Mudou algo de um jeito que quebra patches existentes → aumente o primeiro.
 - **Nunca publique duas vezes o mesmo número.** Se errou, publique o número seguinte.
-- Use o mesmo número na tag do Git (`git tag v0.1.0`), para saber de qual código veio o
-  pacote.
+- O número é o da tag do Git (`v0.1.0` → `0.1.0`): o CI tira a versão da tag, e assim se
+  sabe de qual código veio o pacote.
 
-## 7. Gerar o pacote
+## 7. Conferir o nome antes de enviar
 
-Na pasta que **contém** `gaiaball/`:
+O nome **não tem arquitetura**, só o nome e a versão:
+
+```
+gaiaball[v0.1.0].dek
+```
+
+Se aparecer algo entre parênteses depois da versão (por exemplo `(Linux-amd64-32)`), algum
+binário entrou na pasta: **não envie**. O `montar.py` já se recusa a terminar nesse caso.
+
+Confira também a soma:
 
 ```sh
-deken package --version 0.1.0 gaiaball/
+sha256sum "gaiaball[v0.1.0].dek"     # tem de ser igual ao conteúdo do .dek.sha256
+cat "gaiaball[v0.1.0].dek.txt"       # gaiaball <TAB> a descrição
 ```
-
-Isso cria quatro arquivos (o último só se você tiver uma chave GPG configurada):
-
-| Arquivo | O que é |
-|---|---|
-| `gaiaball[v0.1.0](…).dek` | o pacote (um arquivo compactado da pasta) |
-| `gaiaball[v0.1.0](…).dek.txt` | a lista de objetos, usada pela busca do Pd |
-| `gaiaball[v0.1.0](…).dek.sha256` | a soma de verificação do pacote |
-| `gaiaball[v0.1.0](…).dek.asc` | a assinatura GPG (opcional) |
-
-**Confira o nome do `.dek` antes de enviar.** Entre parênteses devem aparecer todos os
-sistemas e o `Sources`, algo como:
-
-```
-gaiaball[v0.1.0](Darwin-amd64-32)(Darwin-arm64-32)(Linux-amd64-32)(Linux-arm64-32)(Windows-amd64-32)(Darwin-amd64-64)(Darwin-arm64-64)(Linux-amd64-64)(Linux-arm64-64)(Windows-amd64-64)(Sources).dek
-```
-
-O número final (`32` ou `64`) é a precisão dos números do Pd: `32` é o Pd comum, `64` é o
-Pd de precisão dupla. Se faltar um sistema, o binário dele não está na pasta (ou está com a
-extensão errada): **não envie**, volte ao passo 5.
 
 ## 8. Enviar
 
+Na pasta onde estão os três arquivos:
+
 ```sh
-deken upload "gaiaball[v0.1.0](…).dek"
+deken upload "gaiaball[v0.1.0].dek"
 ```
 
-(use o nome completo do arquivo, entre aspas por causa dos colchetes e parênteses)
+(use o nome completo do arquivo, entre aspas por causa dos colchetes)
 
 - O `deken` pergunta o **usuário** e a **senha** do puredata.info.
-- Ele envia o `.dek` **e** os arquivos auxiliares (`.txt`, `.sha256`, `.asc`) de uma vez.
+- Ele envia o `.dek` **e** os arquivos auxiliares (`.txt`, `.sha256` e, se houver, `.asc`)
+  de uma vez.
 - O pacote vai para `https://puredata.info/Members/<seu-usuário>/software/gaiaball/`.
 - Se você não usa GPG e o `deken` reclamar da assinatura, acrescente `--no-sign-gpg`.
 
@@ -164,12 +169,15 @@ senha a cada envio.
 
 1. Num computador **que ainda não tem** o `[gaiaball]`, abra o Pd.
 2. **Ajuda → Encontrar externals** (no Pd em inglês: **Help → Find externals**).
-3. Procure `gaiaball`. A versão nova deve aparecer. Se não aparecer de imediato, tente de
-   novo mais tarde: o índice da busca é atualizado pelo portal.
+3. Procure `gaiaball`. A versão nova deve aparecer, uma só para todos os sistemas. Se não
+   aparecer de imediato, tente de novo mais tarde: o índice da busca é atualizado pelo
+   portal.
 4. Instale, crie `[gaiaball]` num patch e abra a ajuda (clique-direito → Ajuda).
-5. Conecte a bola pela config-app e confira que os `[r gaia.*]` recebem dados.
+5. Conecte a bola pela config-app (ou abra a config-app com `?demo=1`) e confira que os
+   `[r gaia.*]` recebem dados.
 
-Faça isso nos três sistemas sempre que possível. O macOS é o que menos testamos.
+Faça isso nos três sistemas sempre que possível. O macOS e o Windows são os que menos
+testamos.
 
 ## 10. Publicar uma versão nova
 
@@ -186,10 +194,10 @@ baixou aquela versão teria dois pacotes diferentes com o mesmo nome.
 ## 12. Opcional, no futuro: publicar pelo CI
 
 O `deken` lê o usuário e a senha das variáveis de ambiente `DEKEN_USERNAME` e
-`DEKEN_PASSWORD`. Dá para o GitHub Actions publicar sozinho a cada tag `v*`, guardando as
-duas como *secrets* do repositório e rodando a imagem Docker do `deken`
-(`registry.git.iem.at/pd/deken`). Só vale a pena quando as versões ficarem frequentes. Até
-lá, o envio manual acima é mais seguro: você confere o nome do pacote antes de publicar.
+`DEKEN_PASSWORD`. Dá para o GitHub Actions publicar sozinho quando a Release for
+publicada, guardando as duas como *secrets* do repositório e rodando a mesma imagem Docker
+do `deken`. Só vale a pena quando as versões ficarem frequentes. Até lá, o envio manual
+acima é mais seguro: você confere o pacote antes de publicar.
 
 ## Referências
 
