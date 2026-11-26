@@ -11,7 +11,7 @@ assignments on 2026-11-06.
 | Ref | Component | Pin / function | Net | ESP32 GPIO |
 |---|---|---|---|---|
 | U4 | ESP32-DEVKITC-32E | — | — | — |
-| U1 | IMU: **GY-91** (MPU-9250 + AK8963 + BMP280) or **GY-ICM20948V2** (ICM-20948 + AK09916) on the 10-pin header (KiCAD symbol `Sensor_Motion:MPU-9250-IMU`; see finding 2) | SCL | `/GPIO22` | **22** |
+| U1 | IMU: **GY-91** (MPU-9250 + AK8963 + BMP280; some boards carry an MPU-6500 with no magnetometer instead, see finding 2) or **GY-ICM20948V2** (ICM-20948 + AK09916) on the 10-pin header (KiCAD symbol `Sensor_Motion:MPU-9250-IMU`; see finding 2) | SCL | `/GPIO22` | **22** |
 | U1 | | SDA | `/GPIO21` | **21** |
 | U1 | | EDA, ECL, AD0, INT, **NCS**, FSYNC | unconnected | — |
 | U2 | CO2 sensor — **SC8-CO2-5K** (Shenzhen Shenchen Technology, "YYS SC8"; KiCAD value `Sensor_CO2_SC8`, drawn on an S8-style footprint `Senseair_S8_Down`) | +5V / GND | `+5V` / `GND` | — |
@@ -57,6 +57,7 @@ not be used).
    |---|---|---|---|
    | `GY-ICM20948V2` | ICM-20948 + AK09916 | `0xEA` at `0x00` (bank 0) | the existing ball |
    | `GY-91` | MPU-9250 + AK8963 (+ BMP280 at 0x76, unread) | `0x71` at `0x75` | future production |
+   | `GY-91` with an MPU-6500 | MPU-6500, **no magnetometer** (+ BMP280 at 0x76, unread) | `0x70` at `0x75` | a team-built ball, 2026-11-26 |
 
    One firmware drives both. The two are **not** told apart by auto-detection: the
    operator selects the chip in the config-app (TLV `0x34`, `imuChip`), and a
@@ -64,6 +65,15 @@ not be used).
    Changing the selection takes effect after a reboot. Wiring is the same I2C-only
    arrangement for both (NCS unconnected, SCL/SDA on 22/21, AD0/SDO low -> 0x68); the
    magnetometer sits at 0x0C on both (pass-through / bypass).
+
+   **Not every GY-91 has a magnetometer.** Some GY-91 modules carry an **MPU-6500**
+   instead of the MPU-9250 (evidence, 2026-11-26: a team-built ball read a stable
+   `WHO_AM_I = 0x70` at `0x75`). The MPU-9250 is an MPU-6500 plus an AK8963 in one
+   package, so the accel/gyro registers, ranges and DLPF table are identical and the
+   same driver runs it under the same selection (`imuChip = 2`); there is simply no
+   magnetometer, so such a ball **only runs Quat6** (heading relative to power-on, slow
+   drift) and reports `imuDetected` bit 3 clear. Before 2026-11-26 the firmware rejected
+   `0x70` and left that ball with the IMU "selected, not found".
 3. **The CO2 sensor is an SC8-CO2-5K** (Shenzhen Shenchen Technology, often listed
    as "YYS SC8") — user-confirmed hardware. The schematic's `Sensor_CO2_SC8` value is
    literal; the `Senseair_S8_Down` footprint name misled an earlier revision of this

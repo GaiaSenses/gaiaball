@@ -22,7 +22,7 @@ compositions (Pure Data).
 
 | Component | Part | Bus / pins (ESP32 DevKitC) |
 |---|---|---|
-| Orientation | **GY-ICM20948V2** (ICM-20948 + AK09916; the ball in hand) or **GY-91** (MPU-9250 + AK8963 + BMP280, unused; future units) — chosen in the config-app, default off | I²C — SDA 21, SCL 22, addr 0x68 |
+| Orientation | **GY-ICM20948V2** (ICM-20948 + AK09916; the ball in hand) or **GY-91** (MPU-9250 + AK8963 + BMP280, unused; future units; some boards carry an MPU-6500, with no magnetometer) — chosen in the config-app, default off | I²C — SDA 21, SCL 22, addr 0x68 |
 | Microphones | 2× INMP441 (stereo, for blow detection) | I²S — WS 25, SCK 26, SD 33 |
 | CO₂ | SC8-CO2-5K ("YYS SC8", NDIR, active 1 Hz stream) | UART1 — RX 16, 9600 8N1, listen-only |
 | Threshold knob | 50 kΩ potentiometer | ADC — GPIO 34 |

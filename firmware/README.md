@@ -94,7 +94,7 @@ cross-check lives in [docs/hardware-pinout.md](docs/hardware-pinout.md).
 
 | Function | GPIO | Notes |
 |---|---|---|
-| IMU I2C SDA | 21 | IMU module: GY-ICM20948V2 (ICM-20948 + AK09916) or GY-91 (MPU-9250 + AK8963 + BMP280), 400 kHz, AD0/SDO low (board header U1) |
+| IMU I2C SDA | 21 | IMU module: GY-ICM20948V2 (ICM-20948 + AK09916) or GY-91 (MPU-9250 + AK8963 + BMP280, or an MPU-6500 with no magnetometer on some boards), 400 kHz, AD0/SDO low (board header U1) |
 | IMU I2C SCL | 22 | |
 | I2S WS (LRCLK) | 25 | two INMP441 (L/R), 16 kHz, 32-bit stereo (board M1/M2) |
 | I2S SCK (BCLK) | 26 | |
@@ -155,8 +155,9 @@ config write that lands both LED functions on the same GPIO is rejected atomical
 - USB serial logging is OFF by default (TLV `0x50`); the boot sequence (including the
   I2C identity probe below) always prints, the switch takes over afterwards.
 - The IMU is **either** a `GY-ICM20948V2` module (ICM-20948 + AK09916 mag; the ball in
-  hand) **or** a GY-91 (MPU-9250 + AK8963 mag + BMP280 barometer; future units); the
-  operator picks the chip in the config-app (TLV `0x34`, reboot to apply, default
+  hand) **or** a GY-91 (MPU-9250 + AK8963 mag + BMP280 barometer; future units; some
+  GY-91 boards carry an MPU-6500 instead, which has no magnetometer and so runs Quat6
+  only, under the same selection); the operator picks the chip in the config-app (TLV `0x34`, reboot to apply, default
   "unconfigured" = IMU off). The drivers are register-level
   (`src/services/Icm20948.*`, `src/services/Mpu9250.*`); the fusion is the revised
   Madgwick filter (`src/logic/Ahrs.*`) with acceleration and magnetic rejection, fed by
@@ -327,7 +328,7 @@ choosing a DLPF index by hand:
 
 | | MPU-9250 (GY-91) | ICM-20948 (GY-ICM20948V2) |
 |---|---|---|
-| Identity | `WHO_AM_I` `0x71` at `0x75` | `WHO_AM_I` `0xEA` at `0x00` (register `0x75` is reserved and reads a meaningless `0x48`) |
+| Identity | `WHO_AM_I` `0x71` at `0x75` (`0x73` MPU-9255; `0x70` MPU-6500, the same chip without the AK8963: Quat6 only) | `WHO_AM_I` `0xEA` at `0x00` (register `0x75` is reserved and reads a meaningless `0x48`) |
 | Register map | flat, one bank | **banked** (4 banks sharing addresses `0x00..0x7E`; `REG_BANK_SEL` `0x7F` is the only register visible in all of them); a read in the wrong bank returns plausible garbage |
 | Rate dividers | one `SMPLRT_DIV`, 1 kHz base | **separate** gyro (8-bit) and accel (12-bit) dividers, 1125 Hz base |
 | DLPF index 1..7 (gyro) | 184 / 92 / 41 / 20 / 10 / 5 / 3600 Hz | 151.8 / 119.5 / 51.2 / 23.9 / 11.6 / 5.7 / 361.4 Hz (accel cut-offs differ slightly; same index is written to both) |
@@ -493,7 +494,7 @@ persisted only by command `0x11`. Full table with types: [`docs/protocol.md`](do
 | `0x28` | co2EmaAlphaX1000 (1000 = off) | 1000 |
 | `0x29`–`0x2A` | CO2 trigger flag: co2TriggerPpm (400–10000), co2TriggerHystPpm (0–2000) | 1200, 50 |
 | `0x30`–`0x32` | sound LED pin, CO2 LED pin (pins distinct), co2AlertPpm | 2, 4, 2000 |
-| `0x34` | imuChip (0 unconfigured / IMU off, 1 ICM-20948, 2 GY-91 / MPU-9250; reboot to apply) | 0 |
+| `0x34` | imuChip (0 unconfigured / IMU off, 1 ICM-20948, 2 GY-91: MPU-9250, or MPU-6500 with no magnetometer; reboot to apply) | 0 |
 | `0x35` | imuDetected — **read-only**, first record of every config read; never write it | — |
 | `0x37` | unlockState — **read-only**, right after `0x35` in every config read: this connection's PIN state (0 locked, 1 unlocked, 2 locked out); never write it | — |
 | `0x36` | magAxisRemap (0–23, applied live; changing it invalidates a `0x1E` calibration) | 8 |
