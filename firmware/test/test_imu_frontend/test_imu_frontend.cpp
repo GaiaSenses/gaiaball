@@ -82,6 +82,32 @@ void test_cutoff_tables_differ_between_chips(void) {
                         dlpfCutoffHzFor(ImuChip::Icm20948, 3));
 }
 
+// Some GY-91 boards carry an MPU-6500 (WHO_AM_I 0x70) instead of the MPU-9250: same
+// accel/gyro, no magnetometer. Rejecting 0x70 left such a ball with no IMU at all.
+void test_mpu_whoami_accepts_the_mpu6500_without_a_magnetometer(void) {
+  TEST_ASSERT_TRUE(mpuVariantFromWhoAmI(0x70) == MpuVariant::Mpu6500);
+  TEST_ASSERT_FALSE(mpuHasMagnetometer(MpuVariant::Mpu6500));
+  TEST_ASSERT_EQUAL_STRING("MPU-6500", mpuVariantName(MpuVariant::Mpu6500));
+}
+
+void test_mpu_whoami_keeps_the_9250_and_9255_with_a_magnetometer(void) {
+  TEST_ASSERT_TRUE(mpuVariantFromWhoAmI(0x71) == MpuVariant::Mpu9250);
+  TEST_ASSERT_TRUE(mpuVariantFromWhoAmI(0x73) == MpuVariant::Mpu9255);
+  TEST_ASSERT_TRUE(mpuHasMagnetometer(MpuVariant::Mpu9250));
+  TEST_ASSERT_TRUE(mpuHasMagnetometer(MpuVariant::Mpu9255));
+  TEST_ASSERT_EQUAL_STRING("MPU-9250", mpuVariantName(MpuVariant::Mpu9250));
+  TEST_ASSERT_EQUAL_STRING("MPU-9255", mpuVariantName(MpuVariant::Mpu9255));
+}
+
+// 0x48 is what an ICM-20948 reads at the reserved register 0x75 (docs/hardware-pinout.md),
+// 0x68 an MPU-6050, 0x00/0xFF a floating bus: none of them may pass for a GY-91.
+void test_mpu_whoami_rejects_other_chips(void) {
+  for (uint8_t id : {0x48, 0x68, 0xEA, 0x00, 0xFF}) {
+    TEST_ASSERT_TRUE(mpuVariantFromWhoAmI(id) == MpuVariant::Unknown);
+  }
+  TEST_ASSERT_FALSE(mpuHasMagnetometer(MpuVariant::Unknown));
+}
+
 int main(int, char **) {
   UNITY_BEGIN();
   RUN_TEST(test_mpu_auto_dlpf_matches_legacy);
@@ -92,5 +118,8 @@ int main(int, char **) {
   RUN_TEST(test_cutoff_never_above_nyquist_from_20hz_up);
   RUN_TEST(test_forced_dlpf_is_respected);
   RUN_TEST(test_cutoff_tables_differ_between_chips);
+  RUN_TEST(test_mpu_whoami_accepts_the_mpu6500_without_a_magnetometer);
+  RUN_TEST(test_mpu_whoami_keeps_the_9250_and_9255_with_a_magnetometer);
+  RUN_TEST(test_mpu_whoami_rejects_other_chips);
   return UNITY_END();
 }

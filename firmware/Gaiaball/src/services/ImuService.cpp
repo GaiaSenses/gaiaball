@@ -44,7 +44,7 @@ ImuChip chipFromConfig(uint8_t stored) {
 const char *chipName(ImuChip chip) {
   switch (chip) {
     case ImuChip::Icm20948: return "ICM-20948 (GY-ICM20948V2)";
-    case ImuChip::Mpu9250: return "MPU-9250 (GY-91)";
+    case ImuChip::Mpu9250: return "GY-91 (MPU-9250/6500)";
     default: return "none";
   }
 }
@@ -173,7 +173,8 @@ bool ImuService::begin(ConfigStore &store) {
   imuOk_ = frontEndOk_;
   if (imuOk_) {
     GB_LOGI(kTag, "fusion ready (%s, %u Hz, DLPF %.0f Hz, gain %.2f)",
-            active_.orientationMode == 1 ? "Quat9" : "Quat6", (unsigned)active_.rateHz,
+            active_.orientationMode == 1 && imu_->magOk() ? "Quat9" : "Quat6",
+            (unsigned)active_.rateHz,
             imu_->dlpfCutoffHz(), active_.ahrs.gain);
   } else {
     GB_LOGE(kTag, "sample-rate setup failed; IMU disabled");
@@ -352,7 +353,9 @@ void ImuService::processSample(uint32_t tUs) {
   if (dt < kDtMinS || dt > kDtMaxS) dt = 1.0f / (float)active_.rateHz;
 
   // --- stage 3: magnetometer ------------------------------------------------
-  const bool nine = active_.orientationMode == 1;
+  // Quat9 needs a magnetometer that answered at begin(); without one (an MPU-6500 GY-91,
+  // or an AK8963 that failed) the selection runs as Quat6.
+  const bool nine = active_.orientationMode == 1 && imu_->magOk();
   if (nine) {
     float uT[3];
     if (imu_->readMag(uT)) {
@@ -379,7 +382,9 @@ void ImuService::processSample(uint32_t tUs) {
   ImuSample s;
   s.tUs = tUs;
   filterAccel(accRaw, s.acc);
-  s.flags = nine ? kImuNineAxis : 0;
+  // nineAxis only when the fusion really used the magnetometer (update9 above), not merely
+  // because Quat9 is selected: before the first reading it is still 6-axis.
+  s.flags = nine && haveMag_ ? kImuNineAxis : 0;
 
   const Quat raw = ahrs_.quat();
   if (!isfinite(raw.w) || !isfinite(raw.x) || !isfinite(raw.y) || !isfinite(raw.z)) {

@@ -4,7 +4,8 @@
 namespace gaia {
 
 // Which inertial chip is on the I2C bus. The physical ball carries an ICM-20948; units
-// that ship later carry the GY-91 (MPU-9250). The firmware drives both.
+// that ship later carry the GY-91 (MPU-9250, or the MPU-6500 on some boards: see
+// MpuVariant). The firmware drives both.
 enum class ImuChip : uint8_t { None = 0, Icm20948 = 1, Mpu9250 = 2 };
 
 // Rate and DLPF arithmetic lives here, not in the drivers, so the host-side `native`
@@ -29,5 +30,16 @@ FrontEndPlan planFrontEnd(ImuChip chip, uint8_t requestedHz, uint8_t forcedDlpfM
 // Cut-off of DLPF index `mode & 7` for the chip. Named ...For so it cannot be hidden by
 // the virtual member ImuDriver::dlpfCutoffHz() inside the driver classes.
 float dlpfCutoffHzFor(ImuChip chip, uint8_t mode);
+
+// What the GY-91's motion chip answers at WHO_AM_I (register 0x75). Some GY-91 boards
+// carry an MPU-6500 (0x70) instead of the MPU-9250 (0x71): the MPU-9250 is an MPU-6500
+// plus an AK8963 magnetometer in one package, so the accel/gyro registers, ranges and
+// DLPF table are the same, but a ball with the MPU-6500 has no magnetometer and only
+// ever runs Quat6. Anything else is not a GY-91 (Unknown).
+enum class MpuVariant : uint8_t { Unknown = 0, Mpu6500, Mpu9250, Mpu9255 };
+MpuVariant mpuVariantFromWhoAmI(uint8_t whoAmI);
+// True when the package also holds the AK8963 magnetometer.
+bool mpuHasMagnetometer(MpuVariant variant);
+const char *mpuVariantName(MpuVariant variant);
 
 }  // namespace gaia

@@ -971,7 +971,7 @@ e [`GaiaConfig.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gai
 | `0x1C` | `oneEuroBetaX1000` | u16 | 0–10000 | 20 | Inclinação do corte do 1-euro, × 1000 |
 | `0x1D` | `accelHampelKX10` | u8 | 0–100 | 0 | Filtro de picos na aceleração, k × 10; 0 = desligado |
 | `0x1E` | `magCal` | 12 × i16 (24 B) | diagonal ≠ 0 | identidade | Calibração do magnetômetro: *hard iron* x, y, z em 0,1 µT, depois a matriz *soft iron* por linhas em 1/4096. Padrão: `0, 0, 0` + `4096, 0, 0, 0, 4096, 0, 0, 0, 4096` |
-| `0x34` | `imuChip` | u8 | 0–2 | 0 | Qual IMU está montado: 0 nenhum (IMU desligado), 1 ICM-20948, 2 GY-91/MPU-9250. Vale depois de reiniciar |
+| `0x34` | `imuChip` | u8 | 0–2 | 0 | Qual IMU está montado: 0 nenhum (IMU desligado), 1 ICM-20948, 2 GY-91 (MPU-9250, ou o MPU-6500 que alguns GY-91 trazem: sem magnetômetro, só Quat6). Vale depois de reiniciar |
 | `0x35` | `imuDetected` | u8 | **só leitura** | — | Bits 0–1: o `imuChip` em vigor no boot; bit 2 (`0x04`): sensor encontrado; bit 3 (`0x08`): magnetômetro respondeu |
 | `0x37` | `unlockState` | u8 | **só leitura** | — | O PIN da conexão que está lendo: 0 travada, 1 destravada, 2 bloqueada por 30 s (5 PINs errados). Leia logo depois do `0x20` para confirmar o PIN |
 | `0x36` | `magAxisRemap` | u8 | 0–23 | 8 | Remapeamento dos eixos do magnetômetro (8 = `+Y +X −Z`); mudar invalida a calibração `0x1E` |

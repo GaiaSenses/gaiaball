@@ -9,8 +9,10 @@
 namespace gaia {
 
 // Minimal register-level driver for the GY-91 module's MPU-9250 (+ AK8963 mag via
-// bypass). No DMP, no FIFO: the data registers are polled and fusion runs on the
-// ESP32 (logic/Ahrs.h). Scales:
+// bypass). Some GY-91 boards carry an MPU-6500 instead (WHO_AM_I 0x70): same accel/gyro
+// registers, no magnetometer, so this driver runs it as-is with magOk() false (Quat6
+// only; see MpuVariant in logic/ImuFrontEnd.h). No DMP, no FIFO: the data registers are
+// polled and fusion runs on the ESP32 (logic/Ahrs.h). Scales:
 //   accel ±4 g  -> 8192 LSB/g (ImuDriver::kAccelLsbPerG); the wire carries mg, so the range
 //         is no longer fixed by the protocol (same scale the ICM-20948 DMP published)
 //   gyro  selectable ±250/500/1000/2000 dps -> 131/65.5/32.8/16.4 LSB/dps. The
@@ -23,7 +25,8 @@ namespace gaia {
 // Single-task use (the IMU task) after begin(); see ImuDriver for the contract.
 class Mpu9250 : public ImuDriver {
  public:
-  // WHO_AM_I accepted values: 0x71 (MPU-9250), 0x73 (MPU-9255).
+  // WHO_AM_I accepted values: 0x70 (MPU-6500, no magnetometer), 0x71 (MPU-9250),
+  // 0x73 (MPU-9255).
   bool begin(TwoWire &wire, bool ad0) override;
   // Internal rate 1 kHz, decimated by SMPLRT_DIV. dlpfMode 0 = auto (widest DLPF still
   // below the output Nyquist); 1..7 force DLPF_CFG (1=184, 2=92, 3=41, 4=20, 5=10,

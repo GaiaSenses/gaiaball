@@ -128,13 +128,24 @@ describe('reboot banner', () => {
   });
 });
 
+describe('IMU choice', () => {
+  // Some GY-91 boards carry an MPU-6500 (WHO_AM_I 0x70) instead of the MPU-9250; the firmware
+  // drives both under the same choice (the missing magnetometer is irrelevant to a Quat6 app,
+  // and tooltips never mention it: see 'never mentions the magnetometer').
+  it('names both chips a GY-91 can carry and tells the operator to pick GY-91 for either', () => {
+    const f = CONFIG_FIELDS.find((x) => x.id === TLV.imuChip)!;
+    expect(f.options).toContainEqual([2, 'GY-91 (MPU-9250 ou MPU-6500)']);
+    expect(f.info).toMatch(/MPU-6500 no lugar do MPU-9250: escolha GY-91/);
+  });
+});
+
 describe('IMU status line', () => {
   it.each([
     [undefined, 0, 'não configurado'],
-    [0x0E, 2, 'GY-91 (MPU-9250) ok'],
+    [0x0E, 2, 'GY-91 (MPU-9250 ou MPU-6500) ok'],
     [0x0D, 1, 'ICM-20948 ok'],
     [0x05, 1, 'ICM-20948 ok'], // magnetometer bit (3) is no longer reported on
-    [0x06, 2, 'GY-91 (MPU-9250) ok'],
+    [0x06, 2, 'GY-91 (MPU-9250 ou MPU-6500) ok'],
     [0x01, 1, 'ICM-20948 selecionado, não encontrado'],
     [0x09, 1, 'ICM-20948 selecionado, não encontrado'], // bit 3 without bit 2: the chip verdict wins
     [0x05, 2, 'trocado, aguardando reinício'], // boot = ICM + found, current selection = GY-91
@@ -437,7 +448,7 @@ describe('formatBallValue ("na bola: X")', () => {
 describe('imuInUseName (status strip)', () => {
   it('names the chip running since boot', () => {
     expect(imuInUseName(0x01 | 0x04 | 0x08, 1)).toBe('ICM-20948');
-    expect(imuInUseName(0x02 | 0x04, 2)).toBe('GY-91 (MPU-9250)');
+    expect(imuInUseName(0x02 | 0x04, 2)).toBe('GY-91 (MPU-9250 ou MPU-6500)');
   });
   it('flags a chip that was not found, and an IMU that is off', () => {
     expect(imuInUseName(0x01, 1)).toBe('ICM-20948 (não encontrado)');

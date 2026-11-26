@@ -63,10 +63,13 @@ bool Mpu9250::begin(TwoWire &wire, bool ad0) {
   addr_ = ad0 ? 0x69 : 0x68;
 
   if (!readBytes(addr_, kRegWhoAmI, &whoAmI_, 1)) return false;
-  if (whoAmI_ != 0x71 && whoAmI_ != 0x73) {
-    GB_LOGE(kTag, "WHO_AM_I 0x%02X at 0x%02X: not an MPU-9250/9255", whoAmI_, addr_);
+  const MpuVariant variant = mpuVariantFromWhoAmI(whoAmI_);
+  if (variant == MpuVariant::Unknown) {
+    GB_LOGE(kTag, "WHO_AM_I 0x%02X at 0x%02X: not an MPU-6500/9250/9255", whoAmI_, addr_);
     return false;
   }
+  // The MPU-6500 has no AK8963 inside: no bypass to open and no magnetometer to probe.
+  const bool hasMag = mpuHasMagnetometer(variant);
 
   bool ok = true;
   ok &= write8(addr_, kRegPwrMgmt1, 0x80);  // reset
@@ -77,12 +80,13 @@ bool Mpu9250::begin(TwoWire &wire, bool ad0) {
   // Gyro range and the DLPF pair are written by setGyroFullScale()/setSampleRateHz(),
   // which begin() callers invoke with the stored configuration.
   ok &= write8(addr_, kRegIntEnable, 0x01);     // RAW_DATA_RDY latches INT_STATUS
-  ok &= write8(addr_, kRegIntPinCfg, 0x02);     // I2C bypass: AK8963 visible at 0x0C
+  if (hasMag) ok &= write8(addr_, kRegIntPinCfg, 0x02);  // I2C bypass: AK8963 at 0x0C
   if (!ok) return false;
 
-  magOk_ = initMag();
-  if (!magOk_) GB_LOGW(kTag, "AK8963 mag not available; Quat9 will fall back to 6-axis");
-  GB_LOGI(kTag, "MPU-9250 ready (WHO_AM_I 0x%02X, mag %s)", whoAmI_, magOk_ ? "ok" : "off");
+  magOk_ = hasMag && initMag();
+  if (hasMag && !magOk_) GB_LOGW(kTag, "AK8963 mag not available; Quat9 will fall back to 6-axis");
+  GB_LOGI(kTag, "%s ready (WHO_AM_I 0x%02X, mag %s)", mpuVariantName(variant), whoAmI_,
+          magOk_ ? "ok" : (hasMag ? "off" : "none on this chip, Quat6 only"));
   return true;
 }
 

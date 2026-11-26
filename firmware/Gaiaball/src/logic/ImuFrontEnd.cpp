@@ -57,4 +57,26 @@ FrontEndPlan planFrontEnd(ImuChip chip, uint8_t requestedHz, uint8_t forcedDlpfM
   return p;
 }
 
+MpuVariant mpuVariantFromWhoAmI(uint8_t whoAmI) {
+  switch (whoAmI) {
+    case 0x70: return MpuVariant::Mpu6500;
+    case 0x71: return MpuVariant::Mpu9250;
+    case 0x73: return MpuVariant::Mpu9255;
+    default: return MpuVariant::Unknown;
+  }
+}
+
+bool mpuHasMagnetometer(MpuVariant variant) {
+  return variant == MpuVariant::Mpu9250 || variant == MpuVariant::Mpu9255;
+}
+
+const char *mpuVariantName(MpuVariant variant) {
+  switch (variant) {
+    case MpuVariant::Mpu6500: return "MPU-6500";
+    case MpuVariant::Mpu9250: return "MPU-9250";
+    case MpuVariant::Mpu9255: return "MPU-9255";
+    default: return "unknown";
+  }
+}
+
 }  // namespace gaia
