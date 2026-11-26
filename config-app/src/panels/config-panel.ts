@@ -86,7 +86,7 @@ export const isPerBall = (f: Field): boolean =>
   f.id === TLV.pin || f.id === TLV.imuChip || f.id === TLV.navRef;
 
 /** Display names of the IMU choices (index = TLV 0x34 value). */
-const IMU_NAMES = ['não configurado', 'ICM-20948', 'GY-91 (MPU-9250)'];
+const IMU_NAMES = ['não configurado', 'ICM-20948', 'GY-91 (MPU-9250 ou MPU-6500)'];
 
 /**
  * True while a reboot is needed for the IMU choice to take effect. The reference is the chip in
@@ -125,8 +125,8 @@ const isJoystick = (cfg: Map<number, unknown>): boolean => Number(cfg.get(TLV.na
 
 const GROUPS: Group[] = [
   { title: 'Aquisição', fields: [
-    { id: TLV.imuChip, label: 'IMU', kind: 'select', options: [[0, 'não configurado'], [1, 'ICM-20948'], [2, 'GY-91 (MPU-9250)']],
-      info: 'Qual chip de movimento está soldado nesta bola. O mesmo firmware serve aos dois (ICM-20948 ou GY-91/MPU-9250), mas ele não adivinha: a bola sai de fábrica com o IMU DESLIGADO (“não configurado”) de propósito, para que ninguém dependa de um sensor que ninguém escolheu. Trocar o chip só vale depois de REINICIAR a bola (o barramento é inicializado uma vez, no boot). Sem unidade.' },
+    { id: TLV.imuChip, label: 'IMU', kind: 'select', options: IMU_NAMES.map((name, i): [number, string] => [i, name]),
+      info: 'Qual chip de movimento está soldado nesta bola. O mesmo firmware serve aos dois (ICM-20948 ou GY-91), mas ele não adivinha: a bola sai de fábrica com o IMU DESLIGADO (“não configurado”) de propósito, para que ninguém dependa de um sensor que ninguém escolheu. Alguns GY-91 vêm com um MPU-6500 no lugar do MPU-9250: escolha GY-91 do mesmo jeito, que ele funciona igual com a orientação de 6 eixos que este app usa. Trocar o chip só vale depois de REINICIAR a bola (o barramento é inicializado uma vez, no boot). Sem unidade.' },
     { id: TLV.imuNotifyHz, label: 'Taxa (Hz)', kind: 'number', min: 10, max: 200,
       info: 'Quantas amostras de orientação a bola envia por segundo via BLE; também reconfigura a amostragem da IMU. Unidade: hertz (Hz), de 10 a 200.' },
     { id: TLV.gyroFsSel, label: 'Faixa do giroscópio', kind: 'select',
