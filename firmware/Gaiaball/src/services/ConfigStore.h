@@ -16,7 +16,7 @@ namespace gaia {
 // meaning or default changed (migrateStoredConfig in GaiaConfig.h).
 // v6: TLV persistence; v7: imuChip, magAxisRemap; v8: breath detector in dB, 0x15 retired;
 // v9: band-pass slopes (0x38, 0x39) and a flat band by default (Q 0.71, was 5.00);
-// v10: breath discriminators (0x3A..0x3F, 0x42), new fields only (nothing to migrate).
+// v10: breath discriminators (0x3A..0x3F, 0x42, 0x43), new fields only (nothing to migrate).
 constexpr uint8_t kConfigSchemaVersion = 10;
 static_assert(kConfigSchemaVersion >= kBandFlatQSchemaVersion, "saves must stop the Q migration");
 

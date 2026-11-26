@@ -23,21 +23,22 @@ struct BreathParams {
   // for this long. Speech pauses between syllables and a knock is over in tens of
   // milliseconds; a breath is sustained. It delays every fire by the same amount.
   uint32_t minDurationMs = 0;
-  // Handling: while the IMU says the ball is being turned or knocked, the fire line is
-  // this many dB higher (the re-arm line is not). 0 = off.
-  float handlingBoostDb = 0.0f;
+  // Stillness: artists blow only on a ball held still. When set, nothing fires while the
+  // IMU says the ball is moving (StillnessDetector: turned, knocked or shaken, tremor
+  // excluded), and a moving stretch breaks the duration.
+  bool stillOnly = false;
 };
 
 // Per-update inputs from outside the audio levels.
 struct BreathGate {
   float coherence = 0.0f;  // AudioLevels::coherence, 0..1
-  bool handling = false;   // HandlingDetector
+  bool moving = false;     // StillnessDetector
 };
 
 // status() bits, published on the SensorsPacket (breathGate) for the config-app.
-constexpr uint8_t kBreathOver = 1u << 0;      // level over the fire line (boost included)
+constexpr uint8_t kBreathOver = 1u << 0;      // level over the fire line
 constexpr uint8_t kBreathCoherent = 1u << 1;  // over, but held back by the coherence
-constexpr uint8_t kBreathHandling = 1u << 2;  // the IMU reports handling (raised line if boost > 0)
+constexpr uint8_t kBreathMoving = 1u << 2;    // the IMU says the ball moves (blocks if stillOnly)
 constexpr uint8_t kBreathWaiting = 1u << 3;   // qualifies, waiting for minDurationMs or the debounce
 
 // Breath ("sopro") detector on linear level values (counts) of the two microphones.
@@ -47,8 +48,7 @@ constexpr uint8_t kBreathWaiting = 1u << 3;   // qualifies, waiting for minDurat
 // After a fire it stays disarmed until the level (absolute) or fast - slow (adaptive)
 // falls below threshold * 10^(-rearmDb/20), so one sustained breath yields one event.
 // A fire also needs the discriminators of BreathParams: coherence below coherenceMax,
-// the line raised by handlingBoostDb while handled, and the whole condition held for
-// minDurationMs. Debounce is wrap-safe. Not thread-safe: use from a single task.
+// the ball still (stillOnly), and the whole condition held for minDurationMs. Debounce is wrap-safe. Not thread-safe: use from a single task.
 class BreathDetector {
  public:
   // Resets the state when the mode changes; otherwise keeps it so live re-tuning does
@@ -60,7 +60,7 @@ class BreathDetector {
   // 1 from the fire until the re-arm.
   bool recognized() const { return !armed_; }
   // The fire line in counts: absolute, thresholdCounts; adaptive, slow baseline +
-  // thresholdCounts; raised by handlingBoostDb while handled (as of the last update).
+  // thresholdCounts.
   float triggerLevel() const;
   // kBreath* bits as of the last update.
   uint8_t status() const { return status_; }
@@ -68,8 +68,6 @@ class BreathDetector {
  private:
   BreathParams p_;
   float rearmRatio_ = 0.70794576f;  // 10^(-3/20)
-  float boostRatio_ = 1.0f;         // 10^(handlingBoostDb/20)
-  bool boosted_ = false;            // the line is raised right now
   bool qualifying_ = false;
   uint32_t qualifyStartMs_ = 0;
   uint8_t status_ = 0;

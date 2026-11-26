@@ -97,7 +97,7 @@ struct GaiaConfig {
   uint8_t audioHpSlopeDbOct = 12;  // TLV 0x38: 6, 12, 18, 24, 36, 48
   uint8_t audioLpSlopeDbOct = 12;  // TLV 0x39
   // Breath discriminators (v10), on top of the band-pass and the line: what tells a breath
-  // from other loud low sound (see BreathParams, HandlingDetector). Each has an off value.
+  // from other loud low sound (see BreathParams, StillnessDetector). Each has an off value.
   // Coherence limit x100 (TLV 0x3A, 0..100): fire only while the left/right coherence of
   // the band-passed microphones is below this; 100 = off.
   uint8_t breathCoherenceMaxX100 = 60;
@@ -106,14 +106,20 @@ struct GaiaConfig {
   uint16_t micSpacingMmX10 = 154;
   // The fire condition must hold without a break this long, ms (TLV 0x3C, 0..2000; 0 = off).
   uint16_t breathMinDurationMs = 120;
-  // While the ball is handled the fire line is this many dB higher (TLV 0x3D, 0..60; 0 = off).
-  uint8_t handlingBoostDb = 12;
-  // Handling = angular speed above this, deg/s (TLV 0x3E, 1..2000) ...
-  uint16_t handlingGyroDps = 30;
+  // Breath only while the ball is held still (TLV 0x3D, 0/1): artists blow only on a ball
+  // held still; turning it is navigating the globe, and turning hands are loud.
+  uint8_t breathStillOnly = 1;
+  // Moving = NET angular speed (tremor averaged out, see StillnessDetector) above this,
+  // deg/s (TLV 0x3E, 1..2000) ...
+  uint16_t stillMaxDps = 20;
   // ... or |acceleration| more than this away from 1 g, mg (TLV 0x3F, 10..4000) ...
-  uint16_t handlingAccelMg = 300;
-  // ... and it lasts this long after the last such sample, ms (TLV 0x42, 0..5000).
-  uint16_t handlingHoldMs = 300;
+  uint16_t stillMaxAccelMg = 300;
+  // ... and it counts as moving for this long after the last such sample, ms (TLV 0x42,
+  // 0..5000): the ball must be still this long before a breath can fire.
+  uint16_t stillHoldMs = 300;
+  // Time constant of the angular-velocity average that cancels hand tremor, ms (TLV 0x43,
+  // 10..1000).
+  uint16_t stillWindowMs = 100;
   // Potentiometer EMA alpha x1000 (300 = legacy 0.3).
   uint16_t potEmaAlphaX1000 = 300;
 

@@ -16,8 +16,8 @@ constexpr const char *kKeyPin = "pin";
 constexpr const char *kKeyMount = "mount";
 constexpr const char *kKeyVer = "ver";
 constexpr const char *kTag = "cfg";
-// tlvSerialize output (v10, measured): 278 B with the factory name, 287 B with a 16-char
-// name (70 records, incl. the 24-byte magnetometer calibration); headroom for new ids.
+// tlvSerialize output (v10, measured): 282 B with the factory name, 291 B with a 16-char
+// name (71 records, incl. the 24-byte magnetometer calibration); headroom for new ids.
 constexpr size_t kTlvBufCap = 384;
 Preferences g_prefs;
 

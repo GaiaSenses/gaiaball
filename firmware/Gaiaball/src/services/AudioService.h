@@ -32,11 +32,11 @@ namespace gaia {
 //              - levels(), published on every ImuPacket (RMS + peak per channel) and
 //                on the 5 Hz SensorsPacket;
 //              - BreathDetector fed with both channels of the configured metric
-//                (TLV 0x2C: RMS or peak), the coherence and the handling flag the App
-//                task sets from the IMU (setHandling) -> peak callback on the firing
+//                (TLV 0x2C: RMS or peak), the coherence and the moving flag the App
+//                task sets from the IMU (setMoving) -> peak callback on the firing
 //                edge, and the breath bit (recognized + latch) for the ImuPacket. The
-//                discriminators (v10: coherence 0x3A, duration 0x3C, handling boost
-//                0x3D) gate the fire; see BreathParams. The absolute detector runs on
+//                discriminators (v10: coherence 0x3A, duration 0x3C, still-only 0x3D)
+//                gate the fire; see BreathParams. The absolute detector runs on
 //                every block; the adaptive one every 3rd block.
 // The DC blocker replaced a per-block mean subtraction (v9), which acted as a hidden
 // high-pass near 90 Hz and folded low frequencies to multiples of 200 Hz.
@@ -65,7 +65,7 @@ namespace gaia {
 //  - takeAudioChunk() is safe from any task (short critical section).
 //  - breathRecognized(), takeBreathLatch(), triggerLevelCounts(), coherence() and
 //    breathStatus() are atomics the audio task writes on every block: safe from any task.
-//  - setHandling() is an atomic store: safe from any task (the App task calls it on every
+//  - setMoving() is an atomic store: safe from any task (the App task calls it on every
 //    IMU sample).
 //  - If I2S init fails, ok() is false and the task is never started.
 class AudioService {
@@ -98,8 +98,8 @@ class AudioService {
   float coherence() const { return coherence_.load(); }
   // BreathDetector::status() bits (kBreath*), as of the last detector update; 0 while off.
   uint8_t breathStatus() const { return breathStatus_.load(); }
-  // The ball is being handled (HandlingDetector on the App task).
-  void setHandling(bool on) { handling_.store(on); }
+  // The ball is moving (StillnessDetector on the App task).
+  void setMoving(bool on) { moving_.store(on); }
 
   // Copies the latest 2 kHz chunk (AudioDecimator::kChunkSamples int16) and clears
   // the ready flag. Returns false when no fresh chunk is available.
@@ -131,9 +131,9 @@ class AudioService {
   std::atomic<uint8_t> coherenceMaxX100_{60};
   std::atomic<uint16_t> micSpacingMmX10_{154};
   std::atomic<uint16_t> minDurationMs_{120};
-  std::atomic<uint8_t> handlingBoostDb_{12};
+  std::atomic<bool> stillOnly_{true};
   std::atomic<bool> cfgDirty_{true};
-  std::atomic<bool> handling_{false};  // App task -> audio task
+  std::atomic<bool> moving_{false};  // App task -> audio task
 
   std::atomic<float> rmsL_{0.0f};
   std::atomic<float> rmsR_{0.0f};

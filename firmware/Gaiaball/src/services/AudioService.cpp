@@ -97,7 +97,7 @@ void AudioService::applyConfig(const GaiaConfig &cfg) {
   coherenceMaxX100_.store(cfg.breathCoherenceMaxX100);
   micSpacingMmX10_.store(cfg.micSpacingMmX10);
   minDurationMs_.store(cfg.breathMinDurationMs);
-  handlingBoostDb_.store(cfg.handlingBoostDb);
+  stillOnly_.store(cfg.breathStillOnly != 0);
   cfgDirty_.store(true);
 }
 
@@ -158,7 +158,7 @@ void AudioService::taskLoop() {
       const uint8_t cohX100 = coherenceMaxX100_.load();
       bp.coherenceMax = cohX100 >= 100 ? 2.0f : cohX100 / 100.0f;
       bp.minDurationMs = minDurationMs_.load();
-      bp.handlingBoostDb = (float)handlingBoostDb_.load();
+      bp.stillOnly = stillOnly_.load();
       const bool wantPeak = breathMetric_.load() != 0;
       // A new metric changes the units the detector works in: the adaptive EMAs (and
       // a pending disarm) would mix RMS and peak counts, so start the detector over.
@@ -252,7 +252,7 @@ void AudioService::taskLoop() {
       const uint32_t now = millis();
       BreathGate gate;
       gate.coherence = lv.coherence;
-      gate.handling = handling_.load();
+      gate.moving = moving_.load();
       if (detector_.update(metricPeak_ ? lv.peak : lv.rms, now, gate) && onPeak_) onPeak_(now);
     }
     const bool recognized = detector_.recognized();

@@ -1,7 +1,5 @@
 #include "BreathDetector.h"
 
-#include <math.h>
-
 #include "AudioFeatures.h"
 
 namespace gaia {
@@ -11,9 +9,6 @@ void BreathDetector::configure(const BreathParams &p) {
   p_ = p;
   if (p_.rearmDb > 20) p_.rearmDb = 20;
   rearmRatio_ = dbToAmplitudeRatio((float)p_.rearmDb);
-  if (!(p_.handlingBoostDb > 0.0f)) p_.handlingBoostDb = 0.0f;
-  boostRatio_ = powf(10.0f, p_.handlingBoostDb / 20.0f);
-  if (p_.handlingBoostDb == 0.0f) boosted_ = false;
   if (modeChanged) {
     fast_ = slow_ = 0.0f;
     seeded_ = false;
@@ -25,14 +20,11 @@ void BreathDetector::configure(const BreathParams &p) {
 }
 
 float BreathDetector::triggerLevel() const {
-  const float line = boosted_ ? p_.thresholdCounts * boostRatio_ : p_.thresholdCounts;
-  return p_.mode == BreathMode::Adaptive ? slow_ + line : line;
+  return p_.mode == BreathMode::Adaptive ? slow_ + p_.thresholdCounts : p_.thresholdCounts;
 }
 
 bool BreathDetector::update(const float level[2], uint32_t nowMs, const BreathGate &gate) {
-  boosted_ = gate.handling && p_.handlingBoostDb > 0.0f;
-  const float base = p_.thresholdCounts;
-  const float thr = boosted_ ? base * boostRatio_ : base;  // the fire line
+  const float thr = p_.thresholdCounts;
   bool over;
   bool belowRearm;
   if (p_.mode == BreathMode::Adaptive) {
@@ -46,21 +38,21 @@ bool BreathDetector::update(const float level[2], uint32_t nowMs, const BreathGa
     }
     const float diff = fast_ - slow_;
     over = diff > thr;
-    belowRearm = diff < base * rearmRatio_;
+    belowRearm = diff < thr * rearmRatio_;
   } else {
     over = level[0] > thr || level[1] > thr;
-    const float r = base * rearmRatio_;  // the re-arm line never moves with handling
+    const float r = thr * rearmRatio_;
     belowRearm = level[0] < r && level[1] < r;
   }
   const bool coherent = over && gate.coherence >= p_.coherenceMax;
   status_ = (uint8_t)((over ? kBreathOver : 0) | (coherent ? kBreathCoherent : 0) |
-                      (gate.handling ? kBreathHandling : 0));
+                      (gate.moving ? kBreathMoving : 0));
   if (!armed_) {
     qualifying_ = false;
     if (belowRearm) armed_ = true;
     return false;
   }
-  if (!over || coherent) {  // any break restarts the duration
+  if (!over || coherent || (p_.stillOnly && gate.moving)) {  // any break restarts the duration
     qualifying_ = false;
     return false;
   }

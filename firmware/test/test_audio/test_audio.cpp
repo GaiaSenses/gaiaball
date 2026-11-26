@@ -1,11 +1,12 @@
 #include <unity.h>
 #include <cmath>
+#include <cstdio>
 #include <vector>
 #include "../../Gaiaball/src/logic/AudioDecimator.h"
 #include "../../Gaiaball/src/logic/AudioFeatures.h"
 #include "../../Gaiaball/src/logic/BreathDetector.h"
 #include "../../Gaiaball/src/logic/GaiaConfig.h"
-#include "../../Gaiaball/src/logic/HandlingDetector.h"
+#include "../../Gaiaball/src/logic/StillnessDetector.h"
 
 using namespace gaia;
 
@@ -315,11 +316,11 @@ void test_decimator_reset_drops_partial_chunk() {
 // --- Breath discriminators (v10) -------------------------------------------------
 
 static bool absStep(BreathDetector &d, float level, uint32_t now, float coherence = 0.0f,
-                    bool handling = false) {
+                    bool moving = false) {
   const float lv[2] = {level, level};
   BreathGate g;
   g.coherence = coherence;
-  g.handling = handling;
+  g.moving = moving;
   return d.update(lv, now, g);
 }
 
@@ -400,78 +401,154 @@ void test_min_duration_restarts_after_a_coherent_stretch() {
   TEST_ASSERT_TRUE(absStep(d, 2000.f, 1100, 0.1f));
 }
 
-// Handling raises the fire line by handlingBoostDb (12 dB = x3.98) and the published
-// trigger level with it; the re-arm line stays where it was.
-void test_handling_raises_only_the_fire_line() {
-  BreathParams p = absParams(1000.f, 6, 0);
-  p.handlingBoostDb = 12.0f;
+// Still only: a breath while the ball moves never fires; once it is still, it does.
+void test_still_only_blocks_while_moving() {
+  BreathParams p = absParams(1000.f);
+  p.stillOnly = true;
   BreathDetector d;
   d.configure(p);
-  TEST_ASSERT_FALSE(absStep(d, 3000.f, 100, 0.0f, true));  // x3: under the raised line
-  TEST_ASSERT_EQUAL_HEX8(kBreathHandling, d.status());
-  TEST_ASSERT_FLOAT_WITHIN(1.0f, 3981.07f, d.triggerLevel());
-  TEST_ASSERT_TRUE(absStep(d, 4100.f, 105, 0.0f, true));
-  // Still handled: falling under the normal re-arm line (-6 dB of 1000) re-arms.
-  TEST_ASSERT_FALSE(absStep(d, 400.f, 110, 0.0f, true));
+  TEST_ASSERT_FALSE(absStep(d, 5000.f, 100, 0.0f, true));
+  TEST_ASSERT_EQUAL_HEX8(kBreathOver | kBreathMoving, d.status());
   TEST_ASSERT_FALSE(d.recognized());
-  // Handling over: the line is back.
-  TEST_ASSERT_TRUE(absStep(d, 1200.f, 200, 0.0f, false));
-  TEST_ASSERT_FLOAT_WITHIN(0.01f, 1000.f, d.triggerLevel());
+  TEST_ASSERT_TRUE(absStep(d, 5000.f, 105, 0.0f, false));
+  TEST_ASSERT_FLOAT_WITHIN(0.01f, 1000.f, d.triggerLevel());  // the line never moves
 }
 
-// Boost 0: handling is reported (for the config-app) but changes nothing.
-void test_handling_boost_zero_changes_nothing() {
+// Still only off: moving is reported (for the config-app) but changes nothing.
+void test_still_only_off_reports_but_fires() {
   BreathParams p = absParams(1000.f);
-  p.handlingBoostDb = 0.0f;
+  p.stillOnly = false;
   BreathDetector d;
   d.configure(p);
   TEST_ASSERT_TRUE(absStep(d, 1200.f, 100, 0.0f, true));
-  TEST_ASSERT_TRUE((d.status() & kBreathHandling) != 0);
-  TEST_ASSERT_FLOAT_WITHIN(0.01f, 1000.f, d.triggerLevel());
+  TEST_ASSERT_TRUE((d.status() & kBreathMoving) != 0);
 }
 
-// Adaptive: the boost raises the rise needed above the baseline.
-void test_handling_boost_adaptive() {
-  BreathParams p = adaptiveParams(100.f, 1.0f, 0.999f, 0);
-  p.handlingBoostDb = 20.0f;  // x10
+// Moving breaks the duration: the count starts when the ball is still again.
+void test_moving_breaks_the_duration() {
+  BreathParams p = absParams(1000.f);
+  p.stillOnly = true;
+  p.minDurationMs = 50;
   BreathDetector d;
   d.configure(p);
-  const float quiet[2] = {1000.f, 1000.f};
-  BreathGate h;
-  h.handling = true;
-  TEST_ASSERT_FALSE(d.update(quiet, 0, h));  // seeds the baseline
-  const float loud[2] = {1500.f, 1500.f};    // +500 over the baseline: under 10 x 100
-  TEST_ASSERT_FALSE(d.update(loud, 15, h));
-  TEST_ASSERT_TRUE(d.update(loud, 30));      // not handled: +500 > 100
+  TEST_ASSERT_FALSE(absStep(d, 2000.f, 1000));
+  TEST_ASSERT_FALSE(absStep(d, 2000.f, 1045));
+  TEST_ASSERT_FALSE(absStep(d, 2000.f, 1048, 0.0f, true));  // a turn
+  TEST_ASSERT_FALSE(absStep(d, 2000.f, 1050));              // still again: from here
+  TEST_ASSERT_FALSE(absStep(d, 2000.f, 1095));
+  TEST_ASSERT_TRUE(absStep(d, 2000.f, 1100));
 }
 
-// The three together, as configured by default in GaiaConfig (v10).
+// Adaptive: moving blocks it too.
+void test_still_only_adaptive() {
+  BreathParams p = adaptiveParams(100.f, 1.0f, 0.999f, 0);
+  p.stillOnly = true;
+  BreathDetector d;
+  d.configure(p);
+  const float quiet[2] = {1000.f, 1000.f}, loud[2] = {5000.f, 5000.f};
+  BreathGate mv;
+  mv.moving = true;
+  TEST_ASSERT_FALSE(d.update(quiet, 0));  // seeds the baseline
+  TEST_ASSERT_FALSE(d.update(loud, 15, mv));
+  TEST_ASSERT_TRUE(d.update(loud, 30));
+}
+
+// The defaults in GaiaConfig (v10): all three on.
 void test_defaults_from_config() {
   GaiaConfig c;
   TEST_ASSERT_EQUAL(60, c.breathCoherenceMaxX100);
   TEST_ASSERT_EQUAL(154, c.micSpacingMmX10);
   TEST_ASSERT_EQUAL(120, c.breathMinDurationMs);
-  TEST_ASSERT_EQUAL(12, c.handlingBoostDb);
-  TEST_ASSERT_EQUAL(30, c.handlingGyroDps);
-  TEST_ASSERT_EQUAL(300, c.handlingAccelMg);
-  TEST_ASSERT_EQUAL(300, c.handlingHoldMs);
+  TEST_ASSERT_EQUAL(1, c.breathStillOnly);
+  TEST_ASSERT_EQUAL(20, c.stillMaxDps);
+  TEST_ASSERT_EQUAL(300, c.stillMaxAccelMg);
+  TEST_ASSERT_EQUAL(300, c.stillHoldMs);
+  TEST_ASSERT_EQUAL(100, c.stillWindowMs);
 }
 
-void test_handling_detector_gyro_accel_and_hold() {
-  HandlingDetector h;
-  HandlingParams p;
-  p.gyroDps = 30.0f;
-  p.accelMg = 300.0f;
-  p.holdMs = 300;
-  h.configure(p);
-  TEST_ASSERT_FALSE(h.update(10.0f, 1.0f, 1000));   // still in the hand
-  TEST_ASSERT_TRUE(h.update(45.0f, 1.0f, 1020));    // a turn
-  TEST_ASSERT_TRUE(h.update(5.0f, 1.0f, 1320));     // held for 300 ms
-  TEST_ASSERT_FALSE(h.update(5.0f, 1.0f, 1321));
-  TEST_ASSERT_TRUE(h.update(0.0f, 1.45f, 2000));    // a knock: 450 mg over 1 g
-  TEST_ASSERT_FALSE(h.update(0.0f, 1.25f, 2400));   // 250 mg: under the limit, hold over
-  TEST_ASSERT_TRUE(h.update(0.0f, 0.5f, 2500));     // free fall direction counts too
-  TEST_ASSERT_TRUE(h.active());
+// Feeds `ms` of IMU samples at 100 Hz; gyro(tS) gives the angular velocity at time tS.
+// Returns true if the detector said "moving" at any sample; maxNet = the largest net speed.
+template <typename G>
+static bool feedImu(StillnessDetector &s, uint32_t &tMs, uint32_t ms, G gyro, float accelG,
+                    float *maxNet = nullptr) {
+  bool any = false;
+  for (uint32_t k = 0; k < ms / 10; k++, tMs += 10) {
+    float w[3] = {0.0f, 0.0f, 0.0f};
+    gyro(tMs / 1000.0f, w);
+    any |= s.update(w, accelG, tMs * 1000u, tMs);
+    if (maxNet && s.netDps() > *maxNet) *maxNet = s.netDps();
+  }
+  return any;
+}
+
+// A hand holding the ball still trembles: 10 Hz, 30 deg/s peak on one axis (above the
+// 20 deg/s limit sample by sample) plus a slow drift. The net speed stays far below.
+void test_stillness_ignores_hand_tremor() {
+  StillnessDetector s;
+  s.configure(StillnessParams());  // 20 deg/s, 300 mg, 300 ms, 100 ms
+  uint32_t t = 0;
+  auto tremor = [](float ts, float w[3]) {
+    w[0] = 30.0f * sinf(2.0f * (float)M_PI * 10.0f * ts);
+    w[1] = 3.0f;  // slow drift
+  };
+  float startMax = 0.0f, steadyMax = 0.0f;
+  const bool movedStart = feedImu(s, t, 500, tremor, 1.02f, &startMax);
+  const bool movedSteady = feedImu(s, t, 2500, tremor, 1.02f, &steadyMax);
+  // The same filter simulated in Python: 8.17 at the start (transient), 5.62 steady.
+  printf("tremor 10 Hz 30 deg/s peak + 3 deg/s drift: net speed max %.2f (first 0.5 s), "
+         "%.2f (steady) deg/s\n", startMax, steadyMax);
+  TEST_ASSERT_FALSE(movedStart || movedSteady);
+  TEST_ASSERT_TRUE(startMax < 10.0f);   // half the 20 deg/s limit, even in the transient
+  TEST_ASSERT_TRUE(steadyMax < 6.0f);
+}
+
+// The same tremor with a 10 ms window is no longer averaged out: the window matters.
+void test_stillness_short_window_lets_tremor_through() {
+  StillnessParams p;
+  p.windowMs = 10;
+  StillnessDetector s;
+  s.configure(p);
+  uint32_t t = 0;
+  TEST_ASSERT_TRUE(feedImu(s, t, 1000, [](float ts, float w[3]) {
+    w[0] = 30.0f * sinf(2.0f * (float)M_PI * 10.0f * ts);
+  }, 1.0f));
+}
+
+// A deliberate turn (60 deg/s) reads as moving within ~1 window, and the ball counts as
+// still again holdMs (plus the decay of the average) after the turn ends.
+void test_stillness_turn_and_hold() {
+  StillnessDetector s;
+  s.configure(StillnessParams());
+  uint32_t t = 0;
+  feedImu(s, t, 500, [](float, float w[3]) {}, 1.0f);  // still
+  TEST_ASSERT_FALSE(s.moving());
+  uint32_t firstMoving = 0;
+  for (uint32_t k = 0; k < 50; k++, t += 10) {  // 500 ms turn
+    const float w[3] = {0.0f, 0.0f, 60.0f};
+    if (s.update(w, 1.0f, t * 1000u, t) && firstMoving == 0) firstMoving = t;
+  }
+  TEST_ASSERT_TRUE(firstMoving > 0 && firstMoving - 500 <= 60);  // 60 deg/s: 20 reached in ~41 ms
+  uint32_t stillAt = 0;
+  for (uint32_t k = 0; k < 100 && stillAt == 0; k++, t += 10) {
+    const float w[3] = {0.0f, 0.0f, 0.0f};
+    if (!s.update(w, 1.0f, t * 1000u, t)) stillAt = t;
+  }
+  printf("60 deg/s turn: moving after %u ms; still again %u ms after it ended\n",
+         (unsigned)(firstMoving - 500), (unsigned)(stillAt - 1000));
+  TEST_ASSERT_TRUE(stillAt - 1000 >= 300 && stillAt - 1000 <= 450);
+}
+
+// A knock: one raw accelerometer sample 450 mg off 1 g is enough, held for holdMs.
+void test_stillness_knock_and_shake() {
+  StillnessDetector s;
+  s.configure(StillnessParams());
+  const float w0[3] = {0.0f, 0.0f, 0.0f};
+  TEST_ASSERT_FALSE(s.update(w0, 1.0f, 0, 1000));
+  TEST_ASSERT_TRUE(s.update(w0, 1.45f, 10000, 1010));  // knock
+  TEST_ASSERT_TRUE(s.update(w0, 1.0f, 300000, 1300));  // held 300 ms
+  TEST_ASSERT_FALSE(s.update(w0, 1.0f, 311000, 1311));
+  TEST_ASSERT_FALSE(s.update(w0, 1.25f, 320000, 1320));  // 250 mg: under the limit
+  TEST_ASSERT_TRUE(s.update(w0, 0.5f, 330000, 1330));    // the other way counts too
 }
 
 // Lags for a microphone spacing: one sample at 16 kHz is 343/16000 m = 21.4375 mm.
@@ -539,12 +616,16 @@ int main() {
   RUN_TEST(test_min_duration_fires_after_a_sustained_sound);
   RUN_TEST(test_min_duration_rejects_knocks_and_syllables);
   RUN_TEST(test_min_duration_restarts_after_a_coherent_stretch);
-  RUN_TEST(test_handling_raises_only_the_fire_line);
-  RUN_TEST(test_handling_boost_zero_changes_nothing);
-  RUN_TEST(test_handling_boost_adaptive);
   RUN_TEST(test_defaults_from_config);
-  RUN_TEST(test_handling_detector_gyro_accel_and_hold);
   RUN_TEST(test_corr_lags_for_spacing);
   RUN_TEST(test_window_coherence_pools_cross_sums);
+  RUN_TEST(test_still_only_blocks_while_moving);
+  RUN_TEST(test_still_only_off_reports_but_fires);
+  RUN_TEST(test_moving_breaks_the_duration);
+  RUN_TEST(test_still_only_adaptive);
+  RUN_TEST(test_stillness_ignores_hand_tremor);
+  RUN_TEST(test_stillness_short_window_lets_tremor_through);
+  RUN_TEST(test_stillness_turn_and_hold);
+  RUN_TEST(test_stillness_knock_and_shake);
   return UNITY_END();
 }

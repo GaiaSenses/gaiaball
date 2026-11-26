@@ -379,7 +379,7 @@ void ImuService::processSample(uint32_t tUs) {
   ImuSample s;
   s.tUs = tUs;
   filterAccel(accRaw, s.acc);
-  s.gyroDps = sqrtf(gDps[0] * gDps[0] + gDps[1] * gDps[1] + gDps[2] * gDps[2]);
+  for (int i = 0; i < 3; i++) s.gyroDps[i] = gDps[i];
   s.accelG = sqrtf(accelG[0] * accelG[0] + accelG[1] * accelG[1] + accelG[2] * accelG[2]);
   s.flags = nine ? kImuNineAxis : 0;
 
