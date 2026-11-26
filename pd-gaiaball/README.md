@@ -6,6 +6,10 @@ pacotes ao objeto `[gaiaball]`, que publica cada valor num nome: no seu patch, b
 `[r gaia.lat]`, `[r gaia.co2]`, `[r gaia.breath]`… Não há terminal, Python nem programa
 extra: só o Pd e o navegador. Nada é escrito na bola; o objeto só escuta.
 
+O `[gaiaball]` é uma **abstração**: um patch (`gaiaball.pd`) feito só com objetos que já vêm
+com o Pd vanilla 0.51 ou mais novo. Não há nada para compilar, e o mesmo arquivo funciona em
+qualquer sistema e processador.
+
 > **Primeira vez com a bola ou com o Pd?** Comece pelo [`TUTORIAL.md`](TUTORIAL.md): um
 > passo a passo para músicos, sem jargão, com todos os dados (o que são, unidade, faixa e
 > quantas vezes por segundo chegam), receitas e seis patches prontos na pasta
@@ -24,12 +28,37 @@ computador.
 
 ## Como usar
 
-### 1. Instalar o `[gaiaball]` pelo Deken (uma vez)
+### 1. Instalar o `[gaiaball]` (uma vez)
 
-1. Abra o Pd (Pd vanilla 0.51 ou mais novo).
-2. **Ajuda → Encontrar externals** (no Pd em inglês: *Help → Find externals*).
-3. Procure `gaiaball` e clique em **Instalar**. Se o Pd perguntar se deve acrescentar a
-   pasta ao caminho de busca, responda que sim.
+**Pelo Deken**, quando a versão estiver lá: no Pd, **Ajuda → Encontrar externals** (no Pd
+em inglês: *Help → Find externals*), procure `gaiaball` e clique em **Instalar**. O Deken
+põe a pasta `gaiaball` numa pasta que o Pd já procura; se ele perguntar se deve acrescentar
+a pasta ao caminho de busca, tanto faz.
+
+**Pelo pacote da página de versões**
+(<https://github.com/GaiaSenses/gaiaball/releases>): baixe `pd-gaiaball-<versão>.zip`, que
+serve para todos os sistemas, e copie a pasta `gaiaball` que vem dentro dele para a pasta
+de objetos que o Pd procura sozinho:
+
+| Sistema | Copie a pasta `gaiaball` para | O objeto fica em |
+|---|---|---|
+| Windows | `%AppData%\Pd` | `C:\Users\<você>\AppData\Roaming\Pd\gaiaball\gaiaball.pd` |
+| macOS | `~/Library/Pd` (no Finder, **Biblioteca**) | `~/Library/Pd/gaiaball/gaiaball.pd` |
+| Linux | `~/.local/lib/pd/extra` (ou `~/pd-externals`) | `~/.local/lib/pd/extra/gaiaball/gaiaball.pd` |
+
+Crie a pasta `Pd` (ou `extra`) se ela não existir. Não é preciso mexer em **Preferências →
+Caminho**: essas pastas são os "caminhos padrão" do Pd, e o Pd acha `gaiaball/gaiaball.pd`
+dentro delas sozinho. O `LEIA-ME.html` do pacote mostra cada passo, sistema por sistema.
+
+**Direto do repositório**: copie a pasta `pd-gaiaball` inteira (ou só o `gaiaball.pd` e o
+`gaiaball-help.pd`) para a pasta do seu patch, ou ponha a pasta em **Preferências →
+Caminho**.
+
+> **Tinha o `[gaiaball]` antigo, compilado?** Apague antes os arquivos `gaiaball.dll`,
+> `gaiaball.pd_darwin`, `gaiaball.pd_linux` e `gaiaball.*.so`, inclusive os que estiverem
+> na pasta dos seus patches. Se um deles ficar ao lado do `gaiaball.pd` ou mais acima no
+> caminho de busca, o Pd carrega o binário antigo no lugar da abstração. O antigo se
+> denuncia escrevendo `gaiaball: aguardando a config-app em ws://...` no console.
 
 ### 2. Abrir a config-app e conectar a bola
 
@@ -47,15 +76,19 @@ config-app procura o Pd sozinha a cada 2 segundos, enquanto a bola estiver conec
 Crie um objeto `[gaiaball]` em qualquer patch e deixe esse patch aberto. Um só basta: os
 nomes `gaia.*` valem para todos os patches abertos no mesmo Pd. Clique com o botão
 direito no objeto → **Ajuda** para abrir o patch de ajuda, que mostra todos os canais
-funcionando e tem um botão que abre a config-app.
+funcionando e tem um botão que abre a config-app. Fora do modo de edição, um clique no
+`[gaiaball]` abre a janela dele, com o estado da conexão e o botão **reconectar**.
 
 - `[gaiaball]` escuta na porta 9478, a padrão da config-app.
 - `[gaiaball 9500]` escuta na porta 9500. Nesse caso, mude também a porta na config-app
-  (painel Conexão → Pd → Porta).
-- Só um `[gaiaball]` por porta escuta de cada vez. Se já houver outro (por exemplo, o do
-  patch de ajuda), o novo avisa `gaiaball: porta 9478 em uso` uma vez no console e espera:
-  quando o primeiro for apagado ou o patch dele for fechado, o que esperava assume a porta
-  sozinho, em até 2 segundos.
+  (painel Conexão → Pd → Porta). Use um número inteiro de 1 a 65535.
+- **Só um `[gaiaball]` por porta escuta.** O segundo fica parado, e o console pode mostrar
+  `netreceive: listen failed: Address already in use` (no Linux e no macOS; o Windows pode
+  não avisar). Enquanto o primeiro estiver aberto, os dados chegam do mesmo jeito. O
+  segundo **não** assume a porta sozinho quando o primeiro é fechado: abra o que ficou
+  (clique nele) e clique em **reconectar**.
+- **O patch de ajuda não ocupa a porta.** Ele só cria um `[gaiaball]` próprio quando você
+  liga a chave **TESTAR DAQUI**, e o apaga quando você a desliga ou fecha a ajuda.
 
 ### 4. Liberar o Chrome (uma vez)
 
@@ -66,8 +99,8 @@ indicador no alto da config-app mostra "Pd: bloqueado pelo Chrome".
 Se você bloqueou sem querer: clique no ícone à esquerda do endereço → **Configurações do
 site** → **Apps neste dispositivo** → **Permitir**, e recarregue a página.
 
-Pronto: o indicador mostra "Pd: conectado · N pacotes/s", e o outlet do `[gaiaball]`
-manda `connected 1`.
+Pronto: o indicador mostra "Pd: conectado · N pacotes/s", e a saída do `[gaiaball]` manda
+`connected 1`.
 
 **Para testar sem bola:** abra a config-app com `?demo=1` no fim do endereço
 (`https://gaiasenses.github.io/gaiaball/?demo=1`). Ela gera dados sintéticos e também
@@ -105,7 +138,10 @@ por segundo. Não há zona morta: para ignorar valores repetidos, use `[change]`
 - **Na desconexão**, `gaia.breath` e `gaia.co2.trigger` recebem 0 uma vez, para nenhum 1
   ficar preso no patch. Os outros canais mantêm o último valor.
 
-## Outlet de status
+## Saída de status
+
+A saída do `[gaiaball]` manda estas mensagens. As mesmas chegam em `[r gaiaball.status]`,
+de qualquer `[gaiaball]` aberto.
 
 | Mensagem | Quando |
 |---|---|
@@ -114,20 +150,22 @@ por segundo. Não há zona morta: para ignorar valores repetidos, use `[change]`
 | `rate N` | uma vez por segundo, enquanto conectado: pacotes recebidos no último segundo (movimento + navegação + CO₂; com a bola no padrão, cerca de 100) |
 | `gap N` | junto com o `rate`: o maior intervalo sem pacotes no último segundo, em milissegundos |
 
-Uma conexão nova só substitui a anterior depois de completar o aperto de mão do
-WebSocket: se duas abas da config-app tentarem enviar ao
-mesmo tempo, vale a mais recente. Feche as outras.
+**Uma conexão de cada vez.** O `[gaiaball]` atende um cliente por vez: se um segundo
+conectar, os dois caem, e a config-app reconecta sozinha em 2 s. Por isso deixe só uma aba
+da config-app com **Enviar ao Pd** ligada: com duas, elas se derrubam.
 
 ## Solução de problemas
 
 | Sintoma | Causa provável e o que fazer |
 |---|---|
-| O Pd diz `gaiaball ... couldn't create` | o objeto não está instalado ou a pasta não está no caminho do Pd. Instale pelo Deken (passo 1) e confira em Preferências → Caminho. |
-| O console diz `gaiaball: porta 9478 em uso` | outro `[gaiaball]` já escuta nessa porta (por exemplo, em outro patch aberto, ou no patch de ajuda). Não atrapalha: os `[r gaia.*]` recebem do que está escutando, e o outro assume a porta sozinho quando o primeiro for fechado. Se a porta estiver com outro programa, escolha outra porta nos dois lados: `[gaiaball 9500]` e a mesma porta na config-app. |
-| A config-app mostra "Pd: aguardando" | o Pd não está aberto, não há `[gaiaball]` em nenhum patch aberto, ou as portas são diferentes nos dois lados. |
+| O Pd diz `gaiaball ... couldn't create` | o Pd não achou o `gaiaball.pd`. Confira a pasta (tabela do passo 1, sem uma pasta a mais no meio) e, em Preferências → Caminho, que **Usar caminhos padrão** está ligado. |
+| O console diz `gaiaball: aguardando a config-app em ws://...` | é o `[gaiaball]` antigo, compilado. Apague os binários antigos (passo 1). |
+| O console diz `netreceive: listen failed: Address already in use` | outro `[gaiaball]` (em outro patch aberto) já escuta nessa porta. Não atrapalha enquanto ele estiver aberto. Se você fechar aquele patch, clique no `[gaiaball]` que ficou e em **reconectar**. Se a porta estiver com outro programa, use outra porta nos dois lados: `[gaiaball 9500]` e a mesma porta na config-app. |
+| A config-app mostra "Pd: aguardando" | o Pd não está aberto, não há `[gaiaball]` escutando em nenhum patch aberto (veja a linha anterior), ou as portas são diferentes nos dois lados. |
 | A config-app mostra "Pd: bloqueado pelo Chrome" | a permissão "Apps neste dispositivo" foi negada. Libere como no passo 4 e recarregue a página. |
 | A config-app mostra "Pd: desligado" | a chave Enviar ao Pd está desligada. |
 | A config-app mostra "Pd: aguardando a bola" | a chave está ligada, mas a bola ainda não foi conectada na config-app: clique em **Conectar**. |
+| `connected 1` e `connected 0` se alternando | duas abas (ou dois navegadores) com Enviar ao Pd ligado: uma derruba a outra. Deixe só uma. |
 | `connected 1`, mas `gaia.lat` e `gaia.lon` não chegam | a navegação está desligada na bola. Na config-app, desbloqueie com o PIN e escolha a navegação Espelho ou Joystick. |
 | `gaia.mic.*` não chega | os microfones não funcionaram quando a bola ligou (a bola deixa de mandar esses canais), ou o sensor de movimento está desligado (eles viajam no pacote de movimento). Desligar o "Detector de sopro" não para esses canais. Confira os microfones no painel "Sensores em tempo real" da config-app e, se preciso, reinicie a bola. |
 | `rate` baixo ou `gap` alto | a página ficou lenta. Feche outras abas pesadas e deixe só uma aba da config-app enviando. |
@@ -142,11 +180,9 @@ dispositivo**, porque o endereço definitivo da config-app ainda não foi defini
 dados falsos ao seu patch.
 
 Um navegador que não pede essa permissão deixa **qualquer página aberta** chegar ao
-objeto. Uma página assim pode mandar dados falsos ou cortar os dados de verdade: ao
-completar o aperto de mão do WebSocket, ela substitui a conexão anterior. Uma conexão
-que não completa o aperto de mão (um `fetch`, uma imagem, uma varredura de portas) não
-corta mais os dados: ela é descartada em 3 s e só uma fica esperando por vez. Por isso, durante uma apresentação, feche as páginas
-que você não conhece.
+objeto. Uma página assim pode mandar dados falsos ou cortar os dados de verdade: basta ela
+abrir uma segunda conexão para as duas caírem. Por isso, durante uma apresentação, feche as
+páginas que você não conhece.
 
 ## Para quem mantém o projeto
 
@@ -154,56 +190,89 @@ que você não conhece.
 
 | Arquivo | O que é |
 |---|---|
-| `gaiaball.c` | a classe do Pd: servidor WebSocket só em `127.0.0.1`, sem threads (os sockets entram no laço do próprio Pd) |
-| `src/gb_decode.{h,c}` | decodificador dos pacotes da bola, independente do transporte |
-| `src/gb_ws.{h,c}`, `src/gb_sha1.{h,c}`, `src/gb_base64.{h,c}` | o protocolo WebSocket (RFC 6455) mínimo, sem sockets |
+| `gaiaball.pd` | a abstração. **Gerada**: não edite à mão |
+| `tools/gerar_patch.py` | o gerador do `gaiaball.pd` (Python 3, sem dependências) |
 | `gaiaball-help.pd` | patch de ajuda (botão direito no objeto → Ajuda) |
-| `Makefile` | compilação com o `pd-lib-builder` e o alvo `test` |
-| `pd-lib-builder/` | submódulo git com o sistema de compilação de externals do Pd |
-| `tests/` | testes em C do decodificador e do WebSocket; `tests/e2e/` tem o teste ponta a ponta com o Pd |
-| [`PUBLICAR-NO-DEKEN.md`](PUBLICAR-NO-DEKEN.md) | como publicar uma versão nova no Deken |
+| `exemplos/` | os seis patches do tutorial |
+| `TUTORIAL.md` | o passo a passo para músicos |
+| `tests/e2e.mjs`, `tests/imprime.pd`, `tests/objeto.pd` | teste ponta a ponta num Pd de verdade |
+| `tests/ajuda.mjs` | teste do patch de ajuda (não pode ocupar a porta ao abrir) |
+| `pacotes/` | o que monta o pacote da página de versões e o do Deken (`montar.py`, `LEIA-ME.md`, `NOTAS-DA-VERSAO.md`, `estilo.css`, `filtro.lua`) |
+| [`PUBLICAR-NO-GITHUB.md`](PUBLICAR-NO-GITHUB.md) | como publicar uma versão na página de versões do GitHub |
+| [`PUBLICAR-NO-DEKEN.md`](PUBLICAR-NO-DEKEN.md) | como enviar a versão ao Deken |
 
-### Compilar e testar
+### Como o `gaiaball.pd` funciona
 
-```sh
-git submodule update --init                       # traz o pd-lib-builder
-make -C pd-gaiaball                               # compila o external
-make -C pd-gaiaball PDINCLUDEDIR=<pure-data>/src  # se o m_pd.h não for achado sozinho
-make -C pd-gaiaball floatsize=64 extension=linux-amd64-64.so   # Pd de precisão dupla
-make -C pd-gaiaball test                          # testes em C; não precisam do Pd
-```
+- `[pd rede]`: `[netreceive -b]` escuta só em 127.0.0.1, na porta do argumento (padrão
+  9478). Atende um cliente por vez: se um segundo conectar, os dois caem e a config-app
+  reconecta sozinha em 2 s. O botão **reconectar** manda `listen` de novo.
+- `[pd http]` + `[pd sha1]`: o aperto de mão do WebSocket (RFC 6455). O SHA-1 e o base64
+  são calculados com `[expr]`. Como o Pd guarda os números em float de 32 bits (inteiros
+  exatos só até 2²⁴), cada palavra de 32 bits vira duas metades de 16 bits. Roda uma vez
+  por conexão.
+- `[pd websocket]`: lê os quadros byte a byte, numa máquina de estados dentro de um único
+  `[expr]`. Também responde a ping e a close, e derruba a conexão num quadro sem máscara.
+- `[pd pacotes]`: decodifica os pacotes `0x01` (movimento, v2), `0x02` (CO₂) e `0x07`
+  (navegação) como diz [`firmware/docs/protocol.md`](../firmware/docs/protocol.md). Bytes a
+  mais (campos futuros) são ignorados; pacotes curtos ou de outra versão são descartados.
+- `[pd estado]`: `connected`, `rate` e `gap`, na saída e em `[r gaiaball.status]`.
 
-O `PDINCLUDEDIR` pode apontar para a pasta `src/` do código-fonte do Pd
-(`git clone --depth 1 --branch 0.55-2 https://github.com/pure-data/pure-data`). No
-Windows, compile com o MSYS2 (MinGW64); o `Makefile` acrescenta o `ws2_32`.
+O `[netreceive]` não avisa o patch quando a porta não abre, e por isso o `[gaiaball]` não
+consegue esperar a porta ficar livre e assumi-la, como o antigo objeto compilado fazia.
+Daí o patch de ajuda só criar o seu servidor sob demanda.
 
-**Ponta a ponta, sem bola e sem navegador** (Linux, com o Pd instalado):
-
-```sh
-pd -nogui -stderr -path pd-gaiaball -open pd-gaiaball/tests/e2e/listen.pd &
-node pd-gaiaball/tests/e2e/send-goldens.mjs
-```
-
-O script faz o aperto de mão como o Chrome, manda os pacotes de referência e testa: a
-segunda conexão substituindo a primeira, uma conexão TCP sem aperto de mão que não
-derruba o cliente e é fechada em cerca de 3 s, o silêncio de 2 s, o fechamento, um quadro de
-texto (recusado) e, por fim, a troca de objeto: ele apaga o primeiro `[gaiaball]` do
-`listen.pd` (mensagem `clear` pela porta 9479) e confere que o segundo assume a porta.
-Com `--spawn`, ele mesmo abre o Pd e confere tudo o que o `listen.pd` imprime:
+**Para mudar o patch**, edite `tools/gerar_patch.py` e rode:
 
 ```sh
-node pd-gaiaball/tests/e2e/send-goldens.mjs --spawn pd -nogui -stderr \
-  -path pd-gaiaball -open pd-gaiaball/tests/e2e/listen.pd
+python3 pd-gaiaball/tools/gerar_patch.py
 ```
+
+Faça o commit do gerador e do `gaiaball.pd` juntos. O CI roda o gerador de novo e falha se
+o resultado for diferente do `gaiaball.pd` do commit, mesmo que num byte só.
+
+### Testes
+
+```sh
+node pd-gaiaball/tests/e2e.mjs --pd /caminho/do/pd             # gaiaball.pd aberto como patch
+node pd-gaiaball/tests/e2e.mjs --pd /caminho/do/pd --objeto    # [gaiaball] criado como objeto
+node pd-gaiaball/tests/ajuda.mjs --pd /caminho/do/pd           # a ajuda não ocupa a porta
+node pd-gaiaball/tests/ajuda.mjs --pd /caminho/do/pd --com-objeto
+```
+
+O `e2e.mjs` abre o Pd sem interface (`-nogui -noprefs`) e faz o aperto de mão como o
+Chrome. Ele confere:
+
+- a chave da RFC 6455 e mais 40 chaves aleatórias, contra o `node:crypto`;
+- os pacotes de referência do protocolo e os ângulos de Euler, contra a convenção do site
+  (`config-app/src/protocol/euler.ts`);
+- pedido HTTP e quadros partidos em vários pedaços, quadro com tamanho de 16 bits;
+- ping, close, quadro sem máscara, pedido sem chave e dois clientes ao mesmo tempo;
+- silêncio de 2 s e o ritmo de 100 pacotes/s;
+- com `--objeto`: o `[gaiaball]` achado pelo caminho de busca e as mensagens da saída.
+  Com `--objeto --instalado`, sem nenhum `-path`: serve para testar um pacote instalado
+  nos caminhos padrão (no Linux, com `HOME` apontando para uma pasta de teste).
+
+O `ajuda.mjs` abre uma cópia do patch de ajuda e confere que a porta 9478 fica livre até a
+chave **TESTAR DAQUI** ser ligada, que o `[gaiaball]` dela responde e que desligar libera a
+porta. Com `--com-objeto`, um patch com `[gaiaball]` abre antes, e o dele continua
+respondendo com a chave ligada ou desligada.
+
+### Pacotes e versões
+
+`python3 pd-gaiaball/pacotes/montar.py <versão> <pasta>` monta o `.zip` da página de
+versões (um só para todos os sistemas), o pacote do Deken, as somas SHA-256 e as notas da
+versão. O CI faz isso a cada mudança e, numa tag `v*`, cria um **rascunho** de versão no
+GitHub. O passo a passo está em [`PUBLICAR-NO-GITHUB.md`](PUBLICAR-NO-GITHUB.md) e em
+[`PUBLICAR-NO-DEKEN.md`](PUBLICAR-NO-DEKEN.md).
 
 ### Notas de projeto
 
 - A fonte da verdade do protocolo é [`firmware/docs/protocol.md`](../firmware/docs/protocol.md).
-  O decodificador confere versão e tipo, aceita pacotes maiores que o mínimo (campos
-  novos são ignorados) e descarta o resto sem travar.
 - A config-app repassa só os pacotes de movimento (`0x01`), CO₂ (`0x02`) e navegação
   (`0x07`), sem alterar, um por mensagem binária.
 - O objeto não confere a origem da página (o domínio definitivo ainda não existe). A
   proteção é escutar só em `127.0.0.1` e o pedido "Apps neste dispositivo" do Chrome.
 - A bola aceita duas conexões Bluetooth ao mesmo tempo: por exemplo, a config-app (que
   alimenta o Pd) e o site GaiaSenses.
+- Antes desta abstração, o `[gaiaball]` era um external em C (`gaiaball.c`, `src/gb_*`,
+  compilado com o pd-lib-builder). Ele foi retirado; o código continua no histórico do git.
