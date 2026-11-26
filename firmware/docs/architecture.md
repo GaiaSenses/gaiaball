@@ -83,11 +83,12 @@ silently (it is a sealed sphere in an exhibition: auto-recovery beats a frozen b
   breath shorter than one notify interval still reaches the next packet. The effective
   trigger level for the SensorsPacket is a third atomic; the window's L/R coherence and the
   discriminators' status bits (v10) are two more, read by `sendSensors`.
-- **App → Audio (handling, v10)**: every IMU sample carries the bias-corrected angular speed
-  and the raw accelerometer magnitude (`ImuSample::gyroDps`, `accelG`, never on the wire).
-  `App::handleImuSample` feeds them, unthrottled, to its `HandlingDetector` (App task only)
-  and stores the result with `AudioService::setHandling()`, an `std::atomic<bool>` the audio
-  task reads on every detector update to raise the fire line.
+- **App → Audio (stillness, v10)**: every IMU sample carries the bias-corrected angular
+  velocity vector and the raw accelerometer magnitude (`ImuSample::gyroDps[3]`, `accelG`, never
+  on the wire). `App::handleImuSample` feeds them, unthrottled, to its `StillnessDetector` (App
+  task only) and stores "moving" with `AudioService::setMoving()`, an `std::atomic<bool>` the
+  audio task reads on every detector update (with TLV 0x3D on, nothing fires while it is
+  set). `sendSensors` reads the detector's net speed directly: same task.
 - **Audio → App (envelope)**: the audio task publishes the pooled levels (RMS and
   peak per channel) into four `std::atomic<float>`; the App task snapshots them with
   `AudioService::levels()` and appends them to the ImuPacket it was already sending.

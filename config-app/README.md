@@ -134,15 +134,20 @@ sons"**, cada um com seu interruptor (desligado = comportamento de antes):
   na placa do KiCAD) define os atrasos que a coerência procura.
 - **Duração mínima do sopro** (padrão 120 ms): o som precisa ficar acima da linha, sem
   interrupção, por esse tempo. Rejeita batidas e sílabas; todo sopro chega esse tempo depois.
-- **Manuseio** (padrão +12 dB): enquanto o IMU vê a bola girando (acima de 30 °/s) ou batendo
-  (mais de 300 mg longe de 1 g), e por mais 300 ms, a linha de disparo sobe 12 dB.
+- **Sopro só com a bola parada** (ligado por padrão): o artista só sopra com a bola parada na
+  mão, e girar a bola é navegar o globo. Enquanto o IMU vê a bola em movimento nada dispara, e o
+  sopro só vale depois que ela fica parada por 300 ms. "Em movimento" é a rotação **líquida**
+  acima de 20 °/s (a velocidade angular em média como vetor, com constante de 100 ms: o tremor
+  da mão, de 8–12 Hz, vai e volta e se cancela; um giro de verdade se soma) ou uma batida
+  (aceleração a mais de 300 mg de 1 g). Nos testes, um tremor de 30 °/s instantâneos dá ~5,6 °/s
+  líquidos e nunca conta como movimento; um giro de 60 °/s é percebido em 40 ms.
 
 O cartão **Sopro: descarte**, no painel Sensores, mostra ao vivo a coerência dos microfones
 (barra, de 0 a 1) com o limite da Configuração marcado (o traço mexe enquanto o campo é
 editado, antes de aplicar), o estado do detector (abaixo da linha, acima da linha,
-aguardando a duração, bloqueado por som de longe) e se a bola está sendo manuseada agora. A
-linha de disparo nos gráficos dos microfones já sobe durante o manuseio. Os valores padrão
-são estimativas e ainda não foram ajustados com a bola.
+aguardando a duração, bloqueado por som de longe, bloqueado por bola em movimento) e a
+rotação líquida da bola ao vivo contra o limite, dizendo se ela conta como parada. Os
+valores padrão são estimativas e ainda não foram ajustados com a bola.
 
 O nível efetivo de disparo do detector, o potenciômetro, a coerência e o estado dos critérios
 do sopro chegam num pacote próprio (`SensorsPacket`, 5 Hz, na característica de diagnóstico — ver
