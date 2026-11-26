@@ -39,7 +39,7 @@ import {
   SENSORS_PACKET_V10_SIZE,
   BREATH_GATE_OVER,
   BREATH_GATE_COHERENT,
-  BREATH_GATE_HANDLING,
+  BREATH_GATE_MOVING,
   BREATH_GATE_WAITING,
 } from './packets.ts';
 
@@ -101,7 +101,7 @@ export function encodeNavPacket(s: Omit<NavSample, 'flags'> & { flags?: number }
 
 /** The v10 packet (25 bytes) when the sample has a coherence or a gate, else the 23-byte one. */
 export function encodeSensorsPacket(s: Omit<SensorsSample, 'flags'> & { flags?: number }): Uint8Array {
-  const v10 = s.coherence !== null || s.gate !== null;
+  const v10 = s.coherence !== null || s.gate !== null || s.motionDps !== null;
   const dv = start(v10 ? SENSORS_PACKET_V10_SIZE : SENSORS_PACKET_MIN_SIZE, PKT_SENSORS, PROTOCOL_VERSION, s.seq);
   dv.setUint32(4, s.tMs >>> 0, true);
   dv.setUint32(8, s.rmsL >>> 0, true);
@@ -118,8 +118,9 @@ export function encodeSensorsPacket(s: Omit<SensorsSample, 'flags'> & { flags?: 
     const g = s.gate;
     dv.setUint8(24, g ? bits([
       [g.over, BREATH_GATE_OVER], [g.coherent, BREATH_GATE_COHERENT],
-      [g.handling, BREATH_GATE_HANDLING], [g.waiting, BREATH_GATE_WAITING],
+      [g.moving, BREATH_GATE_MOVING], [g.waiting, BREATH_GATE_WAITING],
     ]) : 0);
+    dv.setUint8(25, clamp(Math.round(s.motionDps ?? 0), 0, 255));
   }
   return bytes(dv);
 }

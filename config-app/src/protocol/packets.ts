@@ -19,8 +19,8 @@ export const IMU_PACKET_MIN_SIZE = 27;
 export const CO2_PACKET_MIN_SIZE = 12;
 export const DIAG_PACKET_MIN_SIZE = 34;
 export const SENSORS_PACKET_MIN_SIZE = 23;
-/** Since firmware v10 the packet carries the coherence and the breath gate (append-only). */
-export const SENSORS_PACKET_V10_SIZE = 25;
+/** Since firmware v10 the packet carries the coherence, the breath gate and the ball's net angular speed (append-only). */
+export const SENSORS_PACKET_V10_SIZE = 26;
 export const AUDIO_PACKET_MIN_SIZE = 208;
 export const AUDIO_CHUNK_SAMPLES = 96;
 export const NAV_PACKET_MIN_SIZE = 23;
@@ -95,7 +95,7 @@ export const SENS_FLAG_ADAPTIVE = 1 << 5;
 /** SensorsPacket.breathGate (byte 24): BreathDetector::status() in firmware logic/BreathDetector.h. */
 export const BREATH_GATE_OVER = 1 << 0;
 export const BREATH_GATE_COHERENT = 1 << 1;
-export const BREATH_GATE_HANDLING = 1 << 2;
+export const BREATH_GATE_MOVING = 1 << 2;
 export const BREATH_GATE_WAITING = 1 << 3;
 export const AUDIO_FLAG_BPF_ENABLED = 1 << 0;
 
@@ -229,6 +229,8 @@ export interface SensorsSample {
   coherence: number | null;
   /** Breath discriminators' status (firmware v10); null from an older firmware. */
   gate: BreathGate | null;
+  /** The ball's net angular speed, tremor averaged out (firmware v10), deg/s, saturating at 255; null from an older firmware. */
+  motionDps: number | null;
 }
 
 /** What held a breath back, as of the detector's last update (SensorsPacket byte 24). */
@@ -237,8 +239,8 @@ export interface BreathGate {
   over: boolean;
   /** Over, but held back: the sound reaches both microphones alike (coherence at or above the limit). */
   coherent: boolean;
-  /** The IMU reports handling (the line is raised by the configured dB, if any). */
-  handling: boolean;
+  /** The IMU says the ball is moving (turned, knocked, shaken): with "only when still" on, nothing fires. */
+  moving: boolean;
   /** It qualifies and is waiting for the minimum duration (or the debounce). */
   waiting: boolean;
 }
@@ -247,7 +249,7 @@ export function decodeBreathGate(bits: number): BreathGate {
   return {
     over: (bits & BREATH_GATE_OVER) !== 0,
     coherent: (bits & BREATH_GATE_COHERENT) !== 0,
-    handling: (bits & BREATH_GATE_HANDLING) !== 0,
+    moving: (bits & BREATH_GATE_MOVING) !== 0,
     waiting: (bits & BREATH_GATE_WAITING) !== 0,
   };
 }
@@ -326,8 +328,8 @@ export function decodeSensorsPacket(dv: DataView): SensorsSample | null {
     metricPeak: (flags & SENS_FLAG_METRIC_PEAK) !== 0,
     adaptive: (flags & SENS_FLAG_ADAPTIVE) !== 0,
     ...(dv.byteLength >= SENSORS_PACKET_V10_SIZE
-      ? { coherence: Math.min(100, dv.getUint8(23)) / 100, gate: decodeBreathGate(dv.getUint8(24)) }
-      : { coherence: null, gate: null }),
+      ? { coherence: Math.min(100, dv.getUint8(23)) / 100, gate: decodeBreathGate(dv.getUint8(24)), motionDps: dv.getUint8(25) }
+      : { coherence: null, gate: null, motionDps: null }),
   };
 }
 

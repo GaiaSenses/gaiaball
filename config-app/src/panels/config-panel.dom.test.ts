@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 // The real panel mounted in a DOM: markers, Aplicar (n), keep-edits vs explicit read, presets.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { mountConfigPanel } from './config-panel';
+import { mountConfigPanel, type BreathForm } from './config-panel';
 import { PresetStore } from '../presets/preset-store';
 import { demoConfigRegs, demoWrite } from '../demo-config';
 import { TLV, type TlvWrite } from '../protocol/tlv';
@@ -338,17 +338,26 @@ describe('breath discriminators (firmware v10)', () => {
     expect(toggleOf(COH)).toBeTruthy();
   });
 
-  it('the coherence source follows the form: a limit, or null when off', () => {
+  it('the breath source follows the form: coherence limit (null when off), still only, rotation limit', () => {
     document.body.innerHTML = '<div id="root"></div>';
     root = document.getElementById('root')!;
     client = new FakeClient();
-    const seen: (number | null)[] = [];
-    const { coherence } = mountConfigPanel(root, client as unknown as GaiaballClient, new PresetStore());
-    coherence.subscribe((l) => seen.push(l));
+    const seen: BreathForm[] = [];
+    const { breath } = mountConfigPanel(root, client as unknown as GaiaballClient, new PresetStore());
+    breath.subscribe((b) => seen.push(b));
     client.status(true);
     client.config(ballRegs([{ id: COH, value: 35 }]));
-    expect(seen.at(-1)).toBeCloseTo(0.35, 9);
-    client.config(ballRegs([{ id: COH, value: 100 }]));
-    expect(seen.at(-1)).toBeNull();
+    expect(seen.at(-1)).toEqual({ coherenceLimit: 0.35, stillOnly: true, maxDps: 20 });
+    client.config(ballRegs([{ id: COH, value: 100 }, { id: TLV.breathStillOnly, value: 0 }, { id: TLV.stillMaxDps, value: 45 }]));
+    expect(seen.at(-1)).toEqual({ coherenceLimit: null, stillOnly: false, maxDps: 45 });
+  });
+
+  it('"Sopro só com a bola parada" governs the four stillness thresholds', () => {
+    client.status(true);
+    client.config(ballRegs([{ id: TLV.breathStillOnly, value: 0 }]));
+    for (const id of [TLV.stillMaxDps, TLV.stillMaxAccelMg, TLV.stillHoldMs, TLV.stillWindowMs]) expect(input(id).disabled).toBe(true);
+    client.config(ballRegs([{ id: TLV.breathStillOnly, value: 1 }]));
+    for (const id of [TLV.stillMaxDps, TLV.stillMaxAccelMg, TLV.stillHoldMs, TLV.stillWindowMs]) expect(input(id).disabled).toBe(false);
+    expect(applyLabel()).toBe('Aplicar');
   });
 });

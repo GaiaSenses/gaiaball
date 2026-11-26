@@ -35,14 +35,16 @@ export const TLV = {
   audioHpSlopeDbOct: 0x38, // 6, 12, 18, 24, 36 or 48 dB/octave (any other value fails the whole write)
   audioLpSlopeDbOct: 0x39,
   // Breath discriminators (firmware v10): coherence limit x100 (100 = off), mic spacing in
-  // 0.1 mm, minimum duration ms (0 = off), handling boost dB (0 = off), handling thresholds.
+  // 0.1 mm, minimum duration ms (0 = off), breath only with the ball still (0/1) and what
+  // "still" means (net angular speed, acceleration, hold, tremor-averaging window).
   breathCoherenceMaxX100: 0x3a,
   micSpacingMmX10: 0x3b,
   breathMinDurationMs: 0x3c,
-  handlingBoostDb: 0x3d,
-  handlingGyroDps: 0x3e,
-  handlingAccelMg: 0x3f,
-  handlingHoldMs: 0x42,
+  breathStillOnly: 0x3d,
+  stillMaxDps: 0x3e,
+  stillMaxAccelMg: 0x3f,
+  stillHoldMs: 0x42,
+  stillWindowMs: 0x43,
   potEmaAlphaX1000: 0x1b,
   co2Enabled: 0x20,
   // 0x21 is reserved (was co2ChecksumVariant; the SC8-CO2-5K frame format is fixed).
@@ -132,10 +134,11 @@ const SPECS: Record<number, Spec> = {
   [TLV.breathCoherenceMaxX100]: U8,
   [TLV.micSpacingMmX10]: U16,
   [TLV.breathMinDurationMs]: U16,
-  [TLV.handlingBoostDb]: U8,
-  [TLV.handlingGyroDps]: U16,
-  [TLV.handlingAccelMg]: U16,
-  [TLV.handlingHoldMs]: U16,
+  [TLV.breathStillOnly]: U8,
+  [TLV.stillMaxDps]: U16,
+  [TLV.stillMaxAccelMg]: U16,
+  [TLV.stillHoldMs]: U16,
+  [TLV.stillWindowMs]: U16,
   [TLV.potEmaAlphaX1000]: U16,
   [TLV.co2EmaAlphaX1000]: U16,
   [TLV.co2TriggerPpm]: U16,

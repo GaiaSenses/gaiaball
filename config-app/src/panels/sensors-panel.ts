@@ -25,7 +25,7 @@ import {
 } from '../protocol/packets.ts';
 import { TLV } from '../protocol/tlv.ts';
 import { renderSwitch } from '../ui/switch.ts';
-import type { BandSource, Co2Source, CoherenceSource, FormBand, MetricSource } from './config-panel.ts';
+import type { BandSource, BreathForm, BreathSource, Co2Source, FormBand, MetricSource } from './config-panel.ts';
 import {
   HISTORY_S,
   MAX_DRAWN_POINTS,
@@ -174,8 +174,8 @@ export interface SensorsPanelOptions {
   co2?: Co2Source;
   /** RMS/Pico switch as the form shows it; without it the threshold line follows the ball's metric. */
   metric?: MetricSource;
-  /** Coherence limit as the form shows it, for the mark on the Sopro card. */
-  coherence?: CoherenceSource;
+  /** The breath discriminators as the form shows them (coherence limit, still only, rotation limit), for the Sopro card. */
+  breath?: BreathSource;
 }
 
 export function mountSensorsPanel(
@@ -208,7 +208,7 @@ export function mountSensorsPanel(
           <div class="reading reading-tick"><dt>Limite</dt><dd><span class="reading-word" data-el="lim-breath">—</span></dd></div>
         </dl>
         <div class="meter" aria-hidden="true"><span class="meter-fill" data-el="bar-breath"></span><span class="meter-peak" data-el="tick-breath" hidden></span></div>
-        <small><span data-el="hand-breath">Manuseio: —</span>. Perto de 1: o mesmo som nos dois microfones (voz, música, batida); perto de 0: turbulência diferente em cada um (sopro). Acima do limite, o sopro não dispara.</small>
+        <small><strong data-el="still-breath">Bola: —</strong><br>Coerência perto de 1: o mesmo som nos dois microfones (voz, música, batida); perto de 0: turbulência diferente em cada um (sopro). Acima do limite, o sopro não dispara.</small>
       </div>
     </div>
     <div class="spec-head">
@@ -629,8 +629,12 @@ export function mountSensorsPanel(
   });
   syncCo2Scale();
   opts.co2?.subscribe((c) => { formCo2 = c; syncCo2Scale(); });
-  // The coherence limit is a mark on the Sopro card; it follows the form, applied or not.
-  opts.coherence?.subscribe((limit) => {
+  // The coherence limit is a mark on the Sopro card, and "only when still" and the rotation
+  // limit go with the ball's state; all follow the form, applied or not.
+  let breathForm: BreathForm = { coherenceLimit: null, stillOnly: null, maxDps: null };
+  opts.breath?.subscribe((b) => {
+    breathForm = b;
+    const limit = b.coherenceLimit;
     const tick = q('[data-el=tick-breath]');
     tick.hidden = limit === null;
     if (limit !== null) tick.style.left = `${limit * 100}%`;
@@ -709,16 +713,22 @@ export function mountSensorsPanel(
       const gate = sensors.gate;
       q('[data-el=coh-breath]').textContent = coh === null ? '—' : fmt(coh, 2);
       q('[data-el=bar-breath]').style.width = `${(coh ?? 0) * 100}%`;
+      // With "only when still" off (or unknown) a moving ball blocks nothing.
+      const stillBlocks = breathForm.stillOnly !== false;
       const [gState, gTone] = gate === null ? ['firmware sem os critérios', 'warn']
         : !sensors.audioEnabled ? ['detector desligado', '']
         : gate.coherent ? ['bloqueado: som de longe', 'warn']
+        : gate.over && gate.moving && stillBlocks ? ['bloqueado: bola em movimento', 'warn']
         : gate.waiting ? ['acima da linha, aguardando', 'accent']
         : gate.over ? ['acima da linha', 'accent'] : ['abaixo da linha', ''];
       const stB = q('[data-el=st-breath]');
       stB.textContent = gState;
       stB.dataset.tone = gTone;
-      q('[data-el=hand-breath]').textContent = gate === null ? 'Manuseio: —'
-        : gate.handling ? 'Manuseio agora: sim' : 'Manuseio agora: não';
+      const dps = sensors.motionDps;
+      const lim = breathForm.maxDps !== null ? ` (limite ${fmtInt(breathForm.maxDps)})` : '';
+      q('[data-el=still-breath]').textContent = gate === null || dps === null ? 'Bola: —'
+        : `Bola: ${gate.moving ? 'em movimento' : 'parada'} · rotação ${fmtInt(dps)} °/s${lim}`
+          + (gate.moving && !stillBlocks ? ' · não bloqueia o sopro' : '');
     }
     if (co2) {
       // Where the number comes from: the virtual pulse wins, then a stale or invalid sensor.

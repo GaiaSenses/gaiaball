@@ -254,15 +254,16 @@ const GROUPS: Group[] = [
     { id: TLV.breathMinDurationMs, label: 'Duração mínima do sopro (ms)', kind: 'number', min: 0, max: 2000, step: 10,
       offValue: 0, onDefault: 120,
       info: 'O som precisa ficar acima da linha (e não coerente) sem interrupção por este tempo para o sopro disparar. A fala tem pausas entre as sílabas e uma batida acaba em dezenas de milissegundos; o sopro é contínuo. Todo sopro reconhecido passa a chegar este tempo mais tarde. 0 desliga. Unidade: milissegundos (ms), de 0 a 2000 (120 por padrão).' },
-    { id: TLV.handlingBoostDb, label: 'Manuseio: linha mais alta (dB)', kind: 'number', min: 0, max: 60, step: 1,
-      offValue: 0, onDefault: 12,
-      info: 'Enquanto a bola está sendo girada ou batida (medido pelo IMU), a linha de disparo do sopro sobe este tanto: dedos sobre a casca e sobre os furos dos microfones fazem barulho grave. Um sopro forte ainda dispara durante o manuseio; o barulho da mão sozinho, não. A linha de rearme não muda. 12 dB = linha 4 vezes mais alta. 0 desliga (o manuseio continua aparecendo no painel Sensores). Unidade: decibéis (dB), de 0 a 60.' },
-    { id: TLV.handlingGyroDps, label: 'Manuseio: rotação (°/s)', kind: 'number', min: 1, max: 2000,
-      info: 'Velocidade de rotação da bola, já sem o desvio do giroscópio, a partir da qual ela conta como manuseada. Parada na mão fica abaixo de ~10 °/s; um giro deliberado passa de 30. Unidade: graus por segundo (°/s), de 1 a 2000.' },
-    { id: TLV.handlingAccelMg, label: 'Manuseio: batida (mg)', kind: 'number', min: 10, max: 4000,
-      info: 'Quanto a aceleração pode se afastar de 1 g (a gravidade, que o acelerômetro lê em repouso em qualquer posição) antes de a bola contar como manuseada: pega batidas e sacudidas. Usa a leitura crua, antes dos filtros da aceleração publicada. Unidade: miligravidade (mg), de 10 a 4000.' },
-    { id: TLV.handlingHoldMs, label: 'Manuseio: tempo de espera (ms)', kind: 'number', min: 0, max: 5000, step: 10,
-      info: 'Depois do último giro ou batida, a bola continua contando como manuseada por este tempo, para o detector não ficar exposto nos intervalos de um gesto. Unidade: milissegundos (ms), de 0 a 5000.' },
+    { id: TLV.breathStillOnly, label: 'Sopro só com a bola parada', kind: 'checkbox',
+      info: 'O sopro só é reconhecido com a bola parada na mão: girar a bola é navegar o globo, e as mãos que giram fazem barulho grave (dedos sobre a casca e sobre os furos dos microfones, atrito, batidas). O tremor natural da mão não conta como movimento (veja “Parada: média do giro”). Enquanto a bola se move nada dispara, e o sopro só vale depois que ela fica parada pelo “Parada: tempo mínimo”. O painel Sensores mostra ao vivo a rotação da bola e se ela conta como parada. Liga/desliga, sem unidade.' },
+    { id: TLV.stillMaxDps, label: 'Parada: rotação máxima (°/s)', kind: 'number', min: 1, max: 2000,
+      info: 'Rotação LÍQUIDA (o tremor da mão já descontado) acima da qual a bola conta como em movimento. Parada na mão, com tremor, a rotação líquida fica perto de 5 °/s; um giro deliberado passa de 30. 20 é o mesmo valor em que o globo começa a se mover no modo Espelho. Unidade: graus por segundo (°/s), de 1 a 2000.' },
+    { id: TLV.stillMaxAccelMg, label: 'Parada: aceleração máxima (mg)', kind: 'number', min: 10, max: 4000,
+      info: 'Quanto a aceleração pode se afastar de 1 g (a gravidade, que o acelerômetro lê em repouso em qualquer posição) com a bola ainda contando como parada: pega batidas e sacudidas. Usa a leitura crua, amostra por amostra, antes dos filtros da aceleração publicada. Unidade: miligravidade (mg), de 10 a 4000.' },
+    { id: TLV.stillHoldMs, label: 'Parada: tempo mínimo (ms)', kind: 'number', min: 0, max: 5000, step: 10,
+      info: 'Quanto tempo a bola precisa ficar parada, depois do último giro ou batida, para um sopro poder disparar. Evita que o fim de um gesto conte como “parada”. Unidade: milissegundos (ms), de 0 a 5000.' },
+    { id: TLV.stillWindowMs, label: 'Parada: média do giro (ms)', kind: 'number', min: 10, max: 1000, step: 10,
+      info: 'Constante de tempo da média da velocidade de rotação (como vetor), que é o que separa o tremor do giro. A mão treme a 8–12 Hz, para lá e para cá, e essa média cancela o tremor (com 100 ms, um tremor de 10 Hz fica ~6 vezes menor), enquanto um giro de verdade se soma. Maior = tolera mais tremor, demora mais para perceber um giro (com 100 ms, um giro de 60 °/s é percebido em ~40 ms). Unidade: milissegundos (ms), de 10 a 1000.' },
   ] },
   { title: 'CO₂', fields: [
     { id: TLV.co2Enabled, label: 'Sensor de CO₂ (SC8)', kind: 'checkbox',
@@ -334,9 +335,10 @@ export const GOVERNORS: ReadonlyMap<number, readonly number[]> = new Map([
   [TLV.audioEnabled, [
     TLV.breathDetector, TLV.potControlsThreshold, TLV.breathMetric, TLV.breathThresholdNegDbX100,
     TLV.breathRearmDb, TLV.debounceMs, TLV.audioFastAlphaX1000, TLV.audioSlowAlphaX1000,
-    TLV.breathCoherenceMaxX100, TLV.micSpacingMmX10, TLV.breathMinDurationMs,
-    TLV.handlingBoostDb, TLV.handlingGyroDps, TLV.handlingAccelMg, TLV.handlingHoldMs,
+    TLV.breathCoherenceMaxX100, TLV.micSpacingMmX10, TLV.breathMinDurationMs, TLV.breathStillOnly,
+    TLV.stillMaxDps, TLV.stillMaxAccelMg, TLV.stillHoldMs, TLV.stillWindowMs,
   ]],
+  [TLV.breathStillOnly, [TLV.stillMaxDps, TLV.stillMaxAccelMg, TLV.stillHoldMs, TLV.stillWindowMs]],
   [TLV.audioBpfEnabled, [
     TLV.audioHpHz, TLV.audioHpSlopeDbOct, TLV.audioHpQX100, TLV.audioLpHz, TLV.audioLpSlopeDbOct, TLV.audioLpQX100,
   ]],
@@ -380,12 +382,22 @@ export interface Co2Source {
   /** Calls `fn` now and on every change of the two fields (typed, read from the ball, preset, default). */
   subscribe(fn: (c: Co2Levels) => void): void;
 }
-/** The coherence limit as the form shows it: 0..1, or null when off (1,00) or empty. */
-export interface CoherenceSource {
-  current(): number | null;
-  /** Calls `fn` now and on every change of the field (typed, read from the ball, preset, default). */
-  subscribe(fn: (limit: number | null) => void): void;
+/** The breath discriminators as the form shows them, for the Sopro card. */
+export interface BreathForm {
+  /** Coherence limit 0..1, or null when off (1,00) or empty. */
+  coherenceLimit: number | null;
+  /** "Sopro só com a bola parada"; null when not set. */
+  stillOnly: boolean | null;
+  /** Net angular speed above which the ball moves, deg/s; null when empty. */
+  maxDps: number | null;
 }
+export interface BreathSource {
+  current(): BreathForm;
+  /** Calls `fn` now and on every change of those fields (typed, read from the ball, preset, default). */
+  subscribe(fn: (b: BreathForm) => void): void;
+}
+/** Registers whose edits change the Sopro card's marks. */
+const BREATH_FORM_IDS: ReadonlySet<number> = new Set([TLV.breathCoherenceMaxX100, TLV.breathStillOnly, TLV.stillMaxDps]);
 /** The breath metric as the form shows it (true = peak, false = RMS, null = not set). */
 export interface MetricSource {
   current(): boolean | null;
@@ -460,10 +472,11 @@ export const FIELD_DEFAULTS: ReadonlyMap<number, number | string> = new Map<numb
   [TLV.breathCoherenceMaxX100, 60],
   [TLV.micSpacingMmX10, 154],
   [TLV.breathMinDurationMs, 120],
-  [TLV.handlingBoostDb, 12],
-  [TLV.handlingGyroDps, 30],
-  [TLV.handlingAccelMg, 300],
-  [TLV.handlingHoldMs, 300],
+  [TLV.breathStillOnly, 1],
+  [TLV.stillMaxDps, 20],
+  [TLV.stillMaxAccelMg, 300],
+  [TLV.stillHoldMs, 300],
+  [TLV.stillWindowMs, 100],
   [TLV.co2Enabled, 1],
   [TLV.co2StaleTimeoutMs, 5000],
   [TLV.virtualPeakPpm, 2100],
@@ -575,7 +588,7 @@ export function mountConfigPanel(
   root: HTMLElement, client: GaiaballClient, store: PresetStore = new PresetStore(),
   /** demo: no real link, but the form behaves as connected (main.ts fakes the device). */
   opts: { demo?: boolean } = {},
-): { advancedSections: HTMLElement; band: BandSource; co2: Co2Source; metric: MetricSource; coherence: CoherenceSource } {
+): { advancedSections: HTMLElement; band: BandSource; co2: Co2Source; metric: MetricSource; breath: BreathSource } {
   root.innerHTML = `
     <h2>Configuração</h2>
     <div data-el="strip" role="status"></div>
@@ -829,19 +842,19 @@ export function mountConfigPanel(
       if (BAND_IDS.has(id)) emitBand();
       if (CO2_IDS.has(id)) emitCo2();
       if (id === TLV.breathMetric) emitMetric();
-      if (id === TLV.breathCoherenceMaxX100) emitCoherence();
+      if (BREATH_FORM_IDS.has(id)) emitBreath();
       refreshDescribe();
       refreshForm();
     });
     if (BAND_IDS.has(id)) el.addEventListener('input', () => emitBand());
     if (CO2_IDS.has(id)) el.addEventListener('input', () => emitCo2());
-    if (id === TLV.breathCoherenceMaxX100) el.addEventListener('input', () => emitCoherence());
+    if (BREATH_FORM_IDS.has(id)) el.addEventListener('input', () => emitBreath());
   }
   navLon.addEventListener('input', () => { dirty.add(TLV.navRef); refreshForm(); });
   navLon.addEventListener('change', () => refreshForm());
   for (const [id, tg] of toggles) tg.addEventListener('change', () => {
     dirty.add(id); refreshForm(); applyEnabled();
-    if (id === TLV.breathCoherenceMaxX100) emitCoherence();
+    if (BREATH_FORM_IDS.has(id)) emitBreath();
   });
 
   const getValue = (f: Field): number | string | null => {
@@ -896,7 +909,7 @@ export function mountConfigPanel(
     emitBand();
     emitCo2();
     emitMetric();
-    emitCoherence();
+    emitBreath();
     refreshDescribe();
     refreshPotBox();
     refreshMarkers();
@@ -960,16 +973,18 @@ export function mountConfigPanel(
     const c = formCo2();
     for (const fn of co2Listeners) fn(c);
   };
-  /** Coherence limit as the form shows it, for the mark on the Sopro card: 0..1, null when off or empty. */
-  const formCoherence = (): number | null => {
-    const v = getValue(byId(TLV.breathCoherenceMaxX100));
-    return typeof v === 'number' && v < 100 ? v / 100 : null;
+  /** The discriminators as the form shows them, for the marks on the Sopro card. */
+  const formBreath = (): BreathForm => {
+    const num = (id: number): number | null => { const v = getValue(byId(id)); return typeof v === 'number' ? v : null; };
+    const coh = num(TLV.breathCoherenceMaxX100);
+    const still = num(TLV.breathStillOnly);
+    return { coherenceLimit: coh !== null && coh < 100 ? coh / 100 : null, stillOnly: still === null ? null : still !== 0, maxDps: num(TLV.stillMaxDps) };
   };
-  const coherenceListeners = new Set<(limit: number | null) => void>();
-  const emitCoherence = (): void => {
-    if (coherenceListeners.size === 0) return;
-    const c = formCoherence();
-    for (const fn of coherenceListeners) fn(c);
+  const breathListeners = new Set<(b: BreathForm) => void>();
+  const emitBreath = (): void => {
+    if (breathListeners.size === 0) return;
+    const b = formBreath();
+    for (const fn of breathListeners) fn(b);
   };
   /** RMS/Pico switch as the form shows it, for the threshold line in the charts. */
   const formMetric = (): boolean | null => {
@@ -1426,9 +1441,9 @@ export function mountConfigPanel(
       current: formMetric,
       subscribe: (fn: (peak: boolean | null) => void): void => { metricListeners.add(fn); fn(formMetric()); },
     },
-    coherence: {
-      current: formCoherence,
-      subscribe: (fn: (limit: number | null) => void): void => { coherenceListeners.add(fn); fn(formCoherence()); },
+    breath: {
+      current: formBreath,
+      subscribe: (fn: (b: BreathForm) => void): void => { breathListeners.add(fn); fn(formBreath()); },
     },
   };
 }
