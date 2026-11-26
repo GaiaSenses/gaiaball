@@ -156,7 +156,11 @@ class Client {
       }
     } else this.sock.write(req);
     await waitFor(() => this.head !== null || this.closed, 3000, `${this.name}: 101`);
-    if (this.head === null) fail(`${this.name}: closed before the 101`);
+    if (this.head === null) {
+      fail(`${this.name}: closed before the 101 (the server drops every connection when a ` +
+        `second client connects: is a config-app with "Enviar ao Pd" on, or another test, ` +
+        `connecting to port ${PORT}?)`);
+    }
     const want = accept(key);
     const got = /sec-websocket-accept:\s*(\S+)/i.exec(this.head)?.[1];
     if (!this.head.startsWith('HTTP/1.1 101') || got !== want)
@@ -170,6 +174,13 @@ class Client {
 }
 
 // ---- start Pd ----
+// Another Pd (or program) on the port would answer instead of ours.
+const busy = await new Promise((resolve) => {
+  const s = net.connect(PORT, '127.0.0.1');
+  s.once('connect', () => { s.destroy(); resolve(true); });
+  s.once('error', () => resolve(false));
+});
+if (busy) fail(`port ${PORT} is already in use: close the other Pd or program first`);
 // -noprefs: the user's saved search paths must not decide which [gaiaball] gets loaded.
 const pdArgs = ['-nogui', '-stderr', '-noaudio', '-nomidi', '-noprefs'];
 if (!OBJETO) pdArgs.push('-open', path.join(here, '..', 'gaiaball.pd'));

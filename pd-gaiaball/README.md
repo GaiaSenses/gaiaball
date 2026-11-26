@@ -239,6 +239,11 @@ node pd-gaiaball/tests/ajuda.mjs --pd /caminho/do/pd           # a ajuda não oc
 node pd-gaiaball/tests/ajuda.mjs --pd /caminho/do/pd --com-objeto
 ```
 
+Antes de rodar, feche os patches com `[gaiaball]` e a config-app (ou desligue **Enviar ao
+Pd**): os testes usam a porta 9478, e qualquer outro cliente que conecte nela no meio do
+teste derruba as conexões dele (o servidor atende um cliente por vez), o que aparece como
+`closed before the 101`.
+
 O `e2e.mjs` abre o Pd sem interface (`-nogui -noprefs`) e faz o aperto de mão como o
 Chrome. Ele confere:
 
