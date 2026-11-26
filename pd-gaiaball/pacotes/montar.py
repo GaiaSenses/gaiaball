@@ -9,6 +9,8 @@ Writes to <output dir>:
   gaiaball[v<version>].dek          the same gaiaball/ folder as a Deken package (made by
   gaiaball[v<version>].dek.txt      the deken developer tool; no architecture in the name:
   gaiaball[v<version>].dek.sha256   the package holds only Pd patches)
+  pd-gaiaball-<version>-deken.zip   those three files, for the GitHub Release (GitHub renames
+                                    asset names with brackets, and Deken needs them)
   SHA256SUMS.txt                    sha256 of the .zip and the .dek (sha256sum -c format)
   notas-da-versao.md                the GitHub Release text, with the sums
 
@@ -202,13 +204,17 @@ def main():
             work = tmp / "deken"
             shutil.copytree(pasta, work / "gaiaball")
             dek = deken_package(a.deken, work, a.versao)
-            for f in (dek, Path(str(dek) + ".txt"), Path(str(dek) + ".sha256")):
+            trio = [dek, Path(str(dek) + ".txt"), Path(str(dek) + ".sha256")]
+            for f in trio:
                 shutil.copyfile(f, saida / f.name)
                 print(f"pronto: {saida / f.name}")
             arquivos.append(saida / dek.name)
             dek_sum = (saida / (dek.name + ".sha256")).read_text().split()[0]
             if dek_sum != sha256(saida / dek.name):
                 die("the .dek.sha256 written by deken does not match the .dek")
+            bundle = saida / f"pd-gaiaball-{a.versao}-deken.zip"
+            write_zip(bundle, work, [f.relative_to(work) for f in trio], epoch)
+            print(f"pronto: {bundle}")
 
     somas = {f.name: sha256(f) for f in arquivos}
     (saida / "SHA256SUMS.txt").write_text(

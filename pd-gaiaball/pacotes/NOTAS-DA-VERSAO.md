@@ -9,7 +9,7 @@ Os arquivos estão logo abaixo, em **Assets**. Para baixar, não é preciso ter 
 | Para | Baixe |
 |---|---|
 | Instalar à mão (Windows, macOS ou Linux) | `pd-gaiaball-@VERSAO@.zip` |
-| Enviar ao Deken (só a equipe) | `gaiaball[v@VERSAO@].dek` e os dois arquivos que começam com o mesmo nome |
+| Enviar ao Deken (só a equipe) | `pd-gaiaball-@VERSAO@-deken.zip`, com o pacote `gaiaball[v@VERSAO@].dek` e os dois arquivos que o acompanham |
 
 Descompacte o `.zip` e abra o **`LEIA-ME.html`**. Ele explica onde pôr a pasta `gaiaball` em cada sistema, como conferir que deu certo, os primeiros passos com a bola e o que fazer se algo der errado. Quem instala pelo Deken (**Ajuda → Encontrar externals** no Pd) recebe a mesma pasta e não precisa baixar nada daqui.
 
