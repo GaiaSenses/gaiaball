@@ -7,7 +7,7 @@
 #X floatatom 100 172 5 0 0 0 - - -;
 #X floatatom 180 172 6 0 0 0 - - -;
 #X text 20 200 conectado / pacotes por segundo / gap em ms, f 50;
-#X text 560 108 Um [gaiaball] por Pd basta: os nomes gaia.* valem para todos os patches abertos. Se outro patch já tem um \, este avisa porta 9478 em uso no console: tudo bem \, os dados chegam do mesmo jeito. Com a bola no padrão chegam cerca de 100 pacotes por segundo. O exemplo 6 explica o gap., f 62;
+#X text 560 108 Um [gaiaball] por Pd basta: os nomes gaia.* valem para todos os patches abertos. Se outro patch já tem um \, o console pode mostrar 'Address already in use': tudo bem \, os dados chegam pelo outro. Se você fechar o outro \, clique neste [gaiaball] (fora do modo de edição) e em reconectar. Com a bola no padrão chegam cerca de 100 pacotes por segundo. O exemplo 6 explica o gap., f 62;
 #X text 20 246 MOVIMENTO (cerca de 50 vezes por segundo), f 60;
 #X obj 20 270 r gaia.acc.x;
 #X obj 140 270 r gaia.acc.y;

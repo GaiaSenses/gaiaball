@@ -90,60 +90,55 @@ dados parecidos com os da bola ([seção 4, passo 9](#passo-9-opcional-treinar-s
 
 ## 3. Instalação passo a passo
 
-Um *external* é um objeto extra, que não vem junto com o Pd. O `[gaiaball]` é um external.
+O `[gaiaball]` não vem junto com o Pd, mas também não é um programa: é uma **abstração**,
+um patch (o arquivo `gaiaball.pd`) que o Pd usa como se fosse um objeto. Ele é feito só
+com objetos que já vêm com o Pd, então o mesmo arquivo serve para Windows, macOS e Linux.
+Instalar é copiar a pasta `gaiaball` para um lugar onde o Pd procura objetos.
 
-### 3.1 Pelo Deken (o jeito normal)
+### 3.1 Pelo Deken (o jeito mais curto)
 
-O **Deken** é a "loja" de externals que fica dentro do próprio Pd.
+O **Deken** é a "loja" de objetos extras que fica dentro do próprio Pd.
 
 1. Abra o Pd.
 2. Menu **Ajuda → Encontrar externals** (no Pd em inglês: *Help → Find externals*).
 3. Digite `gaiaball` e clique em **Instalar**.
-4. Se o Pd perguntar se deve acrescentar a pasta ao caminho de busca, responda que sim.
+4. Se o Pd perguntar se deve acrescentar a pasta `gaiaball` ao caminho de busca, tanto faz:
+   o Deken já instala numa pasta que o Pd procura, e o objeto funciona das duas formas.
 
-### 3.2 Se a busca não encontrar o `gaiaball`
+Colocar uma versão nova no Deken é um passo manual da equipe (descrito em
+[`PUBLICAR-NO-DEKEN.md`](PUBLICAR-NO-DEKEN.md)). Se a busca não mostra nada, use a seção
+3.2.
 
-O `[gaiaball]` é novo, e colocá-lo no Deken é um passo manual da equipe (descrito em
-[`PUBLICAR-NO-DEKEN.md`](PUBLICAR-NO-DEKEN.md)). Se a busca não mostra nada, ele ainda não
-foi publicado. Enquanto isso, você tem três saídas:
+### 3.2 Pelo pacote da página de versões
 
-**A) Pedir o arquivo à equipe do GaiaSenses.** É o mais simples.
+1. Abra <https://github.com/GaiaSenses/gaiaball/releases> e, na versão mais recente, em
+   **Assets**, baixe `pd-gaiaball-<versão>.zip`. É um arquivo só para todos os sistemas, e
+   não precisa de conta no GitHub.
+2. Descompacte. Dentro há o `LEIA-ME.html`, com cada passo para o seu sistema, e a pasta
+   `gaiaball`.
+3. Copie a pasta `gaiaball` para a pasta de objetos que o Pd procura sozinho. Crie a pasta
+   `Pd` (ou `extra`) se ela não existir:
 
-**B) Baixar do GitHub.** O GitHub compila o objeto para todos os sistemas, mas só quando
-alguém da equipe manda, e baixar exige uma conta no GitHub.
-
-1. Entre no GitHub com a sua conta.
-2. Abra <https://github.com/GaiaSenses/gaiaball/actions/workflows/pd-gaiaball.yml> e clique
-   na execução mais recente que tem o sinal verde.
-3. No fim da página, em **Artifacts**, baixe o arquivo do seu sistema:
-
-   | Seu computador | Baixe | O arquivo que vem dentro |
+   | Sistema | Copie a pasta `gaiaball` para | O objeto fica em |
    |---|---|---|
-   | Windows | `gaiaball-bin-windows-32` | `gaiaball.dll` |
-   | Mac (Intel ou Apple) | `gaiaball-bin-macos-32` | `gaiaball.pd_darwin` |
-   | Linux, processador Intel ou AMD | `gaiaball-bin-linux-amd64-32` | `gaiaball.pd_linux` |
-   | Linux, processador ARM de 64 bits | `gaiaball-bin-linux-arm64-32` | `gaiaball.linux-arm64-32.so` |
+   | Windows | `%AppData%\Pd` (digite `%AppData%` na barra de endereço do Explorador de Arquivos) | `C:\Users\<seu nome>\AppData\Roaming\Pd\gaiaball\gaiaball.pd` |
+   | macOS | `~/Library/Pd` (no Finder: **Ir → Ir para a Pasta…**, `~/Library`; em português, **Biblioteca**) | `~/Library/Pd/gaiaball/gaiaball.pd` |
+   | Linux | `~/.local/lib/pd/extra` (ou `~/pd-externals`) | `~/.local/lib/pd/extra/gaiaball/gaiaball.pd` |
 
-   O `-32` no fim é o Pd comum. Os arquivos terminados em `-64` são para o Pd de "precisão
-   dupla", uma versão especial; se você não sabe qual tem, é o comum.
-4. Descompacte o `.zip`.
+4. Se o Pd estava aberto, feche e abra de novo.
 
-Se não houver nenhuma execução, ou se os arquivos não aparecerem mais (o GitHub os apaga
-depois de um tempo), peça a alguém da equipe para rodar de novo: **Actions → pd-gaiaball →
-Run workflow**.
+Essas pastas são os "caminhos padrão" do Pd: não é preciso mexer em **Preferências →
+Caminho** (em inglês, *Preferences → Path*). Outra pasta também serve, desde que a pasta
+que **contém** `gaiaball` esteja nessa lista.
 
-**C) Compilar você mesmo.** Para quem já compila programas: veja "Compilar e testar" no
-[`README.md`](README.md#compilar-e-testar).
+**Jeito rápido, para um patch só:** ponha o `gaiaball.pd` (e o `gaiaball-help.pd`, para a
+ajuda funcionar) na mesma pasta do seu patch. O Pd procura objetos primeiro na pasta do
+patch.
 
-**Onde colocar o arquivo baixado (opções A e B):**
-
-- **Jeito mais simples:** ponha o arquivo na mesma pasta do seu patch. O Pd procura objetos
-  primeiro na pasta do patch. Ponha junto o `gaiaball-help.pd` (ele está na pasta
-  [`pd-gaiaball`](https://github.com/GaiaSenses/gaiaball/tree/main/pd-gaiaball) do
-  repositório), para a ajuda do objeto funcionar.
-- **Para usar em qualquer patch:** crie uma pasta (por exemplo, `gaiaball`), ponha os
-  arquivos nela e acrescente essa pasta em **Preferências → Caminho** (em inglês,
-  *Preferences → Path*).
+**Já tinha o `[gaiaball]` antigo?** As primeiras versões eram um programa compilado
+(`gaiaball.dll`, `gaiaball.pd_darwin`, `gaiaball.pd_linux` ou `gaiaball.*.so`). Apague esses
+arquivos, inclusive os que você pôs na pasta dos seus patches: se um deles ficar no
+caminho, o Pd carrega o antigo no lugar do novo.
 
 ### 3.3 Conferir a instalação
 
@@ -152,6 +147,10 @@ Run workflow**.
 3. **Borda contínua:** deu certo. **Borda tracejada** e a mensagem
    `gaiaball ... couldn't create` no console (a janela principal do Pd, onde aparecem as
    mensagens): o Pd não achou o arquivo. Confira a pasta e o Caminho.
+4. Saia do modo de edição (**Ctrl+E**; no Mac, **Cmd+E**) e clique no `[gaiaball]`: abre a
+   janela dele, com o quadrado "conectado" e o botão **reconectar**. Se, em vez disso, o
+   console mostrar `gaiaball: aguardando a config-app em ws://...`, é o objeto antigo: veja
+   o item anterior.
 
 ## 4. Primeira conexão passo a passo
 
@@ -259,15 +258,15 @@ número do apartamento onde o Pd atende.
 - `[gaiaball]` atende na porta **9478**, a padrão da config-app.
 - `[gaiaball 9500]` atende na porta 9500. Nesse caso, mude também a porta na config-app
   (painel **Conexão → Pd → Porta**). Os dois lados precisam ter o mesmo número.
-- A porta tem de ser um número inteiro de 1 a 65535. Fora disso, o console mostra
-  `gaiaball: porta inválida: ... (use um número de 1 a 65535)` e o objeto fica parado, sem
-  fazer nada.
+- A porta tem de ser um número inteiro de 1 a 65535 (sem argumento, ou com 0, vale a
+  9478).
 - Só troque a porta se a 9478 estiver ocupada por outro programa.
 
 ### Nenhuma entrada
 
 A caixa `[gaiaball]` não tem entrada (nenhum ponto de ligação em cima): ela não recebe
-mensagens. Para trocar a porta, edite o texto da caixa.
+mensagens. Para trocar a porta, edite o texto da caixa. Fora do modo de edição, um clique
+na caixa abre a janela do `[gaiaball]`, com o estado da conexão e o botão **reconectar**.
 
 ### Uma saída: o estado da conexão
 
@@ -300,17 +299,24 @@ ficar preso no seu patch. Os outros canais ficam com o último valor. O exemplo
 ### Um `[gaiaball]` por porta
 
 Só um `[gaiaball]` por porta atende de cada vez. Se outro patch aberto já tem um, o novo
-avisa `gaiaball: porta 9478 em uso` uma vez no console e espera. Não atrapalha: os
-`[r gaia.*]` recebem do que está atendendo. Quando o primeiro é apagado (ou o patch dele é
-fechado), o que esperava assume a porta sozinho, em até 2 segundos. Por isso cada exemplo
-tem o seu `[gaiaball]` e você pode abrir vários ao mesmo tempo.
+fica parado, e o console pode mostrar `netreceive: listen failed: Address already in use`.
+Não atrapalha: os `[r gaia.*]` recebem do que está atendendo.
+
+Mas o que ficou parado **não assume a porta sozinho** quando o primeiro é apagado (ou o
+patch dele é fechado). Nesse caso, clique no `[gaiaball]` que ficou (fora do modo de
+edição) e, na janela que abre, clique em **reconectar**. Fechar e abrir de novo o patch
+dele também resolve.
+
+O patch de ajuda do objeto não ocupa a porta: ele só cria um `[gaiaball]` próprio quando
+você liga a chave **TESTAR DAQUI**, e o apaga quando você desliga a chave ou fecha a ajuda.
 
 ### Uma conexão de cada vez e segurança
 
 - O objeto só aceita conexões do próprio computador (`127.0.0.1`): nada de fora chega nele
   pela rede.
-- Uma conexão nova substitui a anterior. Se duas abas da config-app tentarem enviar, vale
-  a mais recente: deixe só uma aberta.
+- Uma conexão de cada vez: se uma segunda conexão chegar, as duas caem, e a config-app
+  reconecta sozinha em 2 segundos. Se duas abas da config-app tentarem enviar, uma derruba
+  a outra: deixe só uma aberta.
 - O objeto aceita qualquer página que o Chrome autorizar em "Apps neste dispositivo". **Não
   dê essa permissão a sites que você não conhece**, e feche as páginas desconhecidas
   durante uma apresentação: uma página assim poderia mandar dados falsos ao seu patch.
@@ -734,13 +740,15 @@ só, com os três valores novos, quando chega o `aceX` na entrada da esquerda.
 ## 10. Exemplos prontos
 
 Os exemplos ficam na pasta [`exemplos/`](exemplos/), ao lado deste tutorial. Quem
-instalou pelo Deken encontra os dois dentro da pasta `gaiaball` instalada; eles também
+instalou pelo Deken ou pelo pacote encontra os dois dentro da pasta `gaiaball` instalada
+(no pacote, o tutorial é o `TUTORIAL.html`); eles também
 estão na pasta [`pd-gaiaball`](https://github.com/GaiaSenses/gaiaball/tree/main/pd-gaiaball)
 do repositório.
 
 Para abrir: no Pd, **Arquivo → Abrir** e escolha o arquivo `.pd`. Cada exemplo tem o seu
-`[gaiaball]`; com vários abertos, os de depois avisam "porta em uso" no console, e tudo
-continua funcionando ([seção 5](#um-gaiaball-por-porta)). Os exemplos que fazem som
+`[gaiaball]`; com vários abertos, os de depois mostram "Address already in use" no console,
+e os dados chegam a todos. Se você fechar o primeiro, clique no `[gaiaball]` de um dos que
+ficaram e em **reconectar** ([seção 5](#um-gaiaball-por-porta)). Os exemplos que fazem som
 pedem para ligar o som do Pd: clique na mensagem `dsp 1` (ou Ctrl+/). Comece com o volume
 do computador baixo.
 
@@ -812,13 +820,15 @@ ms é uma escolha: mude o número do `[moses]`.
 ### O Pd diz `gaiaball ... couldn't create` (a caixa fica tracejada)
 
 O objeto não está instalado, ou a pasta dele não está no caminho do Pd. Volte à
-[seção 3](#3-instalação-passo-a-passo) e confira **Preferências → Caminho**.
+[seção 3](#3-instalação-passo-a-passo): confira se o arquivo ficou exatamente em
+`.../gaiaball/gaiaball.pd`, sem uma pasta a mais no meio, e, em **Preferências → Caminho**,
+se **Usar caminhos padrão** (*Use standard paths*) está ligado.
 
 ### Nada chega e a config-app mostra "Pd: aguardando"
 
 A config-app procura o Pd e não acha. Confira: o Pd está aberto? Há um patch aberto com
-`[gaiaball]`? A porta é a mesma nos dois lados (`[gaiaball]` = 9478; painel Conexão → Pd →
-Porta)? O console mostra `porta inválida`?
+`[gaiaball]` escutando (veja `Address already in use`, mais abaixo)? A porta é a mesma nos dois lados
+(`[gaiaball]` = 9478; painel Conexão → Pd → Porta)?
 
 ### A config-app mostra "Pd: bloqueado pelo Chrome"
 
@@ -830,12 +840,19 @@ A permissão "Apps neste dispositivo" foi negada. Libere como no
 "Desligado": a chave **Enviar ao Pd** está desligada. "Aguardando a bola": a chave está
 ligada, mas a bola não está conectada; clique em **Conectar**.
 
-### O console diz `gaiaball: porta 9478 em uso`
+### O console diz `netreceive: listen failed: Address already in use`
 
-Outro `[gaiaball]` já atende nessa porta (num outro patch aberto ou no patch de ajuda).
-Não atrapalha: os dados chegam do mesmo jeito, e este assume a porta quando o outro for
-fechado. Se a porta estiver ocupada por **outro programa**, escolha outra porta nos dois
-lados, por exemplo `[gaiaball 9500]` e 9500 na config-app.
+Outro `[gaiaball]` já atende nessa porta (num outro patch aberto, ou no patch de ajuda com
+a chave **TESTAR DAQUI** ligada). Não atrapalha enquanto ele estiver aberto: os dados chegam
+do mesmo jeito. Se você fechar o outro, este não assume a porta sozinho: clique nele (fora
+do modo de edição) e em **reconectar**. Se a porta estiver ocupada por **outro programa**,
+escolha outra porta nos dois lados, por exemplo `[gaiaball 9500]` e 9500 na config-app.
+
+### O console diz `gaiaball: aguardando a config-app em ws://...`
+
+É o `[gaiaball]` antigo, compilado, que ficou no computador e está sendo carregado no lugar
+do novo. Apague os arquivos `gaiaball.dll`, `gaiaball.pd_darwin`, `gaiaball.pd_linux` ou
+`gaiaball.*.so` ([seção 3.2](#32-pelo-pacote-da-página-de-versões)) e abra o Pd de novo.
 
 ### Aparece `connected 0` sozinho
 
@@ -895,12 +912,17 @@ trocados de roll e pitch, veja [Ângulos e mais](#ângulos-e-mais-gaiasensors).
 
 ### Abri duas abas da config-app
 
-Vale a conexão mais recente. Feche as outras.
+Uma derruba a outra: o `[gaiaball]` atende uma conexão por vez e, quando chega a segunda,
+as duas caem. O `connected` fica alternando entre 1 e 0. Feche as outras abas (ou desligue
+**Enviar ao Pd** nelas).
 
 ## 12. Glossário
 
 **127.0.0.1** — o endereço que quer dizer "este computador". O `[gaiaball]` só aceita
 conexões vindas daí.
+
+**Abstração** — um patch que o Pd usa como objeto: o arquivo `gaiaball.pd` vira a caixa
+`[gaiaball]`. Um clique na caixa (fora do modo de edição) mostra o patch por dentro.
 
 **Bang** — no Pd, um sinal de "agora!", sem número. O `[bng]` (o botão redondo) mostra e
 manda bangs.
@@ -920,7 +942,8 @@ décimo.
 **DSP** — o motor de som do Pd. Desligado, nenhum objeto com til (`~`) faz som. Liga com
 a mensagem `; pd dsp 1` ou Ctrl+/.
 
-**External** — um objeto extra, que não vem com o Pd. O `[gaiaball]` é um.
+**External** — um objeto extra, que não vem com o Pd. O Deken chama assim tudo o que
+instala, compilado ou não; o `[gaiaball]` é uma abstração.
 
 **g** — a força da gravidade: o "peso" que você sente parado. 1 g = 1000 mg.
 

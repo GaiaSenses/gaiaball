@@ -11,7 +11,8 @@ No canto superior direito do 3D, o botão de cubo (**Vistas da câmera**) leva a
 ## Enviar ao Pd
 
 O Pure Data não tem Bluetooth; quem fala com a bola é a config-app, no Chrome ou no Edge, e ela
-repassa os pacotes ao external `[gaiaball]` por um **WebSocket local** (`127.0.0.1`, porta
+repassa os pacotes ao objeto `[gaiaball]` (uma abstração do Pd vanilla, sem nada compilado)
+por um **WebSocket local** (`127.0.0.1`, porta
 **9478** por padrão; a porta se muda no painel Conexão, bloco Pd, e precisa ser a mesma do
 `[gaiaball 9500]`, por exemplo).
 

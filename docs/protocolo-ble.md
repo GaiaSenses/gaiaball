@@ -48,7 +48,7 @@ deve apontar (a **navegação**) e manda o resultado pronto.
 
 Do outro lado podem estar o site, a config-app ou o seu programa, até **dois ao mesmo tempo**
 (o firmware aceita duas conexões simultâneas e recusa a terceira). O Pure Data não fala
-Bluetooth: ele recebe os dados da config-app, por um WebSocket local, no external `[gaiaball]`:
+Bluetooth: ele recebe os dados da config-app, por um WebSocket local, no objeto `[gaiaball]`:
 
 ```mermaid
 flowchart LR
@@ -65,7 +65,7 @@ flowchart LR
   SITE -- "só os comandos 0x17 (âncora) e 0x18 (fim do pulso)" --> FW
   FW -- "notify: tudo" --> APP["config-app<br/>bancada e ajustes"]
   APP -- "comandos e configuração" --> FW
-  APP -- "WebSocket local<br/>127.0.0.1:9478" --> EXT["external [gaiaball]"]
+  APP -- "WebSocket local<br/>127.0.0.1:9478" --> EXT["objeto [gaiaball]"]
   EXT -- "[r gaia.*]" --> PD["Pure Data"]
 ```
 
@@ -73,7 +73,7 @@ flowchart LR
 |---|---|---|
 | **Site GaiaSenses** | Move o globo do Mapbox com a navegação, abre composições quando o CO₂ dispara, repassa orientação, aceleração e CO₂ aos patches de Pure Data | Só dois comandos, sem PIN: a âncora `0x17` (a vista atual do mapa vira a referência da navegação) e o `0x18` (encerra o pulso virtual de CO₂ quando a pessoa fecha a composição) |
 | **config-app** | Bancada: mostra tudo em gráficos, edita e salva a configuração, calibra | Sim (com PIN) |
-| **External `[gaiaball]`** (`pd-gaiaball/`) | Recebe da config-app, por WebSocket local, os pacotes de movimento, CO₂ e navegação e os publica no Pure Data (`[r gaia.*]`). Não conecta na bola | Não |
+| **Objeto `[gaiaball]`** (`pd-gaiaball/`, um patch do Pd vanilla) | Recebe da config-app, por WebSocket local, os pacotes de movimento, CO₂ e navegação e os publica no Pure Data (`[r gaia.*]`). Não conecta na bola | Não |
 | **O seu programa** | O que você quiser: este guia mostra como | Opcional |
 
 Ninguém precisa **parear** a bola: o firmware não usa pareamento nem criptografia de enlace.
@@ -1859,7 +1859,7 @@ Valores de referência: o quaternião identidade (1, 0, 0, 0), o do vetor IMU ac
 
 ## Compatibilidade e versionamento
 
-O site, a config-app e o external `[gaiaball]` acompanham só o firmware atual, o da `main` do
+O site, a config-app e o objeto `[gaiaball]` acompanham só o firmware atual, o da `main` do
 repositório da Gaiaball: não há modo de compatibilidade com firmware de antes. As regras
 abaixo dizem como o protocolo pode **crescer** sem quebrar os clientes que já existem.
 
@@ -1996,7 +1996,7 @@ O nome (`0x40`) vale depois de reiniciar: salve (`0x11`) e reinicie (`0x13`).
 | Navegação | [`NavEngine.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/NavEngine.cpp), [`NavMath.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/NavMath.cpp), [`MotionSettle.h`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/Gaiaball/src/logic/MotionSettle.h) |
 | Vetores de ouro do firmware | [`test_protocol.cpp`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware/test/test_protocol/test_protocol.cpp) |
 | Decodificadores da config-app | [`packets.ts`](https://github.com/GaiaSenses/gaiaball/blob/main/config-app/src/protocol/packets.ts), [`tlv.ts`](https://github.com/GaiaSenses/gaiaball/blob/main/config-app/src/protocol/tlv.ts), [`euler.ts`](https://github.com/GaiaSenses/gaiaball/blob/main/config-app/src/protocol/euler.ts) |
-| External `[gaiaball]` para o Pure Data | [`pd-gaiaball/`](https://github.com/GaiaSenses/gaiaball/tree/main/pd-gaiaball) (veja o `README.md`) |
+| Objeto `[gaiaball]` para o Pure Data | [`pd-gaiaball/`](https://github.com/GaiaSenses/gaiaball/tree/main/pd-gaiaball) (veja o `README.md`) |
 | Firmware original (JSON) | [`firmware-original.ino`](https://github.com/GaiaSenses/gaiaball/blob/main/firmware-original.ino) |
 | Decodificador do site | [`ble-decode.ts`](https://github.com/GaiaSenses/Gaiasenses-web/blob/main/app/%5Blocale%5D/map3/ble-decode.ts) |
 | Conexão do site | [`ble-control.tsx`](https://github.com/GaiaSenses/Gaiasenses-web/blob/main/app/%5Blocale%5D/map3/ble-control.tsx) |

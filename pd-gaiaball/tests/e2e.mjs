@@ -1,10 +1,16 @@
-// End-to-end check of gaiaball-vanilla.pd without a ball or a browser: a raw TCP client
-// (node:net) does the WebSocket handshake the way Chrome does and sends the protocol's golden
-// packets as masked binary frames; Pd's console (stderr) must show the right gaia.* values.
+// End-to-end check of gaiaball.pd (the [gaiaball] abstraction) without a ball or a browser: a
+// raw TCP client (node:net) does the WebSocket handshake the way Chrome does and sends the
+// protocol's golden packets as masked binary frames; Pd's console (stderr) must show the right
+// gaia.* values.
 //
-//   node pd-vanilla/tests/e2e.mjs [--pd /path/to/pd] [--port 9478]
+//   node pd-gaiaball/tests/e2e.mjs [--pd /path/to/pd] [--port 9478] [--objeto [--instalado]]
 //
-// The script starts Pd itself (-nogui) with ../gaiaball-vanilla.pd and imprime.pd.
+// The script starts Pd itself (-nogui -noprefs) with imprime.pd and:
+//   - by default, ../gaiaball.pd opened as a top-level patch;
+//   - with --objeto, objeto.pd, which creates [gaiaball] as an object (found through
+//     -path ..) and prints its outlet, so the abstraction lookup and the outlet are tested too;
+//   - with --objeto --instalado, objeto.pd without any -path: [gaiaball] must come from Pd's
+//     standard paths (for an installed package; point HOME at the test home on Linux).
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import net from 'node:net';
@@ -16,6 +22,12 @@ const args = process.argv.slice(2);
 const opt = (name, dflt) => (args.includes(name) ? args[args.indexOf(name) + 1] : dflt);
 const PD = opt('--pd', 'pd');
 const PORT = Number(opt('--port', '9478'));
+const OBJETO = args.includes('--objeto');
+const INSTALADO = args.includes('--instalado');
+if (INSTALADO && !OBJETO) {
+  console.error('--instalado needs --objeto');
+  process.exit(2);
+}
 
 const hex = (s) => Buffer.from(s.trim().split(/\s+/).map((b) => parseInt(b, 16)));
 // firmware/docs/protocol.md
@@ -37,7 +49,8 @@ function imuTilted() {
   p[22] = 0x01; // quatValid only: no audio, no breath
   return p;
 }
-/** pd-gaiaball/src/gb_decode.c gb_euler_legacy on the decoded (quantized) quaternion. */
+/** The site's legacy Euler convention (quatToEulerLegacy in config-app/src/protocol/euler.ts)
+ * on the decoded (quantized) quaternion. */
 function eulerLegacy(p) {
   const [w, x, y, z] = [0, 1, 2, 3].map((i) => p.readInt16LE(8 + 2 * i) / 16384);
   const qw = w, qx = y, qy = x, qz = -z, d = 180 / Math.PI;
@@ -143,7 +156,11 @@ class Client {
       }
     } else this.sock.write(req);
     await waitFor(() => this.head !== null || this.closed, 3000, `${this.name}: 101`);
-    if (this.head === null) fail(`${this.name}: closed before the 101`);
+    if (this.head === null) {
+      fail(`${this.name}: closed before the 101 (the server drops every connection when a ` +
+        `second client connects: is a config-app with "Enviar ao Pd" on, or another test, ` +
+        `connecting to port ${PORT}?)`);
+    }
     const want = accept(key);
     const got = /sec-websocket-accept:\s*(\S+)/i.exec(this.head)?.[1];
     if (!this.head.startsWith('HTTP/1.1 101') || got !== want)
@@ -157,8 +174,23 @@ class Client {
 }
 
 // ---- start Pd ----
-pd = spawn(PD, ['-nogui', '-stderr', '-noaudio', '-nomidi',
-  '-open', path.join(here, '..', 'gaiaball-vanilla.pd'), '-open', path.join(here, 'imprime.pd')]);
+// Another Pd (or program) on the port would answer instead of ours.
+const busy = await new Promise((resolve) => {
+  const s = net.connect(PORT, '127.0.0.1');
+  s.once('connect', () => { s.destroy(); resolve(true); });
+  s.once('error', () => resolve(false));
+});
+if (busy) fail(`port ${PORT} is already in use: close the other Pd or program first`);
+// -noprefs: the user's saved search paths must not decide which [gaiaball] gets loaded.
+const pdArgs = ['-nogui', '-stderr', '-noaudio', '-nomidi', '-noprefs'];
+if (!OBJETO) pdArgs.push('-open', path.join(here, '..', 'gaiaball.pd'));
+else {
+  if (!INSTALADO) pdArgs.push('-path', path.join(here, '..'));
+  pdArgs.push('-open', path.join(here, 'objeto.pd'));
+}
+pdArgs.push('-open', path.join(here, 'imprime.pd'));
+console.log(`Pd: ${PD} ${pdArgs.join(' ')}`);
+pd = spawn(PD, pdArgs);
 pd.stderr.on('data', (d) => { pdErr += d; });
 pd.stdout.on('data', () => {}); // Pd 0.55.2's expr prints "realloc called..." on stdout
 pd.on('exit', (c, s) => { if (!done) fail(`Pd exited early (${c ?? s})`); });
@@ -291,14 +323,14 @@ if (latBeforeRate.length !== 2) fail(`expected 2 lat lines from A, got ${latBefo
 ok('Nav packet without the valid bit published nothing');
 void firstRate;
 
-// The tilted IMU: Euler angles against the C decoder's formulas; no mic lines (audio invalid).
+// The tilted IMU: Euler angles against eulerLegacy() above; no mic lines (audio invalid).
 const sens = L.find((l) => / -123 456 -789 /.test(l) && l.startsWith('gaia.sensors:'));
 if (!sens) fail('no gaia.sensors line for the tilted packet');
 const got = sens.split(' ').slice(1, 4).map(Number);
 const want = eulerLegacy(tilted);
 if (got.some((g, k) => Math.abs(g - want[k]) > 0.01))
   fail(`Euler: got ${got.join(' ')}, want ${want.map((v) => v.toFixed(4)).join(' ')}`);
-ok(`Euler legacy: ${got.join(' ')} (C formulas: ${want.map((v) => v.toFixed(4)).join(' ')})`);
+ok(`Euler legacy: ${got.join(' ')} (reference: ${want.map((v) => v.toFixed(4)).join(' ')})`);
 const iT = L.indexOf('gaia.acc.x: -123');
 const afterT = L.slice(iT, L.indexOf(sens, iT) + 1);
 if (afterT.some((l) => l.startsWith('gaia.mic.'))) fail('mic lines published with audioValid = 0');
@@ -311,5 +343,13 @@ ok('F: split frame, 227-byte frame and the CO2 after a text frame were all decod
 const errors = L.filter((l) => /error|stack overflow|no such|couldn't/i.test(l));
 if (errors.length) fail(`Pd errors:\n${errors.join('\n')}`);
 ok('no errors on the Pd console');
+if (OBJETO) {
+  // objeto.pd prints the outlet of its [gaiaball] as "saida: ...".
+  for (const l of ['saida: connected 1', 'saida: connected 0'])
+    if (!L.includes(l)) fail(`objeto.pd: the outlet did not print "${l}"`);
+  if (!L.some((l) => /^saida: rate \d+$/.test(l)) || !L.some((l) => /^saida: gap \d+$/.test(l)))
+    fail('objeto.pd: the outlet did not print rate and gap');
+  ok('[gaiaball] as an object: the outlet printed connected 1/0, rate and gap');
+}
 console.log('\nALL OK');
 process.exit(0);

@@ -1,6 +1,7 @@
-// Forwards the raw bytes of IMU, CO2 and nav packets to the Pd external [gaiaball] over a
-// local WebSocket. forward() sits on the hot path: it never throws, never waits, and touches
-// neither the DOM nor timers. No origin is hard-coded: the external accepts any page.
+// Forwards the raw bytes of IMU, CO2 and nav packets to the Pd object [gaiaball] (the vanilla
+// abstraction pd-gaiaball/gaiaball.pd) over a local WebSocket. forward() sits on the hot path:
+// it never throws, never waits, and touches neither the DOM nor timers. No origin is
+// hard-coded: [gaiaball] accepts any page.
 export const PD_DEFAULT_PORT = 9478;
 export const PD_RETRY_MS = 2000;
 export const PD_MAX_BUFFERED = 4096;

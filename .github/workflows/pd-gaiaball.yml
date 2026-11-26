@@ -1,164 +1,168 @@
 name: pd-gaiaball
 
-# Builds the [gaiaball] external for every system and Pd float size, runs the C tests,
-# and packages everything as a Deken package (a workflow artifact; publishing to
-# puredata.info is a manual step, see pd-gaiaball/PUBLICAR-NO-DEKEN.md).
-
-# Automatic runs are switched OFF for now: the workflow only runs when started by hand
-# (Actions tab -> pd-gaiaball -> "Run workflow"). To turn the automatic runs back on,
-# add these triggers under `on:` again:
+# The [gaiaball] abstraction for Pure Data (pd-gaiaball/gaiaball.pd: Pd vanilla only, so one
+# platform-independent package; nothing is compiled).
 #
-#   push:
-#     branches: [main]
-#     tags: ['v*']
-#     paths: ['pd-gaiaball/**', '.github/workflows/pd-gaiaball.yml']
-#   pull_request:
-#     paths: ['pd-gaiaball/**', '.github/workflows/pd-gaiaball.yml']
+#   teste    every push to main and every pull request that touches pd-gaiaball/: the
+#            generator must reproduce gaiaball.pd byte for byte, then the e2e and the help
+#            tests run in a real Pd (Ubuntu's puredata package).
+#   pacote   builds the release files with pd-gaiaball/pacotes/montar.py (the zip, the Deken
+#            package, SHA256SUMS.txt, the release notes), installs the zip and the .dek in
+#            fresh homes and runs the e2e against each; artifact "pd-gaiaball-pacote".
+#   release  only for a pushed tag vX.Y.Z: creates (or refreshes) a DRAFT GitHub Release with
+#            those files. A person reviews and publishes it:
+#              gh release edit vX.Y.Z --draft=false
+#            Uploading to Deken stays manual (pd-gaiaball/PUBLICAR-NO-DEKEN.md).
+#
+# Run by hand (Actions -> pd-gaiaball -> Run workflow) it builds the artifacts and never
+# releases. Path filters are not evaluated for tag pushes, so every v* tag runs it.
 on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths: ['pd-gaiaball/**', 'LICENSE', '.github/workflows/pd-gaiaball.yml']
+  pull_request:
+    paths: ['pd-gaiaball/**', 'LICENSE', '.github/workflows/pd-gaiaball.yml']
   workflow_dispatch:
 
 permissions:
   contents: read
 
-env:
-  # Pd source tag used for the headers (m_pd.h, s_stuff.h). On Windows the official
-  # binary release of the same version is used instead, because it also has pd.dll.
-  PD_TAG: '0.55-2'
-
 jobs:
-  build:
-    name: build (${{ matrix.name }}, float ${{ matrix.floatsize }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        # `ext` is the binary extension handed to pd-lib-builder. Single precision uses
-        # the classic extension where it is unambiguous (readable by Pd 0.51 and later);
-        # double precision always uses <system>-<cpu>-64.<ext> (Pd 0.54 and later).
-        include:
-          - { name: linux-amd64, runner: ubuntu-latest, floatsize: 32, ext: pd_linux }
-          - { name: linux-amd64, runner: ubuntu-latest, floatsize: 64, ext: linux-amd64-64.so }
-          - { name: linux-arm64, runner: ubuntu-24.04-arm, floatsize: 32, ext: linux-arm64-32.so }
-          - { name: linux-arm64, runner: ubuntu-24.04-arm, floatsize: 64, ext: linux-arm64-64.so }
-          - { name: macos, runner: macos-latest, floatsize: 32, ext: pd_darwin, arch: 'x86_64 arm64' }
-          - { name: macos, runner: macos-latest, floatsize: 64, ext: darwin-fat-64.so, arch: 'x86_64 arm64' }
-          - { name: windows, runner: windows-latest, floatsize: 32, ext: dll }
-          - { name: windows, runner: windows-latest, floatsize: 64, ext: windows-amd64-64.dll }
-    env:
-      FLOATSIZE: ${{ matrix.floatsize }}
-      EXT: ${{ matrix.ext }}
-      ARCH: ${{ matrix.arch }}
-    defaults:
-      run:
-        shell: ${{ matrix.name == 'windows' && 'msys2 {0}' || 'bash' }}
-
+  teste:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
 
-      - name: Set up MSYS2 MinGW64
-        if: matrix.name == 'windows'
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: false
-          install: >-
-            make
-            unzip
-            curl
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-tools-git
-
-      - name: Fetch Pd headers (source tag)
-        if: matrix.name != 'windows'
+      - name: The generator reproduces gaiaball.pd byte for byte
         run: |
-          git clone --depth 1 --branch "$PD_TAG" https://github.com/pure-data/pure-data pd-gaiaball/build-deps/pure-data
-
-      - name: Fetch Pd (Windows binary release, with pd.dll)
-        if: matrix.name == 'windows'
-        run: |
-          mkdir -p pd-gaiaball/build-deps
-          curl -fsSL -o pd.zip "https://msp.ucsd.edu/Software/pd-$PD_TAG.msw.zip"
-          unzip -q pd.zip -d pd-gaiaball/build-deps
-          ls pd-gaiaball/build-deps/pd-$PD_TAG/bin/pd.dll pd-gaiaball/build-deps/pd-$PD_TAG/src/m_pd.h
-
-      - name: Make an import library named pd64.dll (Windows, double precision)
-        # Pd ships no pd64.dll; the externals only need something to link against and
-        # the export list is the same as pd.dll, so build an import library for pd64.dll.
-        if: matrix.name == 'windows' && matrix.floatsize == 64
-        working-directory: pd-gaiaball/build-deps/pd-${{ env.PD_TAG }}/bin
-        run: |
-          gendef pd.dll
-          sed -i 's/^LIBRARY.*/LIBRARY "pd64.dll"/' pd.def
-          dlltool -d pd.def -D pd64.dll -l pd64.dll
-          ls -l pd64.dll
-
-      - name: C unit tests
-        working-directory: pd-gaiaball
-        run: make test TEST_CC=gcc
-
-      - name: Build the external
-        working-directory: pd-gaiaball
-        run: |
-          if [ "$RUNNER_OS" = Windows ]; then
-            PD_ARGS=("PDDIR=build-deps/pd-$PD_TAG")
-          else
-            PD_ARGS=(PDINCLUDEDIR=build-deps/pure-data/src)
+          python3 pd-gaiaball/tools/gerar_patch.py
+          if ! git diff --exit-code -- pd-gaiaball/gaiaball.pd; then
+            echo "::error file=pd-gaiaball/gaiaball.pd::gaiaball.pd is not what tools/gerar_patch.py generates. Edit the generator, run it and commit both files."
+            exit 1
           fi
-          ARCH_ARGS=()
-          if [ -n "$ARCH" ]; then ARCH_ARGS=("arch=$ARCH"); fi
-          make "${PD_ARGS[@]}" "floatsize=$FLOATSIZE" "extension=$EXT" "${ARCH_ARGS[@]}"
-          ls -l "gaiaball.$EXT"
-          file "gaiaball.$EXT" || true
 
-      - uses: actions/upload-artifact@v7
+      - name: Install Pd
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends puredata
+          PD=$(command -v pd || command -v puredata)
+          echo "PD=$PD" >> "$GITHUB_ENV"
+          "$PD" -version
+
+      - uses: actions/setup-node@v7
         with:
-          name: gaiaball-bin-${{ matrix.name }}-${{ matrix.floatsize }}
-          path: pd-gaiaball/gaiaball.${{ matrix.ext }}
-          if-no-files-found: error
+          node-version: 22
 
-  package:
-    name: package (Deken)
-    needs: build
-    runs-on: ubuntu-latest
+      - name: e2e, gaiaball.pd opened as a patch
+        run: node pd-gaiaball/tests/e2e.mjs --pd "$PD"
+
+      - name: e2e, [gaiaball] created as an object
+        run: node pd-gaiaball/tests/e2e.mjs --pd "$PD" --objeto
+
+      - name: Help patch (does not take the port until its toggle is on)
+        run: |
+          node pd-gaiaball/tests/ajuda.mjs --pd "$PD"
+          node pd-gaiaball/tests/ajuda.mjs --pd "$PD" --com-objeto
+
+  pacote:
+    needs: teste
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: true
 
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: gaiaball-bin-*
-          merge-multiple: true
-          path: gaiaball
-
-      - name: Assemble the gaiaball/ folder
+      - name: Install pandoc and Pd
         run: |
-          cp pd-gaiaball/gaiaball-help.pd pd-gaiaball/README.md pd-gaiaball/TUTORIAL.md pd-gaiaball/gaiaball.c pd-gaiaball/Makefile gaiaball/
-          cp -r pd-gaiaball/exemplos gaiaball/exemplos
-          cp LICENSE gaiaball/LICENSE
-          mkdir -p gaiaball/src gaiaball/pd-lib-builder
-          cp pd-gaiaball/src/*.c pd-gaiaball/src/*.h gaiaball/src/
-          cp pd-gaiaball/pd-lib-builder/Makefile.pdlibbuilder gaiaball/pd-lib-builder/
-          ls -lR gaiaball
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends pandoc puredata unzip
+          PD=$(command -v pd || command -v puredata)
+          echo "PD=$PD" >> "$GITHUB_ENV"
+          pandoc --version | head -1
 
-      - name: Package with Deken
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Version
         env:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
         run: |
-          if [ "$REF_TYPE" = tag ]; then VERSION="${REF_NAME#v}"; else VERSION=0.0.0-dev; fi
-          echo "Deken version: $VERSION"
-          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD":/work -w /work \
-            registry.git.iem.at/pd/deken deken package --version "$VERSION" gaiaball
-          mkdir dek
-          mv ./*.dek ./*.dek.txt ./*.dek.sha256 dek/
-          ls -l dek
-          cat dek/*.dek.txt
+          if [ "$REF_TYPE" = tag ]; then
+            if ! printf '%s\n' "$REF_NAME" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; then
+              echo "::error::the tag must look like v0.1.0 (got $REF_NAME)"
+              exit 1
+            fi
+            echo "VERSAO=${REF_NAME#v}" >> "$GITHUB_ENV"
+            echo "REF=$REF_NAME" >> "$GITHUB_ENV"
+          else
+            echo "VERSAO=0.0.0-dev" >> "$GITHUB_ENV"
+            echo "REF=$GITHUB_SHA" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build the zip, the Deken package, the sums and the notes
+        run: |
+          python3 pd-gaiaball/pacotes/montar.py "$VERSAO" dist --ref "$REF" --deken docker
+          ls -l dist
+          unzip -l "dist/pd-gaiaball-$VERSAO.zip"
+          cat "dist/gaiaball[v$VERSAO].dek.txt"
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+
+      - name: Install the zip in a fresh home (~/.local/lib/pd/extra) and run the e2e
+        run: |
+          home="$RUNNER_TEMP/home-zip"
+          mkdir -p "$home/.local/lib/pd/extra" "$RUNNER_TEMP/zip"
+          unzip -q "dist/pd-gaiaball-$VERSAO.zip" -d "$RUNNER_TEMP/zip"
+          cp -R "$RUNNER_TEMP/zip/gaiaball" "$home/.local/lib/pd/extra/"
+          HOME="$home" node pd-gaiaball/tests/e2e.mjs --pd "$PD" --objeto --instalado
+
+      - name: Install the .dek the way Deken does (unzip into the path) and run the e2e
+        run: |
+          home="$RUNNER_TEMP/home-dek"
+          mkdir -p "$home/.local/lib/pd/extra"
+          unzip -q "dist/gaiaball[v$VERSAO].dek" -d "$home/.local/lib/pd/extra"
+          HOME="$home" node pd-gaiaball/tests/e2e.mjs --pd "$PD" --objeto --instalado
 
       - uses: actions/upload-artifact@v7
         with:
-          name: gaiaball-deken
-          path: dek
+          name: pd-gaiaball-pacote
+          path: dist
           if-no-files-found: error
+
+  release:
+    needs: pacote
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: pd-gaiaball-pacote
+          path: dist
+
+      - name: Create or refresh the DRAFT release (never publishes)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSAO="${TAG#v}"
+          TITLE="[gaiaball] $VERSAO para Pure Data"
+          FILES=("dist/pd-gaiaball-$VERSAO.zip" "dist/pd-gaiaball-$VERSAO-deken.zip" dist/SHA256SUMS.txt)
+          ls -l "${FILES[@]}"
+          PRE=()
+          case "$VERSAO" in 0.*|*-*) PRE=(--prerelease) ;; esac
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != true ]; then
+              echo "::error::Release $TAG is already published; its files are not replaced. Tag a new version."
+              exit 1
+            fi
+            gh release upload "$TAG" "${FILES[@]}" --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes-file dist/notas-da-versao.md
+          else
+            gh release create "$TAG" "${FILES[@]}" --draft --verify-tag "${PRE[@]}" \
+              --title "$TITLE" --notes-file dist/notas-da-versao.md
+          fi
+          gh release view "$TAG" --json url,isDraft,isPrerelease,assets \
+            --jq '{url, isDraft, isPrerelease, assets: [.assets[].name]}'

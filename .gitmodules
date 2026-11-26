@@ -1,3 +1,0 @@
-[submodule "pd-gaiaball/pd-lib-builder"]
-	path = pd-gaiaball/pd-lib-builder
-	url = https://github.com/pure-data/pd-lib-builder
