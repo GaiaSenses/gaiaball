@@ -40,29 +40,61 @@ não depende de quem estiver no projeto no futuro.
 
 ## 4. Instalar a ferramenta `deken` (uma vez)
 
-Escolha **uma** das opções:
+Escolha a linha do seu sistema. Para saber qual é o seu Linux: `cat /etc/os-release`.
 
-- **Linux / WSL (Debian, Ubuntu):**
-  ```sh
-  sudo apt-get install deken
-  ```
-- **Linux, macOS ou Windows com Python 3, via `pipx`** (versão mais nova):
-  ```sh
-  python3 -m pip install --user pipx
-  pipx install deken
-  ```
-- **Windows ou macOS sem Python:** baixe o executável pronto na página de
-  [releases do deken](https://github.com/pure-data/deken/releases).
-- **Docker** (é o que o CI usa):
-  ```sh
-  docker pull registry.git.iem.at/pd/deken
-  ```
+| Sistema | Como instalar |
+|---|---|
+| **Ubuntu 24.04** | pelo `pipx`, abaixo |
+| **Ubuntu 22.04** | pelo Docker, abaixo (o `deken` exige Python 3.12, e o 22.04 vem com o 3.10) |
+| **Ubuntu 25.04 ou mais novo, Debian 13** | `sudo apt install deken`, ou o `pipx` para ter a versão mais nova |
+| **Debian 12** | `sudo apt install deken` (versão 0.9.6), ou o Docker para a mais nova (o 12 vem com o Python 3.11) |
+| **macOS** | `brew install pipx`, depois `pipx ensurepath` e `pipx install deken`; ou o executável pronto |
+| **Windows, fora do WSL** | o executável pronto, abaixo |
 
-Confira:
+> **Por que não `sudo apt-get install deken` no Ubuntu 24.04?** O Ubuntu tem o pacote
+> `deken` em quase todas as versões, **menos nas 22.04 e 24.04**, duas versões de suporte
+> longo muito usadas no WSL. Nelas o `apt` responde `Unable to locate package deken`.
+
+### Pelo `pipx` (Ubuntu 24.04, inclusive no WSL)
 
 ```sh
-deken --help
+sudo apt update
+sudo apt install pipx
+pipx ensurepath
 ```
+
+Feche e abra o terminal (o `ensurepath` põe `~/.local/bin` no `PATH`). Depois:
+
+```sh
+pipx install deken
+```
+
+Para atualizar mais tarde: `pipx upgrade deken`. Não use `python3 -m pip install --user …`:
+o Ubuntu 24.04 recusa com `externally-managed-environment`.
+
+### Executável pronto (Windows ou macOS)
+
+Na página de [releases do deken](https://github.com/pure-data/deken/releases), baixe
+`deken_w64.zip` (Windows) ou `deken_macOS.zip` (macOS) e descompacte.
+
+### Pelo Docker (qualquer sistema com Docker; é o que o CI usa)
+
+Não instala nada além da imagem. No lugar de `deken …`, rode o mesmo comando dentro do
+contêiner, a partir da pasta onde estão os arquivos:
+
+```sh
+docker pull registry.git.iem.at/pd/deken
+docker run --rm -ti --user "$(id -u)" --volume "$PWD":/deken \
+    registry.git.iem.at/pd/deken deken --version
+```
+
+### Conferir
+
+```sh
+deken --version
+```
+
+Tem de mostrar um número de versão (por exemplo `0.10.22`).
 
 ## 5. Pegar o pacote da versão
 
@@ -147,31 +179,49 @@ cat "gaiaball[v0.1.0].dek.txt"       # gaiaball <TAB> a descrição
 
 ## 8. Enviar
 
-Na pasta onde estão os três arquivos:
+Na pasta onde estão os três arquivos. Eles têm de estar **juntos**: se o `.dek.txt` não
+estiver ao lado do `.dek`, o `deken` envia o pacote sem ele, sem avisar, e a busca do Pd fica
+sem a descrição.
 
 ```sh
-deken upload "gaiaball[v0.1.0].dek"
+DEKEN_USERNAME=<seu-usuário> deken upload --no-sign-gpg "gaiaball[v0.1.0].dek"
 ```
 
 (use o nome completo do arquivo, entre aspas por causa dos colchetes)
 
-- O `deken` pergunta o **usuário** e a **senha** do puredata.info.
-- Ele envia o `.dek` **e** os arquivos auxiliares (`.txt`, `.sha256` e, se houver, `.asc`)
-  de uma vez.
-- O pacote vai para `https://puredata.info/Members/<seu-usuário>/software/gaiaball/`.
-- Se você não usa GPG e o `deken` reclamar da assinatura, acrescente `--no-sign-gpg`.
+Pelo Docker, o mesmo envio fica assim:
 
-**Sobre guardar a senha:** o `deken` aceita um arquivo `~/.config/deken/config` com
-`username = …` e `password = …`. Ele fica em texto puro no seu computador; prefira digitar a
-senha a cada envio.
+```sh
+docker run --rm -ti --user "$(id -u)" --volume "$PWD":/deken \
+    --env DEKEN_USERNAME=<seu-usuário> \
+    registry.git.iem.at/pd/deken deken upload --no-sign-gpg "gaiaball[v0.1.0].dek"
+```
+
+- O `deken` pergunta a **senha** do puredata.info. Sem o `DEKEN_USERNAME=…`, ele pergunta
+  também o usuário.
+- Ele envia o `.dek` **e** os arquivos auxiliares (`.txt`, `.sha256` e, se houver, `.asc`)
+  de uma vez, e termina com `Your upload was successful.`
+- O pacote vai para `https://puredata.info/Members/<seu-usuário>/software/gaiaball/0.1.0/`
+  (a versão sem o `v`).
+- **Assinatura GPG:** é opcional. O `--no-sign-gpg` pula a assinatura. Sem ele, o `deken`
+  pede a senha da sua chave GPG, se você tiver uma; se não tiver, avisa
+  `Could not GPG sign the package.` e envia assim mesmo.
+
+**Sobre guardar a senha:** depois de um envio que deu certo, o `deken` tenta guardar a senha
+no chaveiro do sistema (*keyring*). No WSL normalmente não há chaveiro, e então aparece, logo
+depois do `Your upload was successful.`, um aviso `No recommended backend was available…`:
+é inofensivo, o envio já terminou. Ele só quer dizer que a senha não foi guardada e será
+pedida de novo. O `deken` também aceita um arquivo `~/.config/deken/config` com
+`username = …` e `password = …`, mas a senha fica em texto puro no seu computador: prefira
+digitá-la a cada envio.
 
 ## 9. Conferir que funcionou
 
 1. Num computador **que ainda não tem** o `[gaiaball]`, abra o Pd.
 2. **Ajuda → Encontrar externals** (no Pd em inglês: **Help → Find externals**).
-3. Procure `gaiaball`. A versão nova deve aparecer, uma só para todos os sistemas. Se não
-   aparecer de imediato, tente de novo mais tarde: o índice da busca é atualizado pelo
-   portal.
+3. Procure `gaiaball`. A versão nova deve aparecer, uma só para todos os sistemas. Pode
+   levar **até 24 horas** (o próprio `deken` avisa isso no fim do envio): o índice da busca
+   é atualizado pelo portal.
 4. Instale, crie `[gaiaball]` num patch e abra a ajuda (clique-direito → Ajuda).
 5. Conecte a bola pela config-app (ou abra a config-app com `?demo=1`) e confira que os
    `[r gaia.*]` recebem dados.
